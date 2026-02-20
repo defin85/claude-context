@@ -43,9 +43,10 @@ export interface CodebaseInfoIndexing extends CodebaseInfoBase {
 // Indexed state - when indexing completed successfully
 export interface CodebaseInfoIndexed extends CodebaseInfoBase {
     status: 'indexed';
-    indexedFiles: number;        // Number of files indexed
-    totalChunks: number;         // Total number of chunks generated
+    indexedFiles?: number;       // Number of files indexed when known
+    totalChunks?: number;        // Total number of chunks generated when known
     indexStatus: 'completed' | 'limit_reached';  // Status from indexing result
+    statsState?: 'known' | 'unknown';  // Whether file/chunk statistics are available locally
 }
 
 // Index failed state - when indexing failed
