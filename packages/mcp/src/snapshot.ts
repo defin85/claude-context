@@ -644,6 +644,7 @@ export class SnapshotManager {
             }
 
             if (info.status === 'indexed') {
+                // Store the complete info for indexed codebases
                 validCodebaseInfoMap.set(codebasePath, info);
                 validIndexedCodebases.push(codebasePath);
                 if (typeof info.indexedFiles === 'number') {
@@ -655,6 +656,8 @@ export class SnapshotManager {
                 );
             } else if (info.status === 'indexing') {
                 console.warn(`[SNAPSHOT-DEBUG] Found interrupted indexing codebase: ${codebasePath} (${info.indexingPercentage || 0}%). Treating as not indexed.`);
+                // Interrupted indexing should not block future indexing attempts.
+                // Convert it into a failed status to preserve diagnostics while avoiding stale "indexing" locks.
                 const interruptedInfo: CodebaseInfoIndexFailed = {
                     status: 'indexfailed',
                     errorMessage: 'Indexing was interrupted (likely due to MCP restart). Please run index_codebase again.',
@@ -670,7 +673,7 @@ export class SnapshotManager {
 
         // Restore state
         this.indexedCodebases = validIndexedCodebases;
-        this.indexingCodebases = new Map(); // Reset indexing codebases since they were interrupted
+        this.indexingCodebases = validIndexingCodebases;
         this.codebaseFileCount = validFileCount;
         this.codebaseInfoMap = validCodebaseInfoMap;
     }
