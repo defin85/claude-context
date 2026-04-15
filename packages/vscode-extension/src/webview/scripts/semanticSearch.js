@@ -36,6 +36,10 @@ class SemanticSearchController {
         this.backButton = document.getElementById('backButton');
 
         // Settings elements
+        this.runtimeModeSelect = document.getElementById('runtimeMode');
+        this.runtimeModeHelp = document.getElementById('runtimeModeHelp');
+        this.embeddingSection = document.getElementById('embeddingSection');
+        this.milvusSection = document.getElementById('milvusSection');
         this.providerSelect = document.getElementById('provider');
         this.dynamicFields = document.getElementById('dynamicFields');
         this.splitterTypeSelect = document.getElementById('splitterType');
@@ -70,6 +74,7 @@ class SemanticSearchController {
         });
 
         // Settings event listeners
+        this.runtimeModeSelect.addEventListener('change', () => this.handleRuntimeModeChange());
         this.providerSelect.addEventListener('change', () => this.handleProviderChange());
         this.splitterTypeSelect.addEventListener('change', () => this.validateForm());
         this.chunkSizeInput.addEventListener('input', () => this.validateForm());
@@ -292,7 +297,13 @@ class SemanticSearchController {
                 break;
 
             case 'configData':
-                this.loadConfig(message.config, message.supportedProviders, message.milvusConfig, message.splitterConfig);
+                this.loadConfig(
+                    message.config,
+                    message.supportedProviders,
+                    message.milvusConfig,
+                    message.splitterConfig,
+                    message.runtimeMode
+                );
                 break;
 
             case 'saveResult':
@@ -326,6 +337,12 @@ class SemanticSearchController {
 
     // Settings methods
     handleProviderChange() {
+        if (this.isDaemonMode()) {
+            this.clearDynamicFields();
+            this.validateForm();
+            return;
+        }
+
         const selectedProvider = this.providerSelect.value;
 
         // Clear existing dynamic fields
@@ -339,6 +356,34 @@ class SemanticSearchController {
         }
 
         this.validateForm();
+    }
+
+    handleRuntimeModeChange() {
+        this.updateRuntimeModeUI();
+        this.validateForm();
+    }
+
+    isDaemonMode() {
+        return this.runtimeModeSelect.value === 'daemon';
+    }
+
+    updateRuntimeModeUI() {
+        const daemonMode = this.isDaemonMode();
+
+        this.embeddingSection.style.display = daemonMode ? 'none' : 'block';
+        this.milvusSection.style.display = daemonMode ? 'none' : 'block';
+
+        if (daemonMode) {
+            this.runtimeModeHelp.textContent =
+                'Daemon mode connects to a compatible local MCP daemon discovered under ~/.context/mcp/daemon/client-config.json. Embedded embedding and Milvus settings are ignored.';
+            this.testBtn.disabled = true;
+        } else if (this.runtimeModeSelect.value === 'embedded') {
+            this.runtimeModeHelp.textContent =
+                'Embedded mode always uses the extension-local embedding and Milvus configuration.';
+        } else {
+            this.runtimeModeHelp.textContent =
+                'Auto prefers a compatible local daemon and falls back to the embedded runtime.';
+        }
     }
 
 
@@ -593,6 +638,19 @@ class SemanticSearchController {
     }
 
     validateForm() {
+        if (this.isDaemonMode()) {
+            const canSave = !!this.splitterTypeSelect.value
+                && Number.parseInt(this.chunkSizeInput.value, 10) >= 100
+                && Number.parseInt(this.chunkSizeInput.value, 10) <= 5000
+                && Number.parseInt(this.chunkOverlapInput.value, 10) >= 0
+                && Number.parseInt(this.chunkOverlapInput.value, 10) <= 1000
+                && Number.parseInt(this.chunkOverlapInput.value, 10) < Number.parseInt(this.chunkSizeInput.value, 10);
+
+            this.testBtn.disabled = true;
+            this.saveBtn.disabled = !canSave;
+            return;
+        }
+
         const hasProvider = !!this.providerSelect.value;
         const hasMilvusAddress = !!this.milvusAddressInput.value.trim();
 
@@ -621,6 +679,11 @@ class SemanticSearchController {
     }
 
     handleTestConnection() {
+        if (this.isDaemonMode()) {
+            this.showStatus('Daemon mode does not use extension-local embedding settings.', 'info');
+            return;
+        }
+
         const provider = this.providerSelect.value;
         if (!provider) {
             this.showStatus('Please select a provider first', 'error');
@@ -698,6 +761,19 @@ class SemanticSearchController {
     }
 
     getCurrentFormConfig() {
+        const runtimeMode = this.runtimeModeSelect.value || 'auto';
+
+        if (runtimeMode === 'daemon') {
+            return {
+                runtimeMode,
+                splitterConfig: {
+                    type: this.splitterTypeSelect.value,
+                    chunkSize: parseInt(this.chunkSizeInput.value, 10),
+                    chunkOverlap: parseInt(this.chunkOverlapInput.value, 10)
+                }
+            };
+        }
+
         const provider = this.providerSelect.value;
         const configData = this.collectDynamicFieldValues();
 
@@ -722,6 +798,7 @@ class SemanticSearchController {
         };
 
         return {
+            runtimeMode,
             provider: provider,
             config: configData,
             milvusConfig: milvusConfig,
@@ -735,6 +812,30 @@ class SemanticSearchController {
         if (!config) {
             this.showStatus('Please complete all required fields', 'error');
             return false;
+        }
+
+        if (config.runtimeMode === 'daemon') {
+            if (!config.splitterConfig.type) {
+                this.showStatus('Please select a splitter type', 'error');
+                return false;
+            }
+
+            if (config.splitterConfig.chunkSize < 100 || config.splitterConfig.chunkSize > 5000) {
+                this.showStatus('Chunk size must be between 100 and 5000', 'error');
+                return false;
+            }
+
+            if (config.splitterConfig.chunkOverlap < 0 || config.splitterConfig.chunkOverlap > 1000) {
+                this.showStatus('Chunk overlap must be between 0 and 1000', 'error');
+                return false;
+            }
+
+            if (config.splitterConfig.chunkOverlap >= config.splitterConfig.chunkSize) {
+                this.showStatus('Chunk overlap must be less than chunk size', 'error');
+                return false;
+            }
+
+            return true;
         }
 
         if (!config.provider) {
@@ -783,7 +884,7 @@ class SemanticSearchController {
         }
     }
 
-    loadConfig(config, providers, milvusConfig, splitterConfig) {
+    loadConfig(config, providers, milvusConfig, splitterConfig, runtimeMode) {
         this.currentConfig = config;
 
         // Only update providers if we actually received them from backend
@@ -803,9 +904,15 @@ class SemanticSearchController {
             setTimeout(() => this.requestConfig(), 100);
         }
 
-        if (config) {
+        this.runtimeModeSelect.value = runtimeMode || 'auto';
+        this.updateRuntimeModeUI();
+
+        if (config && !this.isDaemonMode()) {
             this.providerSelect.value = config.provider;
             this.handleProviderChange();
+        } else {
+            this.providerSelect.value = '';
+            this.clearDynamicFields();
         }
 
         // Load Milvus config

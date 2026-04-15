@@ -3,7 +3,7 @@ import { Context, FileSynchronizer } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager, RuntimeSyncCodebaseResult } from "./runtime-status.js";
-import { WorkloadManager } from "./workload-manager.js";
+import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
 
 export class SyncManager {
     private context: Context;
@@ -28,6 +28,23 @@ export class SyncManager {
         this.codebaseConfigManager = codebaseConfigManager;
         this.runtimeStatusManager = runtimeStatusManager;
         this.workloadManager = workloadManager;
+    }
+
+    private throwIfCancelled(abortSignal?: AbortSignal, codebasePath?: string): void {
+        if (!abortSignal?.aborted) {
+            return;
+        }
+
+        const reason = abortSignal.reason;
+        if (reason instanceof Error) {
+            throw reason;
+        }
+
+        throw new WorkloadCancelledError(
+            codebasePath
+                ? `Background sync for '${codebasePath}' was cancelled by daemon operator.`
+                : 'Background sync was cancelled by daemon operator.'
+        );
     }
 
     private async recoverIndexedCodebasesFromPersistedConfig(): Promise<string[]> {
@@ -163,7 +180,17 @@ export class SyncManager {
 
                     console.log(`[SYNC-DEBUG] Calling context.reindexByChange() for '${codebasePath}'`);
                     const stats = this.workloadManager
-                        ? await this.workloadManager.runBackgroundSync(codebasePath, () => this.context.reindexByChange(codebasePath))
+                        ? await this.workloadManager.runBackgroundSync(codebasePath, (signal) => {
+                            this.throwIfCancelled(signal, codebasePath);
+                            return this.context.reindexByChange(
+                                codebasePath,
+                                (progress) => {
+                                    console.log(`[SYNC-DEBUG] Sync progress for '${codebasePath}': ${progress.phase} (${progress.percentage}%)`);
+                                    this.throwIfCancelled(signal, codebasePath);
+                                },
+                                signal
+                            );
+                        })
                         : await this.context.reindexByChange(codebasePath);
                     const codebaseElapsed = Date.now() - codebaseStartTime;
 
@@ -204,6 +231,17 @@ export class SyncManager {
                     }
                 } catch (error: any) {
                     const codebaseElapsed = Date.now() - codebaseStartTime;
+                    if (isWorkloadCancelledError(error)) {
+                        codebaseResults.push({
+                            path: codebasePath,
+                            outcome: 'skipped',
+                            reason: error.message || `background sync for '${codebasePath}' was cancelled by daemon operator`,
+                            durationMs: codebaseElapsed
+                        });
+                        console.warn(`[SYNC-DEBUG] Background sync for '${codebasePath}' was cancelled after ${codebaseElapsed}ms.`);
+                        continue;
+                    }
+
                     console.error(`[SYNC-DEBUG] Error syncing codebase '${codebasePath}' after ${codebaseElapsed}ms:`, error);
                     console.error(`[SYNC-DEBUG] Error stack:`, error.stack);
 

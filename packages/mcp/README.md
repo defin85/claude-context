@@ -183,6 +183,48 @@ CUSTOM_IGNORE_PATTERNS=temp/**,*.backup,private/**,uploads/**
 
 These settings work in combination with tool parameters - patterns from both sources will be merged together.
 
+## Daemon-First Mode
+
+Updated clients can target one shared local daemon instead of starting a new subprocess per repository.
+
+### Start the daemon
+
+```bash
+MCP_RUNTIME_MODE=daemon \
+MCP_DAEMON_TOKEN=local-secret \
+MCP_DAEMON_ALLOW_ROOTS=/repo/a:/repo/b \
+npx @zilliz/claude-context-mcp@latest
+```
+
+### Discover active daemon bootstrap config
+
+```bash
+npx @zilliz/claude-context-mcp@latest --daemon-discover
+```
+
+This prints JSON with the current daemon endpoint, compatibility version, allowed roots, and bearer token for updated clients. The discovery file is stored under `~/.context/mcp/daemon/client-config.json`.
+
+### Operator commands
+
+```bash
+# Inspect active runtimes, known repositories, and workload state
+npx @zilliz/claude-context-mcp@latest --daemon-status
+
+# Cancel queued/active indexing work for one codebase
+npx @zilliz/claude-context-mcp@latest --daemon-cancel /repo/a
+
+# Remove stale daemon registry/discovery/runtime artifacts and recover stale snapshot ownership
+npx @zilliz/claude-context-mcp@latest --daemon-cleanup-stale
+
+# Restart daemon mode using the current CLI/env config, with fallback to active discovery metadata
+npx @zilliz/claude-context-mcp@latest --daemon-restart --mode daemon --allow-root /repo/a
+
+# Stop the active daemon gracefully
+npx @zilliz/claude-context-mcp@latest --daemon-stop
+```
+
+`--daemon-restart` reuses active discovery metadata for daemon host/port/path/token/allow-roots when those flags are omitted, but it still inherits embedding/vector DB environment from the current shell.
+
 ## Usage with MCP Clients
 
 <details>
@@ -207,7 +249,7 @@ Codex CLI uses TOML configuration files:
 
 1. Create or edit the `~/.codex/config.toml` file.
 
-2. Add the following configuration:
+2. For the classic subprocess setup, add the following configuration:
 
 ```toml
 # IMPORTANT: the top-level key is `mcp_servers` rather than `mcpServers`.
@@ -215,11 +257,33 @@ Codex CLI uses TOML configuration files:
 command = "npx"
 args = ["@zilliz/claude-context-mcp@latest"]
 env = { "OPENAI_API_KEY" = "your-openai-api-key", "MILVUS_TOKEN" = "your-zilliz-cloud-api-key" }
-# Optional: override the default 10s startup timeout
-startup_timeout_ms = 20000
+startup_timeout_sec = 20
 ```
 
-3. Save the file and restart Codex CLI to apply the changes.
+3. For one shared daemon across multiple repositories, point Codex CLI at the daemon HTTP endpoint instead of starting a subprocess per project:
+
+```toml
+[mcp_servers.claude-context]
+url = "http://127.0.0.1:39393/mcp"
+bearer_token_env_var = "MCP_DAEMON_TOKEN"
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+```
+
+Start the daemon once with all allowed roots:
+
+```bash
+MCP_RUNTIME_MODE=daemon \
+MCP_DAEMON_TOKEN=local-secret \
+MCP_DAEMON_ALLOW_ROOTS=/repo/a:/repo/b:/repo/c \
+npx @zilliz/claude-context-mcp@latest
+```
+
+One Codex CLI session can then serve all allowlisted repositories by passing different absolute `path` values to `index_codebase`, `search_code`, and `get_indexing_status`.
+
+If a repository was only recovered from cloud state and reports missing persisted sync config, run one daemon-side `index_codebase` with `force=true` for that repository to restore restart-safe sync semantics.
+
+4. Save the file and restart Codex CLI to apply the changes.
 
 </details>
 

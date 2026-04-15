@@ -24,7 +24,8 @@ interface QueuedWorkloadJob<T> {
     priority: number;
     enqueuedAt: string;
     readyAt?: number;
-    run: () => Promise<T>;
+    abortController: AbortController;
+    run: (signal: AbortSignal) => Promise<T>;
     resolve: (value: T) => void;
     reject: (reason?: unknown) => void;
 }
@@ -38,6 +39,9 @@ interface ActiveWorkloadJob {
     priority: number;
     enqueuedAt: string;
     startedAt: string;
+    abortController: AbortController;
+    cancelRequestedAt?: string;
+    cancellationReason?: string;
 }
 
 interface BackgroundSyncBackoffState {
@@ -53,6 +57,7 @@ export interface WorkloadJobSnapshot {
     enqueuedAt: string;
     startedAt?: string;
     readyAt?: string;
+    cancelRequestedAt?: string;
 }
 
 export interface WorkloadLaneSnapshot {
@@ -79,6 +84,25 @@ export interface EnqueuedIndexingTask<T> {
     startedImmediately: boolean;
     queuePosition: number;
     completion: Promise<T>;
+}
+
+export interface CancelledWorkloadSummary {
+    queued: Array<{ id: string; type: WorkloadJobType; codebasePath: string }>;
+    active: Array<{ id: string; type: WorkloadJobType; codebasePath: string }>;
+}
+
+export class WorkloadCancelledError extends Error {
+    public readonly code = 'WORKLOAD_CANCELLED';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'WorkloadCancelledError';
+    }
+}
+
+export function isWorkloadCancelledError(error: unknown): error is WorkloadCancelledError {
+    return error instanceof WorkloadCancelledError
+        || (typeof error === 'object' && error !== null && (error as { code?: string }).code === 'WORKLOAD_CANCELLED');
 }
 
 export class WorkloadManager {
@@ -123,7 +147,7 @@ export class WorkloadManager {
         };
     }
 
-    public enqueueInteractiveIndexing<T>(codebasePath: string, run: () => Promise<T>): EnqueuedIndexingTask<T> {
+    public enqueueInteractiveIndexing<T>(codebasePath: string, run: (signal: AbortSignal) => Promise<T>): EnqueuedIndexingTask<T> {
         if (this.mode === 'daemon') {
             this.recordInteractiveActivity(codebasePath);
         }
@@ -135,7 +159,7 @@ export class WorkloadManager {
         });
     }
 
-    public async runBackgroundSync<T>(codebasePath: string, run: () => Promise<T>): Promise<T> {
+    public async runBackgroundSync<T>(codebasePath: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
         const task = this.enqueueIndexingTask(codebasePath, run, {
             codebasePath,
             priority: 100,
@@ -144,9 +168,9 @@ export class WorkloadManager {
         return task.completion;
     }
 
-    public async runSearch<T>(codebasePath: string, run: () => Promise<T>): Promise<T> {
+    public async runSearch<T>(codebasePath: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
         if (this.mode !== 'daemon') {
-            return run();
+            return run(new AbortController().signal);
         }
 
         this.recordInteractiveActivity(codebasePath);
@@ -160,11 +184,11 @@ export class WorkloadManager {
 
     private enqueueIndexingTask<T>(
         codebasePath: string,
-        run: () => Promise<T>,
+        run: (signal: AbortSignal) => Promise<T>,
         options: QueueWorkOptions
     ): EnqueuedIndexingTask<T> {
         if (this.mode !== 'daemon') {
-            const completion = run();
+            const completion = run(new AbortController().signal);
             return {
                 startedImmediately: true,
                 queuePosition: 0,
@@ -177,7 +201,7 @@ export class WorkloadManager {
 
     private enqueueWork<T>(
         lane: WorkloadLane,
-        run: () => Promise<T>,
+        run: (signal: AbortSignal) => Promise<T>,
         options: QueueWorkOptions
     ): EnqueuedIndexingTask<T> {
         const queue = this.getQueue(lane);
@@ -205,6 +229,7 @@ export class WorkloadManager {
             priority,
             enqueuedAt,
             readyAt,
+            abortController: new AbortController(),
             run,
             resolve: resolveCompletion,
             reject: rejectCompletion
@@ -235,6 +260,11 @@ export class WorkloadManager {
     }
 
     private async startQueuedJob<T>(job: QueuedWorkloadJob<T>): Promise<void> {
+        if (job.abortController.signal.aborted) {
+            job.reject(job.abortController.signal.reason ?? new WorkloadCancelledError('Queued workload was cancelled before start.'));
+            return;
+        }
+
         const activeJobs = this.getActiveJobs(job.lane);
         const activeJob: ActiveWorkloadJob = {
             id: job.id,
@@ -244,20 +274,21 @@ export class WorkloadManager {
             basePriority: job.basePriority,
             priority: job.priority,
             enqueuedAt: job.enqueuedAt,
-            startedAt: new Date().toISOString()
+            startedAt: new Date().toISOString(),
+            abortController: job.abortController
         };
 
         activeJobs.set(job.id, activeJob);
         this.notifyStateChanged(`${job.lane}-started`);
 
         try {
-            const result = await job.run();
+            const result = await job.run(job.abortController.signal);
             if (job.type === 'background-sync') {
                 this.clearBackgroundSyncBackoff(job.codebasePath);
             }
             job.resolve(result);
         } catch (error) {
-            if (job.type === 'background-sync') {
+            if (job.type === 'background-sync' && !isWorkloadCancelledError(error)) {
                 const backoffMs = this.recordBackgroundSyncFailure(job.codebasePath);
                 console.warn(
                     `[WORKLOAD] Background sync for '${job.codebasePath}' failed. ` +
@@ -300,6 +331,89 @@ export class WorkloadManager {
         }
 
         this.notifyStateChanged(`${lane}-drained`);
+    }
+
+    public cancelCodebaseIndexingWork(
+        codebasePath: string,
+        reason: string = 'Cancelled by daemon operator.'
+    ): CancelledWorkloadSummary {
+        const cancellationError = new WorkloadCancelledError(reason);
+        const queued: CancelledWorkloadSummary['queued'] = [];
+        const active: CancelledWorkloadSummary['active'] = [];
+
+        for (let index = this.indexingQueue.length - 1; index >= 0; index -= 1) {
+            const job = this.indexingQueue[index];
+            if (job.codebasePath !== codebasePath) {
+                continue;
+            }
+
+            this.indexingQueue.splice(index, 1);
+            job.abortController.abort(cancellationError);
+            job.reject(cancellationError);
+            queued.push({
+                id: job.id,
+                type: job.type,
+                codebasePath: job.codebasePath
+            });
+        }
+
+        for (const job of this.activeIndexingJobs.values()) {
+            if (job.codebasePath !== codebasePath) {
+                continue;
+            }
+
+            job.cancelRequestedAt = new Date().toISOString();
+            job.cancellationReason = reason;
+            job.abortController.abort(cancellationError);
+            active.push({
+                id: job.id,
+                type: job.type,
+                codebasePath: job.codebasePath
+            });
+        }
+
+        if (queued.length > 0 || active.length > 0) {
+            this.notifyStateChanged('indexing-cancelled');
+        }
+
+        return { queued, active };
+    }
+
+    public cancelAllWork(reason: string = 'Cancelled by daemon shutdown.'): CancelledWorkloadSummary {
+        const cancellationError = new WorkloadCancelledError(reason);
+        const queued: CancelledWorkloadSummary['queued'] = [];
+        const active: CancelledWorkloadSummary['active'] = [];
+
+        for (const queue of [this.indexingQueue, this.searchQueue]) {
+            for (const job of queue.splice(0, queue.length)) {
+                job.abortController.abort(cancellationError);
+                job.reject(cancellationError);
+                queued.push({
+                    id: job.id,
+                    type: job.type,
+                    codebasePath: job.codebasePath
+                });
+            }
+        }
+
+        for (const activeJobs of [this.activeIndexingJobs, this.activeSearchJobs]) {
+            for (const job of activeJobs.values()) {
+                job.cancelRequestedAt = new Date().toISOString();
+                job.cancellationReason = reason;
+                job.abortController.abort(cancellationError);
+                active.push({
+                    id: job.id,
+                    type: job.type,
+                    codebasePath: job.codebasePath
+                });
+            }
+        }
+
+        this.clearWakeTimer('indexing');
+        this.clearWakeTimer('search');
+        this.notifyStateChanged('all-work-cancelled');
+
+        return { queued, active };
     }
 
     private sortQueue(queue: Array<QueuedWorkloadJob<unknown>>): void {
@@ -350,7 +464,8 @@ export class WorkloadManager {
                 codebasePath: job.codebasePath,
                 priority: job.priority,
                 enqueuedAt: job.enqueuedAt,
-                startedAt: job.startedAt
+                startedAt: job.startedAt,
+                ...(job.cancelRequestedAt ? { cancelRequestedAt: job.cancelRequestedAt } : {})
             })),
             queuedJobs: queue.map((job) => ({
                 id: job.id,

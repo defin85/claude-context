@@ -1,23 +1,23 @@
 import * as vscode from 'vscode';
-import { Context } from '@zilliz/claude-context-core';
 import * as fs from 'fs';
 import { CodebaseTargetManager } from '../codebaseTargetManager';
+import { CodeSearchBackend } from '../backend/types';
 
 export class SyncCommand {
-    private context: Context;
+    private backend: CodeSearchBackend;
     private codebaseTargetManager: CodebaseTargetManager;
     private isSyncing: boolean = false;
 
-    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
-        this.context = context;
+    constructor(backend: CodeSearchBackend, codebaseTargetManager: CodebaseTargetManager) {
+        this.backend = backend;
         this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
-     * Update the Context instance (used when configuration changes)
+     * Update the backend instance (used when configuration changes)
      */
-    updateContext(context: Context): void {
-        this.context = context;
+    updateBackend(backend: CodeSearchBackend): void {
+        this.backend = backend;
     }
 
     /**
@@ -55,7 +55,15 @@ export class SyncCommand {
         this.isSyncing = true;
 
         try {
-            let syncStats: { added: number; removed: number; modified: number } | undefined;
+            let syncStats:
+                | {
+                    added: number;
+                    removed: number;
+                    modified: number;
+                    daemonManaged?: boolean;
+                    message?: string;
+                }
+                | undefined;
 
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
@@ -65,7 +73,7 @@ export class SyncCommand {
                 progress.report({ increment: 0, message: 'Checking for file changes...' });
 
                 try {
-                    syncStats = await this.context.reindexByChange(
+                    syncStats = await this.backend.syncCodebase(
                         codebasePath,
                         (progressInfo) => {
                             const increment = progressInfo.percentage;
@@ -82,6 +90,12 @@ export class SyncCommand {
             });
 
             if (syncStats) {
+                if (syncStats.daemonManaged) {
+                    vscode.window.showInformationMessage(syncStats.message || 'Daemon manages background sync automatically.');
+                    console.log(`[SYNC] ${syncStats.message || 'Daemon manages background sync automatically.'}`);
+                    return;
+                }
+
                 const totalChanges = syncStats.added + syncStats.removed + syncStats.modified;
 
                 if (totalChanges > 0) {
@@ -159,7 +173,12 @@ export class SyncCommand {
         this.isSyncing = true;
 
         try {
-            const syncStats = await this.context.reindexByChange(codebasePath);
+            const syncStats = await this.backend.syncCodebase(codebasePath);
+
+            if (syncStats.daemonManaged) {
+                console.log(`[AUTO-SYNC] ${syncStats.message || 'Daemon manages background sync automatically.'}`);
+                return;
+            }
 
             const totalChanges = syncStats.added + syncStats.removed + syncStats.modified;
 

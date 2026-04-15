@@ -1,22 +1,23 @@
 import * as vscode from 'vscode';
-import { Context, SearchQuery, SemanticSearchResult } from '@zilliz/claude-context-core';
+import { SearchQuery, SemanticSearchResult } from '@zilliz/claude-context-core';
 import * as path from 'path';
 import { CodebaseTargetManager } from '../codebaseTargetManager';
+import { CodeSearchBackend } from '../backend/types';
 
 export class SearchCommand {
-    private context: Context;
+    private backend: CodeSearchBackend;
     private codebaseTargetManager: CodebaseTargetManager;
 
-    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
-        this.context = context;
+    constructor(backend: CodeSearchBackend, codebaseTargetManager: CodebaseTargetManager) {
+        this.backend = backend;
         this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
-     * Update the Context instance (used when configuration changes)
+     * Update the backend instance (used when configuration changes)
      */
-    updateContext(context: Context): void {
-        this.context = context;
+    updateBackend(backend: CodeSearchBackend): void {
+        this.backend = backend;
     }
 
     async execute(preSelectedText?: string): Promise<void> {
@@ -58,7 +59,7 @@ export class SearchCommand {
 
                 // Check if index exists
                 progress.report({ increment: 20, message: 'Checking index...' });
-                const hasIndex = await this.context.hasIndex(codebasePath);
+                const hasIndex = await this.backend.hasIndex(codebasePath);
 
                 if (!hasIndex) {
                     vscode.window.showErrorMessage('Index not found. Please index the codebase first.');
@@ -77,17 +78,13 @@ export class SearchCommand {
                     .map(e => e.trim())
                     .filter(Boolean);
 
-                // Validate extensions strictly and build filter expression
-                let filterExpr: string | undefined = undefined;
+                // Validate extensions strictly
                 if (fileExtensions.length > 0) {
                     const invalid = fileExtensions.filter(e => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
                     if (invalid.length > 0) {
                         vscode.window.showErrorMessage(`Invalid extensions: ${invalid.join(', ')}. Use proper extensions like '.ts', '.py'.`);
                         return;
                     }
-                    const quoted = fileExtensions.map(e => `'${e}'`).join(',');
-
-                    filterExpr = `fileExtension in [${quoted}]`;
                 }
 
                 // Use semantic search
@@ -100,12 +97,11 @@ export class SearchCommand {
                 console.log('🔍 Using semantic search...');
                 progress.report({ increment: 50, message: 'Executing semantic search...' });
 
-                let results = await this.context.semanticSearch(
+                let results = await this.backend.search(
                     codebasePath,
                     query.term,
                     query.limit || 20,
-                    0.3, // similarity threshold
-                    filterExpr
+                    fileExtensions
                 );
                 // No client-side filtering; filter pushed down via filter expression
 
@@ -177,30 +173,26 @@ export class SearchCommand {
         }
 
         // Check if index exists
-        const hasIndex = await this.context.hasIndex(codebasePath);
+        const hasIndex = await this.backend.hasIndex(codebasePath);
         if (!hasIndex) {
             throw new Error('Index not found. Please index the codebase first.');
         }
 
         console.log('🔍 Using semantic search for webview...');
 
-        // Validate extensions strictly and build filter expression
-        let filterExpr: string | undefined = undefined;
+        // Validate extensions strictly
         if (fileExtensions && fileExtensions.length > 0) {
             const invalid = fileExtensions.filter(e => !(typeof e === 'string' && e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
             if (invalid.length > 0) {
                 throw new Error(`Invalid extensions: ${invalid.join(', ')}. Use proper extensions like '.ts', '.py'.`);
             }
-            const quoted = fileExtensions.map(e => `'${e}'`).join(',');
-            filterExpr = `fileExtension in [${quoted}]`;
         }
 
-        const results = await this.context.semanticSearch(
+        const results = await this.backend.search(
             codebasePath,
             searchTerm,
             limit,
-            0.3, // similarity threshold
-            filterExpr
+            fileExtensions
         );
         return {
             codebasePath,
@@ -213,10 +205,22 @@ export class SearchCommand {
      */
     async hasIndex(codebasePath: string): Promise<boolean> {
         try {
-            return await this.context.hasIndex(codebasePath);
+            return await this.backend.hasIndex(codebasePath);
         } catch (error) {
             console.error('Error checking index existence:', error);
             return false;
+        }
+    }
+
+    async getIndexStatus(codebasePath: string) {
+        try {
+            return await this.backend.getIndexStatus(codebasePath);
+        } catch (error) {
+            console.error('Error checking index existence:', error);
+            return {
+                path: codebasePath,
+                status: 'not_found' as const
+            };
         }
     }
 

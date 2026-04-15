@@ -119,6 +119,21 @@
                     "type": "string",
                     "description": "Milvus authentication token (optional)"
                 },
+                "semanticCodeSearch.runtime.mode": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "embedded",
+                        "daemon"
+                    ],
+                    "default": "auto",
+                    "enumDescriptions": [
+                        "Prefer a compatible local daemon when available and fall back to embedded mode otherwise",
+                        "Always use the extension's embedded local indexing/search runtime",
+                        "Require a compatible local daemon and do not fall back to embedded mode"
+                    ],
+                    "description": "Select how the VS Code extension talks to Claude Context."
+                },
                 "semanticCodeSearch.autoSync.enabled": {
                     "type": "boolean",
                     "default": true,
@@ -175,6 +190,7 @@
         "release": "vsce publish --no-dependencies"
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.12.1",
         "@zilliz/claude-context-core": "workspace:*",
         "web-tree-sitter": "^0.25.6"
     },

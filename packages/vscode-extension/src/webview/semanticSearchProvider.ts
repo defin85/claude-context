@@ -251,25 +251,29 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
             config: config,
             milvusConfig: milvusConfig,
             splitterConfig: splitterConfig,
+            runtimeMode: this.configManager.getRuntimeMode(),
             supportedProviders: supportedProviders
         });
     }
 
     private async saveConfig(configData: any, webview: vscode.Webview) {
         try {
-            // Save embedding provider config
-            const embeddingConfig: EmbeddingProviderConfig = {
-                provider: configData.provider,
-                config: configData.config
-            };
-            await this.configManager.saveEmbeddingProviderConfig(embeddingConfig);
+            if (configData.runtimeMode) {
+                await this.configManager.saveRuntimeMode(configData.runtimeMode);
+            }
 
-            // Save Milvus config
+            if (configData.provider && configData.config) {
+                const embeddingConfig: EmbeddingProviderConfig = {
+                    provider: configData.provider,
+                    config: configData.config
+                };
+                await this.configManager.saveEmbeddingProviderConfig(embeddingConfig);
+            }
+
             if (configData.milvusConfig) {
                 await this.configManager.saveMilvusConfig(configData.milvusConfig);
             }
 
-            // Save splitter config
             if (configData.splitterConfig) {
                 await this.configManager.saveSplitterConfig(configData.splitterConfig);
             }

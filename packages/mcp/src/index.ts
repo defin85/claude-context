@@ -33,6 +33,13 @@ import {
     showHelpMessage
 } from './config.js';
 import { DaemonRegistryManager } from './daemon-registry.js';
+import {
+    DAEMON_CLIENT_COMPATIBILITY_VERSION,
+    DaemonClientConfigManager,
+    readDaemonOperatorStatus
+} from './daemon-discovery.js';
+import { handleDaemonCliCommand } from './daemon-cli.js';
+import { migrateWorkspaceStateToDaemon } from './daemon-state-migration.js';
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
 import { ToolHandlers } from './handlers.js';
 import { RuntimeStatusManager } from './runtime-status.js';
@@ -72,6 +79,7 @@ class ContextMcpServer {
     private readonly accessPolicy: CodebaseAccessPolicy;
     private readonly workloadManager?: WorkloadManager;
     private readonly daemonRegistryManager?: DaemonRegistryManager;
+    private readonly daemonClientConfigManager?: DaemonClientConfigManager;
     private stdioServer?: Server;
     private stdioTransport?: StdioServerTransport;
     private daemonHttpServer?: http.Server;
@@ -184,6 +192,20 @@ class ContextMcpServer {
                 runtimeStatusFilePath: this.runtimeStatusManager.getRuntimeStatusFilePath(),
                 snapshotFilePath: this.snapshotManager.getSnapshotFilePath()
             });
+            this.daemonClientConfigManager = new DaemonClientConfigManager({
+                runtimeId,
+                serverName: this.config.name,
+                serverVersion: this.config.version,
+                compatibilityVersion: DAEMON_CLIENT_COMPATIBILITY_VERSION,
+                host: runtimeConfig.daemon.host,
+                port: runtimeConfig.daemon.port,
+                endpointPath: runtimeConfig.daemon.endpointPath,
+                allowedRoots: runtimeConfig.daemon.allowRoots,
+                bearerToken: runtimeConfig.daemon.bearerToken,
+                tokenSha256: runtimeConfig.daemon.tokenSha256,
+                runtimeStatusFilePath: this.runtimeStatusManager.getRuntimeStatusFilePath(),
+                snapshotFilePath: this.snapshotManager.getSnapshotFilePath()
+            });
         }
 
         if (this.workloadManager) {
@@ -242,111 +264,156 @@ This tool is versatile and can be used before completing various tasks to retrie
 `;
 
         server.setRequestHandler(ListToolsRequestSchema, async () => {
-            return {
-                tools: [
+            const tools: Array<Record<string, any>> = [
+                {
+                    name: 'index_codebase',
+                    description: indexDescription,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            path: {
+                                type: 'string',
+                                description: 'ABSOLUTE path to the codebase directory to index.'
+                            },
+                            force: {
+                                type: 'boolean',
+                                description: 'Force re-indexing even if already indexed',
+                                default: false
+                            },
+                            splitter: {
+                                type: 'string',
+                                description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting",
+                                enum: ['ast', 'langchain'],
+                                default: 'ast'
+                            },
+                            customExtensions: {
+                                type: 'array',
+                                items: {
+                                    type: 'string'
+                                },
+                                description: "Optional: Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added",
+                                default: []
+                            },
+                            ignorePatterns: {
+                                type: 'array',
+                                items: {
+                                    type: 'string'
+                                },
+                                description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
+                                default: []
+                            }
+                        },
+                        required: ['path']
+                    }
+                },
+                {
+                    name: 'search_code',
+                    description: searchDescription,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            path: {
+                                type: 'string',
+                                description: 'ABSOLUTE path to the codebase directory to search in.'
+                            },
+                            query: {
+                                type: 'string',
+                                description: 'Natural language query to search for in the codebase'
+                            },
+                            limit: {
+                                type: 'number',
+                                description: 'Maximum number of results to return',
+                                default: 10,
+                                maximum: 50
+                            },
+                            extensionFilter: {
+                                type: 'array',
+                                items: {
+                                    type: 'string'
+                                },
+                                description: "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
+                                default: []
+                            }
+                        },
+                        required: ['path', 'query']
+                    }
+                },
+                {
+                    name: 'clear_index',
+                    description: 'Clear the search index. IMPORTANT: You MUST provide an absolute path.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            path: {
+                                type: 'string',
+                                description: 'ABSOLUTE path to the codebase directory to clear.'
+                            }
+                        },
+                        required: ['path']
+                    }
+                },
+                {
+                    name: 'get_indexing_status',
+                    description: 'Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            path: {
+                                type: 'string',
+                                description: 'ABSOLUTE path to the codebase directory to check status for.'
+                            }
+                        },
+                        required: ['path']
+                    }
+                }
+            ];
+
+            if (this.runtimeConfig.mode === 'daemon') {
+                tools.push(
                     {
-                        name: 'index_codebase',
-                        description: indexDescription,
+                        name: 'get_daemon_status',
+                        description: 'Inspect daemon runtime metadata, known repositories, and active workload state.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {},
+                            additionalProperties: false
+                        }
+                    },
+                    {
+                        name: 'cancel_codebase_workload',
+                        description: 'Cancel queued or active daemon indexing/background-sync work for a codebase path.',
                         inputSchema: {
                             type: 'object',
                             properties: {
                                 path: {
                                     type: 'string',
-                                    description: 'ABSOLUTE path to the codebase directory to index.'
+                                    description: 'ABSOLUTE path to the codebase whose daemon workload should be cancelled.'
                                 },
-                                force: {
-                                    type: 'boolean',
-                                    description: 'Force re-indexing even if already indexed',
-                                    default: false
-                                },
-                                splitter: {
+                                reason: {
                                     type: 'string',
-                                    description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting",
-                                    enum: ['ast', 'langchain'],
-                                    default: 'ast'
-                                },
-                                customExtensions: {
-                                    type: 'array',
-                                    items: {
-                                        type: 'string'
-                                    },
-                                    description: "Optional: Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added",
-                                    default: []
-                                },
-                                ignorePatterns: {
-                                    type: 'array',
-                                    items: {
-                                        type: 'string'
-                                    },
-                                    description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
-                                    default: []
+                                    description: 'Optional operator-visible cancellation reason.'
                                 }
                             },
                             required: ['path']
                         }
                     },
                     {
-                        name: 'search_code',
-                        description: searchDescription,
+                        name: 'shutdown_daemon',
+                        description: 'Gracefully stop the local daemon after this response has been sent.',
                         inputSchema: {
                             type: 'object',
                             properties: {
-                                path: {
+                                reason: {
                                     type: 'string',
-                                    description: 'ABSOLUTE path to the codebase directory to search in.'
-                                },
-                                query: {
-                                    type: 'string',
-                                    description: 'Natural language query to search for in the codebase'
-                                },
-                                limit: {
-                                    type: 'number',
-                                    description: 'Maximum number of results to return',
-                                    default: 10,
-                                    maximum: 50
-                                },
-                                extensionFilter: {
-                                    type: 'array',
-                                    items: {
-                                        type: 'string'
-                                    },
-                                    description: "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
-                                    default: []
+                                    description: 'Optional operator-visible shutdown reason.'
                                 }
-                            },
-                            required: ['path', 'query']
-                        }
-                    },
-                    {
-                        name: 'clear_index',
-                        description: 'Clear the search index. IMPORTANT: You MUST provide an absolute path.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                path: {
-                                    type: 'string',
-                                    description: 'ABSOLUTE path to the codebase directory to clear.'
-                                }
-                            },
-                            required: ['path']
-                        }
-                    },
-                    {
-                        name: 'get_indexing_status',
-                        description: 'Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                path: {
-                                    type: 'string',
-                                    description: 'ABSOLUTE path to the codebase directory to check status for.'
-                                }
-                            },
-                            required: ['path']
+                            }
                         }
                     }
-                ]
-            };
+                );
+            }
+
+            return { tools };
         });
 
         server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -361,10 +428,153 @@ This tool is versatile and can be used before completing various tasks to retrie
                     return await this.toolHandlers.handleClearIndex(args);
                 case 'get_indexing_status':
                     return await this.toolHandlers.handleGetIndexingStatus(args);
+                case 'get_daemon_status':
+                    return await this.handleGetDaemonStatusTool();
+                case 'cancel_codebase_workload':
+                    return await this.handleCancelCodebaseWorkloadTool(args);
+                case 'shutdown_daemon':
+                    return await this.handleShutdownDaemonTool(args);
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
         });
+    }
+
+    private async prepareDaemonState(): Promise<void> {
+        if (this.runtimeConfig.mode !== 'daemon') {
+            return;
+        }
+
+        const migration = await migrateWorkspaceStateToDaemon(
+            this.snapshotManager,
+            this.codebaseConfigManager,
+            this.accessPolicy
+        );
+
+        if (migration.importedCodebases.length === 0 && migration.importedConfigs.length === 0) {
+            return;
+        }
+
+        console.log(
+            `[DAEMON-MIGRATION] Imported ${migration.importedCodebases.length} codebase(s) and ` +
+            `${migration.importedConfigs.length} config(s) into daemon state.`
+        );
+        await this.runtimeStatusManager.refresh('daemon-workspace-migration');
+    }
+
+    private async handleGetDaemonStatusTool() {
+        const operatorStatus = await readDaemonOperatorStatus();
+        const textLines = [
+            `Daemon runtimes: ${operatorStatus.runtimes.length}`
+        ];
+
+        for (const runtime of operatorStatus.runtimes) {
+            const knownCodebasesCount = runtime.knownCodebases?.length || 0;
+            textLines.push(
+                `- ${runtime.runtimeId} pid=${runtime.pid} healthy=${runtime.healthy} ` +
+                `repos=${knownCodebasesCount} endpoint=${runtime.endpointUrl}`
+            );
+        }
+
+        return {
+            content: [{
+                type: 'text',
+                text: textLines.join('\n')
+            }],
+            structuredContent: operatorStatus
+        };
+    }
+
+    private async handleCancelCodebaseWorkloadTool(args: any) {
+        const inputPath = typeof args?.path === 'string' ? args.path : '';
+        const reason = typeof args?.reason === 'string' && args.reason.trim().length > 0
+            ? args.reason.trim()
+            : 'Cancelled by daemon operator.';
+
+        if (!inputPath) {
+            return {
+                content: [{
+                    type: 'text',
+                    text: 'Error: cancel_codebase_workload requires an absolute path.'
+                }],
+                isError: true
+            };
+        }
+
+        const accessDecision = this.accessPolicy.evaluateCodebasePath(inputPath);
+        if (!accessDecision.allowed) {
+            return {
+                content: [{
+                    type: 'text',
+                    text: `Error: Access to codebase '${accessDecision.absolutePath}' is outside the configured daemon allowlist. Allowed roots: ${this.accessPolicy.getAllowedRoots().join(', ')}`
+                }],
+                isError: true
+            };
+        }
+
+        if (!this.workloadManager) {
+            return {
+                content: [{
+                    type: 'text',
+                    text: 'Error: cancel_codebase_workload is only available in daemon mode.'
+                }],
+                isError: true
+            };
+        }
+
+        const cancellation = this.workloadManager.cancelCodebaseIndexingWork(accessDecision.absolutePath, reason);
+        const cancelledInteractiveWork = [...cancellation.queued, ...cancellation.active]
+            .some((job) => job.type === 'interactive-index');
+
+        if (cancelledInteractiveWork) {
+            const lastProgress = this.snapshotManager.getIndexingProgress(accessDecision.absolutePath);
+            await this.snapshotManager.failIndexingOwnership(
+                accessDecision.absolutePath,
+                reason,
+                lastProgress
+            ).catch(() => undefined);
+        }
+
+        await this.runtimeStatusManager.refresh('daemon-admin-cancel-workload');
+
+        const text = cancellation.queued.length === 0 && cancellation.active.length === 0
+            ? `No queued or active daemon indexing work was found for '${accessDecision.absolutePath}'.`
+            : `Cancelled daemon workload for '${accessDecision.absolutePath}'. ` +
+                `Queued jobs: ${cancellation.queued.length}. Active jobs: ${cancellation.active.length}.`;
+
+        return {
+            content: [{
+                type: 'text',
+                text
+            }],
+            structuredContent: {
+                path: accessDecision.absolutePath,
+                reason,
+                queued: cancellation.queued,
+                active: cancellation.active
+            }
+        };
+    }
+
+    private async handleShutdownDaemonTool(args: any) {
+        const reason = typeof args?.reason === 'string' && args.reason.trim().length > 0
+            ? args.reason.trim()
+            : 'shutdown requested by daemon operator';
+
+        setTimeout(() => {
+            void shutdown(reason).finally(() => process.exit(0));
+        }, 0);
+
+        return {
+            content: [{
+                type: 'text',
+                text: `Daemon shutdown scheduled: ${reason}.`
+            }],
+            structuredContent: {
+                scheduled: true,
+                reason
+            }
+        };
     }
 
     private async startStdio(): Promise<void> {
@@ -386,6 +596,8 @@ This tool is versatile and can be used before completing various tasks to retrie
         if (!daemonConfig) {
             throw new Error('Daemon runtime configuration is missing.');
         }
+
+        await this.prepareDaemonState();
 
         this.daemonHttpServer = http.createServer((request, response) => {
             void this.handleDaemonRequest(request, response);
@@ -409,6 +621,8 @@ This tool is versatile and can be used before completing various tasks to retrie
         await this.runtimeStatusManager.refresh('daemon-started');
         await this.daemonRegistryManager?.refresh();
         this.daemonRegistryManager?.startHeartbeat();
+        await this.daemonClientConfigManager?.refresh();
+        this.daemonClientConfigManager?.startHeartbeat();
 
         console.log(`MCP daemon started and listening on http://${daemonConfig.host}:${daemonConfig.port}${daemonConfig.endpointPath}.`);
 
@@ -582,6 +796,13 @@ This tool is versatile and can be used before completing various tasks to retrie
 
         this.syncManager.stopBackgroundSync();
         this.daemonRegistryManager?.stopHeartbeat();
+        this.daemonClientConfigManager?.stopHeartbeat();
+        const cancelledWork = this.workloadManager?.cancelAllWork('Cancelled by daemon shutdown.');
+        if (cancelledWork && (cancelledWork.queued.length > 0 || cancelledWork.active.length > 0)) {
+            console.warn(
+                `[MCP] Cancelled ${cancelledWork.queued.length} queued and ${cancelledWork.active.length} active workload job(s) during shutdown.`
+            );
+        }
 
         const shutdownErrorMessage = `MCP runtime shutdown interrupted indexing before completion.`;
         const interruptedCodebases = await this.snapshotManager.failCurrentRuntimeOwnedIndexingCodebases(shutdownErrorMessage);
@@ -613,6 +834,7 @@ This tool is versatile and can be used before completing various tasks to retrie
         }
 
         await this.daemonRegistryManager?.remove();
+        await this.daemonClientConfigManager?.remove();
     }
 }
 
@@ -637,6 +859,10 @@ async function main() {
 
     if (args.includes('--help') || args.includes('-h')) {
         showHelpMessage();
+        process.exit(0);
+    }
+
+    if (await handleDaemonCliCommand(args)) {
         process.exit(0);
     }
 

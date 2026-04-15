@@ -37,6 +37,15 @@ A code indexing and semantic search VSCode extension powered by [Claude Context]
 ### Configuration
 The first time you open Claude Context, you need to click on Settings icon to configure the relevant options.
 
+#### Runtime Mode
+The extension supports three runtime modes:
+
+- `auto`: prefer a compatible local daemon discovered via `~/.context/mcp/daemon/client-config.json`, then fall back to the embedded runtime
+- `embedded`: always use the extension-local embedding + Milvus configuration
+- `daemon`: require a compatible local daemon and fail closed if no daemon is running
+
+When `runtime.mode = daemon`, the extension sends search/index requests to the shared MCP daemon. Local embedding and Milvus settings are ignored in this mode; splitter settings are still used for new indexing requests.
+
 #### Embedding Configuration
 Configure your embedding provider to convert code into semantic vectors.
 
@@ -88,7 +97,9 @@ MILVUS_TOKEN=your-zilliz-cloud-api-key
 1. **Set the Configuration**:
    - Open VSCode Settings (Ctrl+, or Cmd+, on Mac)
    - Search for "Semantic Code Search"
-   - Set the configuration
+   - Set `semanticCodeSearch.runtime.mode`
+   - If you use `embedded` or `auto` fallback, configure embedding + Milvus settings
+   - If you use `daemon`, start the MCP daemon first and make sure discovery metadata exists under `~/.context/mcp/daemon/client-config.json`
 
 2. **Index Codebase**:
    - Open Command Palette (Ctrl+Shift+P or Cmd+Shift+P on Mac)
@@ -112,6 +123,7 @@ MILVUS_TOKEN=your-zilliz-cloud-api-key
 - `semanticCodeSearch.embeddingProvider.baseURL` - Custom API endpoint URL (optional, for OpenAI and Gemini)
 - `semanticCodeSearch.embeddingProvider.outputDimensionality` - Output dimension for Gemini (supports 3072, 1536, 768, 256)
 - `semanticCodeSearch.milvus.address` - Milvus server address
+- `semanticCodeSearch.runtime.mode` - Runtime selection (`auto`, `embedded`, or `daemon`)
 
 ## Contributing
 

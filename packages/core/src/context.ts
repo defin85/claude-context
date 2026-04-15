@@ -59,6 +59,23 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
         && (error as { code?: unknown }).code === 'EMBEDDING_CONTEXT_LIMIT_EXCEEDED';
 }
 
+function throwIfOperationAborted(abortSignal?: AbortSignal): void {
+    if (!abortSignal?.aborted) {
+        return;
+    }
+
+    const reason = abortSignal.reason;
+    if (reason instanceof Error) {
+        throw reason;
+    }
+
+    if (typeof reason === 'string' && reason.trim().length > 0) {
+        throw new Error(reason);
+    }
+
+    throw new Error('Operation cancelled.');
+}
+
 const DEFAULT_SUPPORTED_EXTENSIONS = [
     // Programming languages
     '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cpp', '.c', '.h', '.hpp',
@@ -414,25 +431,29 @@ export class Context {
     async indexCodebase(
         codebasePath: string,
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
-        forceReindex: boolean = false
+        forceReindex: boolean = false,
+        abortSignal?: AbortSignal
     ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
         console.log(`[Context] 🚀 Starting to index codebase with ${searchType}: ${codebasePath}`);
+        throwIfOperationAborted(abortSignal);
 
         // 1. Load ignore patterns from various ignore files
         await this.loadIgnorePatterns(codebasePath);
+        throwIfOperationAborted(abortSignal);
 
         // 2. Check and prepare vector collection
         progressCallback?.({ phase: 'Preparing collection...', current: 0, total: 100, percentage: 0 });
         console.log(`Debug2: Preparing vector collection for codebase${forceReindex ? ' (FORCE REINDEX)' : ''}`);
         await this.prepareCollection(codebasePath, forceReindex);
+        throwIfOperationAborted(abortSignal);
 
         // 3. Recursively traverse codebase to get all supported files
         progressCallback?.({ phase: 'Scanning files...', current: 5, total: 100, percentage: 5 });
-        const codeFiles = await this.getCodeFiles(codebasePath, session);
+        const codeFiles = await this.getCodeFiles(codebasePath, session, abortSignal);
         console.log(`[Context] 📁 Found ${codeFiles.length} code files`);
 
         if (codeFiles.length === 0) {
@@ -460,7 +481,8 @@ export class Context {
                     total: totalFiles,
                     percentage: Math.round(progressPercentage)
                 });
-            }
+            },
+            abortSignal
         );
 
         console.log(`[Context] ✅ Codebase indexing completed! Processed ${result.processedFiles} files in total, generated ${result.totalChunks} code chunks`);
@@ -481,11 +503,13 @@ export class Context {
 
     async reindexByChange(
         codebasePath: string,
-        progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void
+        progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
+        abortSignal?: AbortSignal
     ): Promise<{ added: number, removed: number, modified: number }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
         const collectionName = this.getCollectionName(codebasePath);
+        throwIfOperationAborted(abortSignal);
         const synchronizer = session.synchronizer || this.synchronizers.get(collectionName);
 
         if (synchronizer && !session.synchronizer) {
@@ -495,6 +519,7 @@ export class Context {
         if (!synchronizer) {
             // Load project-specific ignore patterns before creating FileSynchronizer
             await this.loadIgnorePatterns(codebasePath);
+            throwIfOperationAborted(abortSignal);
 
             // To be safe, let's initialize if it's not there.
             const newSynchronizer = new FileSynchronizer(codebasePath, session.effectiveIgnorePatterns);
@@ -507,6 +532,7 @@ export class Context {
 
         progressCallback?.({ phase: 'Checking for file changes...', current: 0, total: 100, percentage: 0 });
         const { added, removed, modified } = await currentSynchronizer.checkForChanges();
+        throwIfOperationAborted(abortSignal);
         const totalChanges = added.length + removed.length + modified.length;
 
         if (totalChanges === 0) {
@@ -526,12 +552,14 @@ export class Context {
 
         // Handle removed files
         for (const file of removed) {
+            throwIfOperationAborted(abortSignal);
             await this.deleteFileChunks(collectionName, file);
             updateProgress(`Removed ${file}`);
         }
 
         // Handle modified files
         for (const file of modified) {
+            throwIfOperationAborted(abortSignal);
             await this.deleteFileChunks(collectionName, file);
             updateProgress(`Deleted old chunks for ${file}`);
         }
@@ -545,7 +573,8 @@ export class Context {
                 codebasePath,
                 (filePath, fileIndex, totalFiles) => {
                     updateProgress(`Indexed ${filePath} (${fileIndex}/${totalFiles})`);
-                }
+                },
+                abortSignal
             );
         }
 
@@ -871,13 +900,19 @@ export class Context {
     /**
      * Recursively get all code files in the codebase
      */
-    private async getCodeFiles(codebasePath: string, session: CodebaseSessionState): Promise<string[]> {
+    private async getCodeFiles(
+        codebasePath: string,
+        session: CodebaseSessionState,
+        abortSignal?: AbortSignal
+    ): Promise<string[]> {
         const files: string[] = [];
 
         const traverseDirectory = async (currentPath: string) => {
+            throwIfOperationAborted(abortSignal);
             const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
 
             for (const entry of entries) {
+                throwIfOperationAborted(abortSignal);
                 const fullPath = path.join(currentPath, entry.name);
 
                 // Check if path matches ignore patterns
@@ -910,7 +945,8 @@ export class Context {
     private async processFileList(
         filePaths: string[],
         codebasePath: string,
-        onFileProcessed?: (filePath: string, fileIndex: number, totalFiles: number) => void
+        onFileProcessed?: (filePath: string, fileIndex: number, totalFiles: number) => void,
+        abortSignal?: AbortSignal
     ): Promise<{ processedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
         const isHybrid = this.getIsHybrid();
         const EMBEDDING_BATCH_SIZE = Math.max(1, parseInt(envManager.get('EMBEDDING_BATCH_SIZE') || '100', 10));
@@ -923,12 +959,15 @@ export class Context {
         let limitReached = false;
 
         for (let i = 0; i < filePaths.length; i++) {
+            throwIfOperationAborted(abortSignal);
             const filePath = filePaths[i];
 
             try {
                 const content = await fs.promises.readFile(filePath, 'utf-8');
+                throwIfOperationAborted(abortSignal);
                 const language = this.getLanguageFromExtension(path.extname(filePath));
                 const chunks = await this.codeSplitter.split(content, language, filePath);
+                throwIfOperationAborted(abortSignal);
 
                 // Log files with many chunks or large content
                 if (chunks.length > 50) {
@@ -944,6 +983,7 @@ export class Context {
 
                     // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
                     if (chunkBuffer.length >= EMBEDDING_BATCH_SIZE) {
+                        throwIfOperationAborted(abortSignal);
                         try {
                             await this.processChunkBuffer(chunkBuffer);
                         } catch (error) {
@@ -985,6 +1025,7 @@ export class Context {
 
         // Process any remaining chunks in the buffer
         if (chunkBuffer.length > 0) {
+            throwIfOperationAborted(abortSignal);
             const searchType = isHybrid === true ? 'hybrid' : 'regular';
             console.log(`📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`);
             try {

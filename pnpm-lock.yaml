@@ -246,6 +246,9 @@ importers:
 
   packages/vscode-extension:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.12.1
+        version: 1.12.1
       '@zilliz/claude-context-core':
         specifier: workspace:*
         version: link:../core

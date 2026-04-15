@@ -1,21 +1,21 @@
 import * as vscode from 'vscode';
-import { Context } from '@zilliz/claude-context-core';
 import { CodebaseTargetManager } from '../codebaseTargetManager';
+import { CodeSearchBackend } from '../backend/types';
 
 export class IndexCommand {
-    private context: Context;
+    private backend: CodeSearchBackend;
     private codebaseTargetManager: CodebaseTargetManager;
 
-    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
-        this.context = context;
+    constructor(backend: CodeSearchBackend, codebaseTargetManager: CodebaseTargetManager) {
+        this.backend = backend;
         this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
-     * Update the Context instance (used when configuration changes)
+     * Update the backend instance (used when configuration changes)
      */
-    updateContext(context: Context): void {
-        this.context = context;
+    updateBackend(backend: CodeSearchBackend): void {
+        this.backend = backend;
     }
 
     async execute(): Promise<void> {
@@ -44,7 +44,13 @@ export class IndexCommand {
         }
 
         try {
-            let indexStats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' } | undefined;
+            let indexStats:
+                | {
+                    indexedFiles?: number;
+                    totalChunks?: number;
+                    status?: 'completed' | 'limit_reached';
+                }
+                | undefined;
 
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
@@ -52,36 +58,12 @@ export class IndexCommand {
                 cancellable: false
             }, async (progress) => {
                 let lastPercentage = 0;
-
-                // Clear existing index first
-                await this.context.clearIndex(
+                indexStats = await this.backend.indexCodebase(
                     selectedFolder.uri.fsPath,
                     (progressInfo) => {
-                        // Clear index progress is usually fast, just show the message
-                        progress.report({ increment: 0, message: progressInfo.phase });
-                    }
-                );
-
-                // Initialize file synchronizer
-                progress.report({ increment: 0, message: 'Initializing file synchronizer...' });
-                const { FileSynchronizer } = await import("@zilliz/claude-context-core");
-                const synchronizer = new FileSynchronizer(
-                    selectedFolder.uri.fsPath,
-                    this.context.getIgnorePatterns(selectedFolder.uri.fsPath) || []
-                );
-                await synchronizer.initialize();
-                // Store synchronizer in the context's internal map using the collection name from context
-                await this.context.getPreparedCollection(selectedFolder.uri.fsPath);
-                this.context.setSynchronizerForCodebase(selectedFolder.uri.fsPath, synchronizer);
-
-                // Start indexing with progress callback
-                indexStats = await this.context.indexCodebase(
-                    selectedFolder.uri.fsPath,
-                    (progressInfo) => {
-                        // Calculate increment from last reported percentage
-                        const increment = progressInfo.percentage - lastPercentage;
-                        lastPercentage = progressInfo.percentage;
-
+                        const boundedPercentage = Math.max(0, Math.min(100, progressInfo.percentage));
+                        const increment = Math.max(0, boundedPercentage - lastPercentage);
+                        lastPercentage = boundedPercentage;
                         progress.report({
                             increment: increment,
                             message: progressInfo.phase
@@ -97,9 +79,13 @@ export class IndexCommand {
                     vscode.window.showWarningMessage(
                         `⚠️ Indexing paused. Reached chunk limit of 450,000.\n\nIndexed ${indexedFiles} files with ${totalChunks} code chunks.`
                     );
-                } else {
+                } else if (typeof indexedFiles === 'number' && typeof totalChunks === 'number') {
                     vscode.window.showInformationMessage(
                         `✅ Indexing complete!\n\nIndexed ${indexedFiles} files with ${totalChunks} code chunks.\n\nYou can now use semantic search.`
+                    );
+                } else {
+                    vscode.window.showInformationMessage(
+                        `✅ Indexing complete!\n\nThe daemon reported that indexing finished successfully.`
                     );
                 }
             }
@@ -156,7 +142,7 @@ export class IndexCommand {
                 title: 'Clearing Index',
                 cancellable: false
             }, async (progress) => {
-                await this.context.clearIndex(
+                await this.backend.clearIndex(
                     codebasePath,
                     (progressInfo) => {
                         progress.report({

@@ -25,12 +25,24 @@ import { CodebaseAccessPolicy } from '../packages/mcp/src/access-policy.ts';
 import type { CodebaseSnapshotV2 } from '../packages/mcp/src/config.ts';
 import { createMcpRuntimeConfig } from '../packages/mcp/src/config.ts';
 import { DaemonRegistryManager } from '../packages/mcp/src/daemon-registry.ts';
+import {
+    buildDaemonRestartArgs,
+    cleanupStaleDaemonState
+} from '../packages/mcp/src/daemon-ops.ts';
+import {
+    DAEMON_CLIENT_COMPATIBILITY_VERSION,
+    DaemonClientConfigManager,
+    readDaemonClientConfig,
+    readDaemonOperatorStatus
+} from '../packages/mcp/src/daemon-discovery.ts';
+import { migrateWorkspaceStateToDaemon } from '../packages/mcp/src/daemon-state-migration.ts';
 import { ToolHandlers } from '../packages/mcp/src/handlers.ts';
 import { RuntimeStatusManager } from '../packages/mcp/src/runtime-status.ts';
 import { SnapshotManager } from '../packages/mcp/src/snapshot.ts';
 import type { IndexingOwnershipClaimResult } from '../packages/mcp/src/snapshot.ts';
 import { SyncManager } from '../packages/mcp/src/sync.ts';
-import { WorkloadManager } from '../packages/mcp/src/workload-manager.ts';
+import { WorkloadCancelledError, WorkloadManager } from '../packages/mcp/src/workload-manager.ts';
+import { readExtensionDaemonDiscoveryConfig } from '../packages/vscode-extension/src/backend/daemonDiscovery.ts';
 
 type Sandbox = {
     rootDir: string;
@@ -1159,6 +1171,254 @@ async function main(): Promise<void> {
         });
     });
 
+    await runCheck('daemon client config exposes direct-connect bootstrap data while operator status stays redacted', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir }) => {
+            const snapshotManager = new SnapshotManager({
+                workspacePath: workspaceDir,
+                scope: 'daemon',
+                saveDebounceMs: 0,
+                runtimeId: 'daemon-client-config-runtime'
+            });
+            const runtimeStatusManager = new RuntimeStatusManager({
+                runtimeId: 'daemon-client-config-runtime',
+                workspacePath: workspaceDir,
+                snapshotManager,
+                mode: 'daemon',
+                daemon: {
+                    host: '127.0.0.1',
+                    port: 39393,
+                    endpointPath: '/mcp',
+                    allowedRoots: [codebaseDir],
+                    tokenSha256: 'sha256-daemon-token'
+                }
+            });
+            await runtimeStatusManager.refresh('daemon-client-config-test');
+
+            const registryManager = new DaemonRegistryManager({
+                runtimeId: 'daemon-client-config-runtime',
+                host: '127.0.0.1',
+                port: 39393,
+                endpointPath: '/mcp',
+                allowedRoots: [codebaseDir],
+                tokenSha256: 'sha256-daemon-token',
+                runtimeStatusFilePath: runtimeStatusManager.getRuntimeStatusFilePath(),
+                snapshotFilePath: snapshotManager.getSnapshotFilePath()
+            });
+            await registryManager.refresh();
+
+            const discoveryManager = new DaemonClientConfigManager({
+                runtimeId: 'daemon-client-config-runtime',
+                serverName: 'Context MCP Server',
+                serverVersion: '1.0.0',
+                compatibilityVersion: DAEMON_CLIENT_COMPATIBILITY_VERSION,
+                host: '127.0.0.1',
+                port: 39393,
+                endpointPath: '/mcp',
+                allowedRoots: [codebaseDir],
+                bearerToken: 'daemon-secret',
+                tokenSha256: 'sha256-daemon-token',
+                runtimeStatusFilePath: runtimeStatusManager.getRuntimeStatusFilePath(),
+                snapshotFilePath: snapshotManager.getSnapshotFilePath()
+            });
+            await discoveryManager.refresh();
+
+            const discovered = await readDaemonClientConfig({
+                expectedCompatibilityVersion: DAEMON_CLIENT_COMPATIBILITY_VERSION
+            });
+            assert.equal(discovered?.endpointUrl, 'http://127.0.0.1:39393/mcp');
+            assert.equal(discovered?.bearerToken, 'daemon-secret');
+            assert.equal(discovered?.tokenSha256, 'sha256-daemon-token');
+
+            const operatorStatus = await readDaemonOperatorStatus();
+            assert.equal(operatorStatus.discovery?.runtimeId, 'daemon-client-config-runtime');
+            assert.equal(operatorStatus.runtimes.length, 1);
+            assert.equal(operatorStatus.runtimes[0].runtimeId, 'daemon-client-config-runtime');
+            assert.equal(JSON.stringify(operatorStatus).includes('daemon-secret'), false);
+
+            await discoveryManager.remove();
+            await registryManager.remove();
+            assert.equal(await readDaemonClientConfig({ requireLivePid: false }), null);
+        });
+    });
+
+    await runCheck('daemon stale cleanup removes dead artifacts and recovers stale snapshot ownership without restart', async () => {
+        await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
+            const deadPid = 999999;
+            const runtimeId = 'daemon-stale-runtime';
+
+            const snapshotManager = new SnapshotManager({
+                workspacePath: workspaceDir,
+                scope: 'daemon',
+                saveDebounceMs: 0,
+                runtimeId
+            });
+            const claim = await snapshotManager.acquireIndexingOwnership(codebaseDir, 17);
+            assert.equal(claim.acquired, true);
+
+            const snapshotPath = snapshotManager.getSnapshotFilePath();
+            const snapshot = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
+            snapshot.codebases[codebaseDir].owner.pid = deadPid;
+            snapshot.codebases[codebaseDir].owner.heartbeatAt = '2020-01-01T00:00:00.000Z';
+            snapshot.codebases[codebaseDir].lastUpdated = '2020-01-01T00:00:00.000Z';
+            await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
+
+            const runtimeStatusPath = path.join(homeDir, '.context', 'mcp', 'runtime', `${deadPid}.json`);
+            await fs.mkdir(path.dirname(runtimeStatusPath), { recursive: true });
+            await fs.writeFile(runtimeStatusPath, JSON.stringify({
+                runtimeId,
+                pid: deadPid,
+                mode: 'daemon'
+            }, null, 2));
+
+            const orphanRuntimeStatusPath = path.join(homeDir, '.context', 'mcp', 'runtime', '777777.json');
+            await fs.writeFile(orphanRuntimeStatusPath, JSON.stringify({
+                runtimeId: 'orphan-daemon-runtime',
+                pid: 777777,
+                mode: 'daemon'
+            }, null, 2));
+
+            const registryPath = path.join(homeDir, '.context', 'mcp', 'daemon', 'registry', `${runtimeId}.json`);
+            await fs.mkdir(path.dirname(registryPath), { recursive: true });
+            await fs.writeFile(registryPath, JSON.stringify({
+                formatVersion: 'v1',
+                runtimeId,
+                pid: deadPid,
+                host: '127.0.0.1',
+                port: 39393,
+                endpointPath: '/mcp',
+                endpointUrl: 'http://127.0.0.1:39393/mcp',
+                transport: 'streamable-http',
+                auth: {
+                    type: 'bearer',
+                    tokenSha256: 'sha256-value'
+                },
+                allowedRoots: [codebaseDir],
+                startedAt: '2020-01-01T00:00:00.000Z',
+                lastUpdated: '2020-01-01T00:00:00.000Z',
+                runtimeStatusFilePath: runtimeStatusPath,
+                snapshotFilePath: snapshotPath
+            }, null, 2));
+
+            const discoveryPath = path.join(homeDir, '.context', 'mcp', 'daemon', 'client-config.json');
+            await fs.mkdir(path.dirname(discoveryPath), { recursive: true });
+            await fs.writeFile(discoveryPath, JSON.stringify({
+                formatVersion: 'v1',
+                compatibilityVersion: 1,
+                runtimeId,
+                pid: deadPid,
+                serverName: 'Context MCP Server',
+                serverVersion: '1.0.0',
+                host: '127.0.0.1',
+                port: 39393,
+                endpointPath: '/mcp',
+                endpointUrl: 'http://127.0.0.1:39393/mcp',
+                transport: 'streamable-http',
+                bearerToken: 'daemon-secret',
+                tokenSha256: 'sha256-value',
+                allowedRoots: [codebaseDir],
+                startedAt: '2020-01-01T00:00:00.000Z',
+                lastUpdated: '2020-01-01T00:00:00.000Z',
+                runtimeStatusFilePath: runtimeStatusPath,
+                snapshotFilePath: snapshotPath
+            }, null, 2));
+
+            const cleanup = await cleanupStaleDaemonState();
+
+            assert.deepEqual(cleanup.removedRegistryFiles, [registryPath]);
+            assert.deepEqual(cleanup.removedRuntimeStatusFiles, [runtimeStatusPath, orphanRuntimeStatusPath]);
+            assert.equal(cleanup.removedClientConfig, true);
+            assert.deepEqual(cleanup.recoveredSnapshotCodebases, [codebaseDir]);
+
+            const reloadedSnapshotManager = new SnapshotManager({
+                workspacePath: path.join(homeDir, '.context', 'mcp', 'daemon'),
+                scope: 'daemon',
+                saveDebounceMs: 0,
+                runtimeId: 'daemon-cleanup-verify'
+            });
+            reloadedSnapshotManager.loadCodebaseSnapshot();
+            const recoveredInfo = reloadedSnapshotManager.getCodebaseInfo(codebaseDir);
+            assert.equal(recoveredInfo?.status, 'indexfailed');
+            if (!recoveredInfo || recoveredInfo.status !== 'indexfailed') {
+                throw new Error('Expected stale daemon snapshot ownership to recover to indexfailed.');
+            }
+            assert.match(recoveredInfo.errorMessage, /owner pid 999999 is not alive/);
+
+            await assert.rejects(fs.access(registryPath));
+            await assert.rejects(fs.access(runtimeStatusPath));
+            await assert.rejects(fs.access(orphanRuntimeStatusPath));
+            await assert.rejects(fs.access(discoveryPath));
+        });
+    });
+
+    await runCheck('daemon restart args strip admin flags and reuse discovery metadata when CLI flags are absent', async () => {
+        const restartArgs = buildDaemonRestartArgs([
+            '--daemon-restart',
+            '--daemon-status',
+            '--daemon-cancel', '/repo/ignored',
+            '--mode', 'stdio',
+            '--daemon-max-search', '7'
+        ], {
+            formatVersion: 'v1',
+            compatibilityVersion: 1,
+            runtimeId: 'runtime-daemon',
+            pid: 1234,
+            serverName: 'Context MCP Server',
+            serverVersion: '1.0.0',
+            host: '127.0.0.1',
+            port: 39393,
+            endpointPath: '/mcp',
+            endpointUrl: 'http://127.0.0.1:39393/mcp',
+            transport: 'streamable-http',
+            bearerToken: 'daemon-secret',
+            tokenSha256: 'sha256-daemon-token',
+            allowedRoots: ['/repo/a', '/repo/b'],
+            startedAt: '2020-01-01T00:00:00.000Z',
+            lastUpdated: '2020-01-01T00:00:00.000Z',
+            runtimeStatusFilePath: '/tmp/runtime-status.json',
+            snapshotFilePath: '/tmp/snapshot.json'
+        });
+
+        assert.deepEqual(restartArgs, [
+            '--mode', 'daemon',
+            '--daemon-max-search', '7',
+            '--daemon-host', '127.0.0.1',
+            '--daemon-port', '39393',
+            '--daemon-path', '/mcp',
+            '--daemon-token', 'daemon-secret',
+            '--allow-root', '/repo/a',
+            '--allow-root', '/repo/b'
+        ]);
+    });
+
+    await runCheck('daemon restart config remains bootstrap-complete when using cached discovery after cleanup', async () => {
+        const runtimeConfig = createMcpRuntimeConfig(buildDaemonRestartArgs([
+            '--daemon-restart'
+        ], {
+            formatVersion: 'v1',
+            compatibilityVersion: 1,
+            runtimeId: 'runtime-daemon',
+            pid: 1234,
+            serverName: 'Context MCP Server',
+            serverVersion: '1.0.0',
+            host: '127.0.0.1',
+            port: 39393,
+            endpointPath: '/mcp',
+            endpointUrl: 'http://127.0.0.1:39393/mcp',
+            transport: 'streamable-http',
+            bearerToken: 'daemon-secret',
+            tokenSha256: 'sha256-daemon-token',
+            allowedRoots: ['/repo/a', '/repo/b'],
+            startedAt: '2020-01-01T00:00:00.000Z',
+            lastUpdated: '2020-01-01T00:00:00.000Z',
+            runtimeStatusFilePath: '/tmp/runtime-status.json',
+            snapshotFilePath: '/tmp/snapshot.json'
+        }));
+
+        assert.equal(runtimeConfig.mode, 'daemon');
+        assert.deepEqual(runtimeConfig.daemon?.allowRoots, ['/repo/a', '/repo/b']);
+        assert.equal(runtimeConfig.daemon?.bearerToken, 'daemon-secret');
+    });
+
     await runCheck('daemon storage scope uses dedicated snapshot and per-codebase config paths', async () => {
         await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
             const snapshotManager = new SnapshotManager({
@@ -1296,6 +1556,39 @@ async function main(): Promise<void> {
         await coldBackground;
 
         assert.deepEqual(executionOrder, ['blocker-start', 'blocker-finish', 'hot-sync', 'cold-sync']);
+    });
+
+    await runCheck('WorkloadManager can cancel queued and active indexing jobs for one repository', async () => {
+        const workloadManager = new WorkloadManager({
+            mode: 'daemon',
+            maxIndexingConcurrency: 1,
+            maxSearchConcurrency: 1
+        });
+
+        const activeTask = workloadManager.enqueueInteractiveIndexing('/repo/cancelled', async (signal) => {
+            await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener('abort', () => {
+                    reject(signal.reason ?? new WorkloadCancelledError('cancelled'));
+                }, { once: true });
+            });
+        });
+        const queuedTask = workloadManager.runBackgroundSync('/repo/cancelled', async () => {
+            throw new Error('queued task should never start');
+        });
+
+        await flushAsyncWork();
+
+        const cancellation = workloadManager.cancelCodebaseIndexingWork('/repo/cancelled', 'operator cancel');
+        assert.equal(cancellation.active.length, 1);
+        assert.equal(cancellation.queued.length, 1);
+
+        await assert.rejects(activeTask.completion, /operator cancel/);
+        await assert.rejects(queuedTask, /operator cancel/);
+
+        await flushAsyncWork();
+        const snapshot = workloadManager.getSnapshot();
+        assert.equal(snapshot.indexing.activeCount, 0);
+        assert.equal(snapshot.indexing.queuedCount, 0);
     });
 
     await runCheck('WorkloadManager backs off flaky background sync repositories instead of immediate retry', async () => {
@@ -1562,6 +1855,62 @@ async function main(): Promise<void> {
 
             await configManager.removeConfig(codebaseDir);
             assert.equal(await configManager.hasConfig(codebaseDir), false);
+        });
+    });
+
+    await runCheck('daemon startup migration imports workspace-scoped snapshot and config only for allowed roots', async () => {
+        await withSandbox(async ({ rootDir, workspaceDir, outsideCodebaseDir }) => {
+            const sourceWorkspaceDir = path.join(rootDir, 'source-workspace');
+            const sourceCodebaseDir = path.join(sourceWorkspaceDir, 'repo');
+            await fs.mkdir(sourceCodebaseDir, { recursive: true });
+
+            const sourceSnapshotManager = new SnapshotManager({
+                workspacePath: sourceWorkspaceDir,
+                saveDebounceMs: 0,
+                runtimeId: 'workspace-source-runtime'
+            });
+            sourceSnapshotManager.setCodebaseIndexedWithoutStats(sourceCodebaseDir, 'completed');
+            sourceSnapshotManager.setCodebaseIndexFailed(outsideCodebaseDir, 'should-not-migrate', 0);
+            await sourceSnapshotManager.saveCodebaseSnapshot('seed-workspace-source');
+
+            const sourceConfigManager = createCodebaseConfigManager(sourceWorkspaceDir);
+            await sourceConfigManager.saveConfig(sourceCodebaseDir, {
+                customExtensions: ['.vue'],
+                customIgnorePatterns: ['docs/**']
+            });
+            await sourceConfigManager.saveConfig(outsideCodebaseDir, {
+                customExtensions: ['.tmp'],
+                customIgnorePatterns: ['private/**']
+            });
+
+            const daemonSnapshotManager = new SnapshotManager({
+                workspacePath: workspaceDir,
+                scope: 'daemon',
+                saveDebounceMs: 0,
+                runtimeId: 'daemon-migration-runtime'
+            });
+            const daemonConfigManager = createDaemonCodebaseConfigManager(workspaceDir);
+            const migrationResult = await migrateWorkspaceStateToDaemon(
+                daemonSnapshotManager,
+                daemonConfigManager,
+                new CodebaseAccessPolicy({
+                    mode: 'daemon',
+                    allowedRoots: [sourceCodebaseDir]
+                })
+            );
+
+            assert.deepEqual(migrationResult.importedCodebases, [sourceCodebaseDir]);
+            assert.deepEqual(migrationResult.importedConfigs, [sourceCodebaseDir]);
+            assert.ok(migrationResult.skippedCodebases.includes(outsideCodebaseDir));
+
+            daemonSnapshotManager.loadCodebaseSnapshot();
+            assert.equal(daemonSnapshotManager.getCodebaseStatus(sourceCodebaseDir), 'indexed');
+            assert.equal(daemonSnapshotManager.getCodebaseStatus(outsideCodebaseDir), 'not_found');
+            assert.deepEqual(await daemonConfigManager.getConfig(sourceCodebaseDir), {
+                customExtensions: ['.vue'],
+                customIgnorePatterns: ['docs/**']
+            });
+            assert.equal(await daemonConfigManager.hasConfig(outsideCodebaseDir), false);
         });
     });
 
@@ -1967,7 +2316,7 @@ async function main(): Promise<void> {
                         searchedHasIndexPath = candidatePath;
                         return candidatePath === outsideCodebaseDir;
                     },
-                    semanticSearch: async (candidatePath: string) => {
+                    search: async (candidatePath: string) => {
                         searchedCodebasePath = candidatePath;
                         return [];
                     }
@@ -1979,9 +2328,9 @@ async function main(): Promise<void> {
 
                 let syncedCodebasePath: string | undefined;
                 const syncCommand = new SyncCommand({
-                    reindexByChange: async (candidatePath: string) => {
+                    syncCodebase: async (candidatePath: string) => {
                         syncedCodebasePath = candidatePath;
-                        return { added: 0, removed: 0, modified: 0 };
+                        return { mode: 'embedded', added: 0, removed: 0, modified: 0 };
                     }
                 } as any, targetManager);
 
@@ -1998,7 +2347,8 @@ async function main(): Promise<void> {
                             total: 100,
                             percentage: 100
                         });
-                    }
+                    },
+                    indexCodebase: async () => ({ mode: 'embedded', indexedFiles: 0, totalChunks: 0, status: 'completed' })
                 } as any, targetManager);
 
                 vscode.__warningResult = 'Yes';
@@ -2024,7 +2374,8 @@ async function main(): Promise<void> {
                     {
                         getEmbeddingProviderConfig: () => undefined,
                         getMilvusConfig: () => undefined,
-                        getSplitterConfig: () => undefined
+                        getSplitterConfig: () => undefined,
+                        getRuntimeMode: () => 'auto'
                     } as any,
                     targetManager
                 );
@@ -2072,6 +2423,41 @@ async function main(): Promise<void> {
                 const openedTarget = vscode.__openedTargets.at(-1);
                 assert.equal(openedTarget.fsPath, path.join(outsideCodebaseDir, 'src', 'target.ts'));
             });
+        });
+    });
+
+    await runCheck('VS Code daemon discovery helper validates live compatible discovery metadata', async () => {
+        await withSandbox(async ({ homeDir }) => {
+            const discoveryDir = path.join(homeDir, '.context', 'mcp', 'daemon');
+            await fs.mkdir(discoveryDir, { recursive: true });
+
+            const discoveryPath = path.join(discoveryDir, 'client-config.json');
+            await fs.writeFile(discoveryPath, JSON.stringify({
+                formatVersion: 'v1',
+                compatibilityVersion: 1,
+                runtimeId: 'runtime-1',
+                pid: process.pid,
+                endpointUrl: 'http://127.0.0.1:39393/mcp',
+                bearerToken: 'secret'
+            }, null, 2));
+
+            const discovery = await readExtensionDaemonDiscoveryConfig(true);
+            assert.equal(discovery?.runtimeId, 'runtime-1');
+            assert.equal(discovery?.endpointUrl, 'http://127.0.0.1:39393/mcp');
+
+            await fs.writeFile(discoveryPath, JSON.stringify({
+                formatVersion: 'v1',
+                compatibilityVersion: 999,
+                runtimeId: 'runtime-2',
+                pid: process.pid,
+                endpointUrl: 'http://127.0.0.1:39393/mcp',
+                bearerToken: 'secret'
+            }, null, 2));
+
+            await assert.rejects(
+                () => readExtensionDaemonDiscoveryConfig(true),
+                /Incompatible daemon compatibility version 999/
+            );
         });
     });
 

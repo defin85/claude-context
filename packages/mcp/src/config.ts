@@ -412,6 +412,12 @@ Usage: npx @zilliz/claude-context-mcp@latest [options]
 
 Options:
   --help, -h                          Show this help message
+  --daemon-discover                   Print active daemon client bootstrap JSON and exit
+  --daemon-status                     Print daemon runtime/operator status JSON and exit
+  --daemon-cleanup-stale              Remove stale daemon registry/discovery/runtime artifacts and recover stale snapshot ownership
+  --daemon-stop                       Ask the active daemon to shut down gracefully and exit
+  --daemon-restart                    Gracefully restart daemon mode using the current CLI/env config (or active discovery metadata)
+  --daemon-cancel <absolute-path>     Cancel queued/active daemon indexing work for one codebase and exit
   --mode <stdio|daemon>               Runtime mode (default: stdio)
   --daemon-host <host>                Daemon host (daemon mode only, default: 127.0.0.1)
   --daemon-port <port>                Daemon port (daemon mode only, default: 39393)
@@ -473,5 +479,17 @@ Examples:
 
   # Start shared daemon mode for two repositories
   MCP_RUNTIME_MODE=daemon MCP_DAEMON_TOKEN=local-secret MCP_DAEMON_ALLOW_ROOTS=/repo/a${path.delimiter}/repo/b npx @zilliz/claude-context-mcp@latest
+
+  # Print direct-connect daemon bootstrap data for updated clients
+  npx @zilliz/claude-context-mcp@latest --daemon-discover
+
+  # Inspect daemon runtime and workload state without reading logs
+  npx @zilliz/claude-context-mcp@latest --daemon-status
+
+  # Cancel one repository workload, clean stale artifacts, or restart the daemon
+  npx @zilliz/claude-context-mcp@latest --daemon-cancel /repo/a
+  npx @zilliz/claude-context-mcp@latest --daemon-cleanup-stale
+  npx @zilliz/claude-context-mcp@latest --daemon-restart --mode daemon --allow-root /repo/a
+  npx @zilliz/claude-context-mcp@latest --daemon-stop
         `);
-} 
+}

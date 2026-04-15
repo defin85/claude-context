@@ -8,7 +8,7 @@ import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
 import { normalizeCodebasePath, truncateContent, trackCodebasePath } from "./utils.js";
 import { CodebaseAccessPolicy } from "./access-policy.js";
-import { WorkloadManager } from "./workload-manager.js";
+import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
 
 export class ToolHandlers {
     private context: Context;
@@ -606,9 +606,9 @@ export class ToolHandlers {
             await this.runtimeStatusManager?.refresh('index-started');
 
             const ownershipHeartbeat = this.startOwnershipHeartbeat(absolutePath);
-            const runIndexingJob = async () => {
+            const runIndexingJob = async (signal: AbortSignal) => {
                 try {
-                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType);
+                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, signal);
                 } finally {
                     ownershipHeartbeat.stop();
                 }
@@ -619,7 +619,7 @@ export class ToolHandlers {
                 : {
                     startedImmediately: true,
                     queuePosition: 0,
-                    completion: runIndexingJob()
+                    completion: runIndexingJob(new AbortController().signal)
                 };
 
             void queuedIndexingJob.completion.catch((error: any) => {
@@ -646,7 +646,17 @@ export class ToolHandlers {
                 content: [{
                     type: "text",
                     text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
-                }]
+                }],
+                structuredContent: {
+                    path: absolutePath,
+                    originalPath: codebasePath,
+                    force: forceReindex,
+                    splitter: splitterType,
+                    customExtensions: customFileExtensions,
+                    ignorePatterns: customIgnorePatterns,
+                    startedImmediately: queuedIndexingJob.startedImmediately,
+                    queuePosition: queuedIndexingJob.queuePosition
+                }
             };
 
         } catch (error: any) {
@@ -676,11 +686,33 @@ export class ToolHandlers {
         }
     }
 
-    private async startBackgroundIndexing(codebasePath: string, forceReindex: boolean, splitterType: string) {
+    private async startBackgroundIndexing(
+        codebasePath: string,
+        forceReindex: boolean,
+        splitterType: string,
+        abortSignal?: AbortSignal
+    ) {
         const absolutePath = codebasePath;
         let lastPersistedProgress = -1;
+        const throwIfCancelled = () => {
+            if (!abortSignal?.aborted) {
+                return;
+            }
+
+            const reason = abortSignal.reason;
+            if (reason instanceof Error) {
+                throw reason;
+            }
+
+            throw new WorkloadCancelledError(
+                typeof reason === 'string' && reason.trim().length > 0
+                    ? reason
+                    : `Indexing for '${absolutePath}' was cancelled by daemon operator.`
+            );
+        };
 
         try {
+            throwIfCancelled();
             console.log(`[BACKGROUND-INDEX] Starting background indexing for: ${absolutePath}`);
             await this.runtimeStatusManager?.refresh('index-background-starting');
 
@@ -693,6 +725,7 @@ export class ToolHandlers {
             if (!persistedConfig) {
                 throw new Error(`Persisted codebase sync config is missing for '${absolutePath}'. Re-run index_codebase with force=true.`);
             }
+            throwIfCancelled();
 
             this.context.configureCodebaseSession(absolutePath, persistedConfig);
 
@@ -704,6 +737,7 @@ export class ToolHandlers {
 
             // Load ignore patterns from files first (including .ignore, .gitignore, etc.)
             await this.context.getLoadedIgnorePatterns(absolutePath);
+            throwIfCancelled();
 
             // Initialize file synchronizer with proper ignore patterns (including project-specific patterns)
             const { FileSynchronizer } = await import("@zilliz/claude-context-core");
@@ -711,6 +745,7 @@ export class ToolHandlers {
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
             const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns);
             await synchronizer.initialize();
+            throwIfCancelled();
 
             // Store synchronizer in the context (let context manage collection names)
             await this.context.getPreparedCollection(absolutePath);
@@ -729,6 +764,7 @@ export class ToolHandlers {
             // Start indexing with the appropriate context and progress tracking
             console.log(`[BACKGROUND-INDEX] 🚀 Beginning codebase indexing process...`);
             const stats = await contextForThisTask.indexCodebase(absolutePath, (progress) => {
+                throwIfCancelled();
                 // Update progress in snapshot manager using new method
                 this.snapshotManager.setCodebaseIndexing(absolutePath, progress.percentage);
 
@@ -745,7 +781,7 @@ export class ToolHandlers {
                 }
 
                 console.log(`[BACKGROUND-INDEX] Progress: ${progress.phase} - ${progress.percentage}% (${progress.current}/${progress.total})`);
-            });
+            }, forceReindex, abortSignal);
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
             this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
 
@@ -768,7 +804,9 @@ export class ToolHandlers {
             // Get the last attempted progress
             const lastProgress = this.snapshotManager.getIndexingProgress(absolutePath);
 
-            const errorMessage = error.message || String(error);
+            const errorMessage = isWorkloadCancelledError(error)
+                ? (error.message || `Indexing for '${absolutePath}' was cancelled by daemon operator.`)
+                : (error.message || String(error));
             const failed = await this.snapshotManager.failIndexingOwnership(absolutePath, errorMessage, lastProgress);
             if (!failed) {
                 console.warn(`[INDEX-OWNERSHIP] Background indexing failed for '${absolutePath}' but ownership failure update was rejected.`);
@@ -921,7 +959,14 @@ export class ToolHandlers {
                         content: [{
                             type: "text",
                             text: noResultsMessage
-                        }]
+                        }],
+                        structuredContent: {
+                            path: absolutePath,
+                            query,
+                            limit: Math.min(resultLimit, 50),
+                            indexingStatus: isIndexing ? 'indexing' : 'indexed',
+                            results: []
+                        }
                     };
                 }
 
@@ -947,7 +992,21 @@ export class ToolHandlers {
                     content: [{
                         type: "text",
                         text: resultMessage
-                    }]
+                    }],
+                    structuredContent: {
+                        path: absolutePath,
+                        query,
+                        limit: Math.min(resultLimit, 50),
+                        indexingStatus: isIndexing ? 'indexing' : 'indexed',
+                        results: searchResults.map((result: any) => ({
+                            relativePath: result.relativePath,
+                            language: result.language,
+                            startLine: result.startLine,
+                            endLine: result.endLine,
+                            score: result.score,
+                            content: result.content
+                        }))
+                    }
                 };
             } catch (error) {
                 // Check if this is the collection limit error
@@ -1106,7 +1165,13 @@ export class ToolHandlers {
                 content: [{
                     type: "text",
                     text: resultText
-                }]
+                }],
+                structuredContent: {
+                    path: absolutePath,
+                    cleared: true,
+                    remainingIndexed,
+                    remainingIndexing
+                }
             };
         } catch (error) {
             // Check if this is the collection limit error
@@ -1218,16 +1283,30 @@ export class ToolHandlers {
             }
 
             let statusMessage = '';
+            const structuredStatus: Record<string, any> = {
+                path: absolutePath,
+                status,
+                recoveredFromCloud,
+                hasPersistedSyncConfig
+            };
 
             switch (status) {
                 case 'indexed':
                     if (this.hasKnownIndexStats(info)) {
                         const indexedInfo = info as any;
+                        structuredStatus.indexedFiles = indexedInfo.indexedFiles;
+                        structuredStatus.totalChunks = indexedInfo.totalChunks;
+                        structuredStatus.indexStatus = indexedInfo.indexStatus;
+                        structuredStatus.lastUpdated = indexedInfo.lastUpdated;
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
                         statusMessage += `\n📊 Statistics: ${indexedInfo.indexedFiles} files, ${indexedInfo.totalChunks} chunks`;
                         statusMessage += `\n📅 Status: ${indexedInfo.indexStatus}`;
                         statusMessage += `\n🕐 Last updated: ${new Date(indexedInfo.lastUpdated).toLocaleString()}`;
                     } else {
+                        if (info && info.status === 'indexed') {
+                            structuredStatus.indexStatus = info.indexStatus;
+                            structuredStatus.lastUpdated = info.lastUpdated;
+                        }
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
                         if (info && info.status === 'indexed') {
                             statusMessage += `\n📊 Statistics: unavailable in local snapshot`;
@@ -1247,6 +1326,8 @@ export class ToolHandlers {
                     if (info && 'indexingPercentage' in info) {
                         const indexingInfo = info as any;
                         const progressPercentage = indexingInfo.indexingPercentage || 0;
+                        structuredStatus.progressPercentage = progressPercentage;
+                        structuredStatus.lastUpdated = indexingInfo.lastUpdated;
                         statusMessage = `🔄 Codebase '${absolutePath}' is currently being indexed. Progress: ${progressPercentage.toFixed(1)}%`;
 
                         // Add more detailed status based on progress
@@ -1264,6 +1345,9 @@ export class ToolHandlers {
                 case 'indexfailed':
                     if (info && 'errorMessage' in info) {
                         const failedInfo = info as any;
+                        structuredStatus.errorMessage = failedInfo.errorMessage;
+                        structuredStatus.lastAttemptedPercentage = failedInfo.lastAttemptedPercentage;
+                        structuredStatus.lastUpdated = failedInfo.lastUpdated;
                         statusMessage = `❌ Codebase '${absolutePath}' indexing failed.`;
                         statusMessage += `\n🚨 Error: ${failedInfo.errorMessage}`;
                         if (failedInfo.lastAttemptedPercentage !== undefined) {
@@ -1290,7 +1374,8 @@ export class ToolHandlers {
                 content: [{
                     type: "text",
                     text: statusMessage + pathInfo
-                }]
+                }],
+                structuredContent: structuredStatus
             };
 
         } catch (error: any) {

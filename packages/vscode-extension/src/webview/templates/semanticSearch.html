@@ -65,20 +65,39 @@
             </div>
 
             <form id="configForm">
-                <h3>Embedding Configuration</h3>
+                <h3>Runtime Configuration</h3>
 
                 <div class="form-group">
-                    <label for="provider">Embedding Provider</label>
-                    <select id="provider" required>
-                        <option value="">Please select...</option>
+                    <label for="runtimeMode">Runtime Mode</label>
+                    <select id="runtimeMode" required>
+                        <option value="auto">Auto</option>
+                        <option value="embedded">Embedded</option>
+                        <option value="daemon">Daemon</option>
                     </select>
                 </div>
 
-                <!-- Dynamic form fields will be inserted here -->
-                <div id="dynamicFields"></div>
+                <div class="form-group">
+                    <small id="runtimeModeHelp">
+                        Auto prefers a compatible local daemon and falls back to the embedded runtime.
+                    </small>
+                </div>
 
-                <div class="button-group">
-                    <button type="button" id="testBtn" class="secondary-btn" disabled>Test Embedding</button>
+                <div id="embeddingSection">
+                    <h3>Embedding Configuration</h3>
+
+                    <div class="form-group">
+                        <label for="provider">Embedding Provider</label>
+                        <select id="provider" required>
+                            <option value="">Please select...</option>
+                        </select>
+                    </div>
+
+                    <!-- Dynamic form fields will be inserted here -->
+                    <div id="dynamicFields"></div>
+
+                    <div class="button-group">
+                        <button type="button" id="testBtn" class="secondary-btn" disabled>Test Embedding</button>
+                    </div>
                 </div>
 
                 <div class="form-separator"></div>
@@ -105,16 +124,18 @@
 
                 <div class="form-separator"></div>
 
-                <h3>Vector Database Configuration</h3>
+                <div id="milvusSection">
+                    <h3>Vector Database Configuration</h3>
 
-                <div class="form-group">
-                    <label for="milvusAddress">Milvus Address</label>
-                    <input type="url" id="milvusAddress" placeholder="http://localhost:19530" required>
-                </div>
+                    <div class="form-group">
+                        <label for="milvusAddress">Milvus Address</label>
+                        <input type="url" id="milvusAddress" placeholder="http://localhost:19530" required>
+                    </div>
 
-                <div class="form-group">
-                    <label for="milvusToken">Milvus Token (optional)</label>
-                    <input type="password" id="milvusToken" placeholder="">
+                    <div class="form-group">
+                        <label for="milvusToken">Milvus Token (optional)</label>
+                        <input type="password" id="milvusToken" placeholder="">
+                    </div>
                 </div>
 
                 <div class="button-group">

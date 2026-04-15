@@ -34,7 +34,10 @@ export interface PluginConfig {
     splitterProvider?: SplitterProviderConfig;
     milvusConfig?: MilvusWebConfig;
     splitterConfig?: SplitterConfig;
+    runtimeMode?: RuntimeModeConfig;
 }
+
+export type RuntimeModeConfig = 'auto' | 'embedded' | 'daemon';
 
 type FieldDefinition = {
     name: string;
@@ -364,6 +367,26 @@ export class ConfigManager {
             chunkSize: chunkSize || 1000,
             chunkOverlap: chunkOverlap || 200
         };
+    }
+
+    getRuntimeMode(): RuntimeModeConfig {
+        const config = vscode.workspace.getConfiguration(ConfigManager.CONFIG_KEY);
+        const rawMode = config.get<string>('runtime.mode', 'auto');
+
+        if (rawMode === 'embedded' || rawMode === 'daemon') {
+            return rawMode;
+        }
+
+        return 'auto';
+    }
+
+    async saveRuntimeMode(runtimeMode: RuntimeModeConfig): Promise<void> {
+        const workspaceConfig = vscode.workspace.getConfiguration(ConfigManager.CONFIG_KEY);
+        const normalizedMode = runtimeMode === 'embedded' || runtimeMode === 'daemon'
+            ? runtimeMode
+            : 'auto';
+
+        await workspaceConfig.update('runtime.mode', normalizedMode, vscode.ConfigurationTarget.Global);
     }
 
     /**

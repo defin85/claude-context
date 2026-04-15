@@ -84,10 +84,44 @@ Implemented on 2026-04-15:
     - on an isolated temporary `HOME`, the daemon registry was recreated cleanly on restart and removed again on graceful shutdown;
     - stale `indexing` ownership with a dead PID was recovered to explicit `indexfailed` state during startup snapshot load;
     - persisted per-codebase `.vue` extension and ignore-pattern config survived restart-safe sync, and when the persisted config file was deleted the daemon reported an explicit degraded sync state instead of silently diverging.
+- Phase 4 is now partially landed:
+  - daemon discovery now publishes direct-connect bootstrap data for updated clients in `~/.context/mcp/daemon/client-config.json`, including endpoint, bearer token, allowlist roots, and compatibility version;
+  - daemon-side client/bootstrap helpers now exist:
+    - `connectToDiscoveredDaemon()` for updated clients;
+    - `--daemon-discover` and `--daemon-status` for direct bootstrap and operator inspection;
+    - `--daemon-cancel <path>`, `--daemon-stop`, `--daemon-cleanup-stale`, and `--daemon-restart` for operational control;
+  - the VS Code extension now consumes the daemon discovery/bootstrap path directly:
+    - `semanticCodeSearch.runtime.mode` supports `auto`, `embedded`, and `daemon`;
+    - `auto` prefers a compatible local daemon and falls back to embedded runtime when discovery is absent;
+    - `daemon` fails closed before tool calls when no compatible daemon is available;
+    - index/search/clear/status flows now consume structured daemon responses instead of extension-local prose parsing;
+    - the extension sidebar settings now expose runtime-mode selection instead of assuming embedded-only operation;
+  - daemon startup now performs a fail-closed first-boot migration from workspace-scoped snapshot/config state into daemon-scoped state, limited to existing allowlisted repositories;
+  - workload cancellation now propagates into queued and active indexing/background-sync work via `AbortSignal`, instead of only dropping queue metadata;
+  - explicit stale daemon cleanup now exists without requiring daemon startup:
+    - `--daemon-cleanup-stale` removes dead registry/discovery/runtime-status artifacts;
+    - the same cleanup path also replays daemon-scope snapshot recovery so stale `indexing` ownership is converted to `indexfailed` without waiting for a later daemon boot;
+  - restart UX is now partially landed:
+    - `--daemon-restart` asks a live daemon to shut down, waits for discovery removal, cleans stale artifacts, and relaunches daemon mode;
+    - restart can reuse active discovery metadata for host/port/path/token/allow-roots when those flags are omitted on the restart command line;
+  - live daemon acceptance is now complete for the current Phase 4 slice:
+    - on an isolated temporary `HOME`, daemon discovery and redacted operator status were both readable after startup;
+    - the migrated workspace-scoped repository and its daemon-scoped per-codebase config were visible after first boot;
+    - one active indexing job plus one queued indexing job were observed through daemon status;
+    - operator cancel moved the queued repository to `indexfailed` without killing the active job;
+    - operator shutdown removed discovery/registry state and converted the still-active repository to explicit `indexfailed`.
+  - checked-in regression smoke now also covers:
+    - explicit stale daemon artifact cleanup plus snapshot stale-owner recovery without daemon restart;
+    - restart argument synthesis so admin flags are stripped and discovery metadata backfills missing daemon options.
+  - live operator restart/cleanup acceptance is now complete:
+    - on 2026-04-15, `--daemon-restart` was re-run end-to-end against an isolated temporary `HOME`, producing a new daemon `runtimeId`/`pid` while preserving endpoint and allowlist metadata;
+    - `--daemon-cleanup-stale` was then verified live to remove orphan daemon `runtime/*.json` artifacts left by prior stopped runtimes;
+    - the same cleanup command was also verified live to persist stale snapshot ownership recovery to disk, so a dead `indexing` owner remained `indexfailed` after rereading `mcp-codebase-snapshot.json`.
 
 Still open after this slice:
 
-- daemon discovery, compatibility bridge, restart/admin workflows, and snapshot migration between workspace and daemon scopes remain deferred to later phases.
+- additional first-party client rewiring is only needed if new daemon-aware clients are introduced beyond the now-migrated VS Code extension.
+- optional future polish is now mostly around richer admin UX beyond the current CLI surface.
 
 ## Executive Summary
 
@@ -111,7 +145,7 @@ Recommended execution order:
 2. snapshot correctness and cross-process ownership;
 3. per-codebase state isolation and incremental sync hardening;
 4. shared daemon mode;
-5. compatibility bridge and operational hardening.
+5. client migration and operational hardening.
 
 ## Constraints and Decisions
 
@@ -122,7 +156,7 @@ Recommended execution order:
 - Repository-specific ignore rules and custom extensions must not leak across codebases.
 - Do not ship a shared multi-repo runtime before per-codebase mutable state is isolated.
 - Keep collection-per-codebase storage semantics in the near term.
-- Preserve STDIO compatibility during rollout instead of making daemon mode a prerequisite.
+- Treat daemon mode as the supported client path once migration is complete; do not carry legacy STDIO compatibility as a phase gate.
 - Runtime status files are observability artifacts, not the source of truth for correctness decisions such as index ownership.
 - Start daemon mode as stateless-first for tool calls; introduce server-side session state only when notifications, resume, or other MCP semantics require it.
 
@@ -311,7 +345,7 @@ Goal: move from one-client-one-subprocess operation to one long-lived local runt
 
 ### Work items
 
-- Add daemon runtime mode while keeping the existing STDIO mode.
+- Add daemon runtime mode as the primary shared-service path; existing STDIO mode may remain for local/debug use but is not a rollout requirement.
 - Use a local-only transport endpoint such as `127.0.0.1`.
 - Prefer `Streamable HTTP` as the primary shared-service transport.
 - Keep the first daemon iteration stateless for ordinary tool calls unless a concrete MCP workflow requires resumable server-side sessions.
@@ -348,34 +382,64 @@ Goal: move from one-client-one-subprocess operation to one long-lived local runt
     - stale ownership was recovered correctly;
     - persisted per-codebase sync configuration was preserved, and explicit degraded state was reported when that config was removed.
 
-## Phase 4: Compatibility Layer and Operational Hardening
+## Phase 4: Client Migration and Operational Hardening
 
-Goal: make shared mode usable in existing client setups and maintainable in daily operation.
+Goal: make shared mode the supported client path and maintainable in daily operation.
 
 ### Work items
 
-- Add a lightweight STDIO bridge/proxy that forwards MCP calls to the daemon.
-- Add daemon discovery and fallback behavior when the daemon is absent.
-- Add daemon compatibility/version handshake so incompatible bridge and daemon versions fail closed instead of issuing partially compatible tool calls.
+- Add daemon discovery or explicit client configuration for updated clients.
+  - completed for the current first-party client surface on 2026-04-15 via `client-config.json`, `connectToDiscoveredDaemon()`, `--daemon-discover`, and direct VS Code consumption of discovery metadata.
+- Add daemon/client compatibility-version handshake so incompatible clients and daemon builds fail closed before issuing tool calls.
+  - completed for the current slice via `compatibilityVersion` in discovery metadata plus client-side validation before connect.
 - Add graceful stop/restart, stale runtime cleanup, and job cancellation.
+  - partially completed:
+    - graceful stop exists through `shutdown_daemon` / `--daemon-stop`;
+    - per-repository cancellation exists through `cancel_codebase_workload` / `--daemon-cancel`;
+    - explicit stale-runtime cleanup now exists through `--daemon-cleanup-stale`;
+    - CLI restart orchestration now exists through `--daemon-restart`;
+    - live end-to-end restart and cleanup acceptance completed on 2026-04-15 against an isolated temporary `HOME`, including orphan runtime-status cleanup and persisted stale-owner recovery.
 - Harden lock recovery, snapshot recovery, and diagnostics for long-lived runtime operation.
+  - partially completed through daemon-scoped startup migration, cancellation-aware workload shutdown, and redacted operator status.
+- Document client bootstrap behavior when the daemon is absent or unhealthy.
+  - completed for the current VS Code client slice in CLI error paths, `packages/mcp/README.md`, the extension README, and fail-closed extension error messages when `runtime.mode = daemon`.
 - Document operational workflows:
-  - list active runtimes;
-  - list known repositories and active jobs;
-  - stop one repository workload without guessing which process to kill.
+  - completed for the current daemon slice:
+    - list active runtimes;
+    - list known repositories and active jobs;
+    - stop one repository workload without guessing which process to kill;
+    - clean dead daemon artifacts and recover stale snapshot ownership without manual file surgery;
+    - restart daemon mode without reconstructing host/port/path/allow-root flags by hand when discovery metadata is available.
 
 ### Exit criteria
 
-- Existing STDIO-oriented clients can reuse the daemon without manual rewiring in the common case.
+- Updated first-party clients can target the daemon directly through one documented discovery/configuration path.
 - Operators can inspect and manage shared runtime behavior without log spelunking.
 - Shared mode is stable enough for daily development.
+
+### Verification
+
+- Completed on 2026-04-15 against an isolated temporary `HOME` plus three temporary repositories:
+  - daemon discovery returned direct-connect bootstrap data with compatibility version;
+  - operator status returned redacted metadata and reflected a migrated workspace-scoped repository plus daemon-scoped config;
+  - one active indexing job and one queued indexing job were both visible in daemon workload state;
+  - `--daemon-cancel <path>` moved the queued repository to explicit `indexfailed` while the active repository kept running;
+  - `--daemon-stop` removed discovery/registry state and converted the still-active repository to explicit `indexfailed` during shutdown.
+- Completed on 2026-04-15 for the VS Code client integration slice:
+  - `semanticCodeSearch.runtime.mode = auto` prefers a live compatible daemon and otherwise falls back to the embedded runtime;
+  - `semanticCodeSearch.runtime.mode = daemon` fails closed when discovery is absent or incompatible;
+  - search/index/clear/status now use structured daemon tool responses instead of parsing text;
+  - extension-local startup sync and periodic auto-sync are skipped when the active runtime resolves to daemon mode.
+- Completed on 2026-04-15 for daemon ops regression coverage:
+  - `cleanupStaleDaemonState()` removes dead registry/discovery/runtime-status artifacts and recovers stale daemon-scope `indexing` ownership to explicit `indexfailed`;
+  - restart argument synthesis strips admin-only flags and reuses discovery metadata for daemon host/port/path/token/allow-roots when explicit restart flags are absent.
 
 ## Cross-Phase Dependencies
 
 - Phase 1 depends on Phase 0 observability for reliable diagnosis and regression proof.
 - Phase 2 depends on Phase 1 snapshot semantics; self-healing on top of unsafe persistence will be non-deterministic.
 - Phase 3 depends on Phase 2 isolation; otherwise a shared runtime will amplify cross-repo state bleed.
-- Phase 4 depends on Phase 3 runtime semantics being stable enough to proxy and administer.
+- Phase 4 depends on Phase 3 runtime semantics being stable enough to migrate clients onto the daemon and administer it.
 
 ## Entry Gates
 
@@ -391,12 +455,12 @@ Do not begin daemon rollout until all of the following are true:
 
 ### Gate For Phase 4
 
-Do not build the STDIO compatibility bridge until all of the following are true:
+Do not begin the client-migration/operations layer until all of the following are true:
 
 - daemon discovery format is stable;
 - daemon auth/allowlist behavior is specified;
-- daemon failure modes and fallback behavior are documented;
-- incompatible daemon versions are detectable by the bridge before forwarding tool calls.
+- daemon failure modes and client bootstrap/error behavior are documented;
+- incompatible daemon versions are detectable by updated clients before forwarding tool calls.
 
 ## Risks
 
@@ -420,7 +484,7 @@ If workspace scoping and absolute-path support are not defined clearly, migratio
 
 - What is the authoritative recovery source for snapshot self-heal when local snapshot state is missing or corrupted?
 - What heartbeat interval and stale-owner timeout define a dead `indexing` owner?
-- Is indexing codebases outside `process.cwd()` a supported product behavior or a compatibility mode that needs explicit documentation?
+- Is indexing codebases outside `process.cwd()` a supported product behavior or a constrained mode that needs explicit documentation?
 
 ## Final Delivery Rule
 
