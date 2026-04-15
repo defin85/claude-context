@@ -9,7 +9,8 @@ import {
     CodebaseInfo,
     CodebaseInfoIndexing,
     CodebaseInfoIndexed,
-    CodebaseInfoIndexFailed
+    CodebaseInfoIndexFailed,
+    IndexingOwnerInfo
 } from "./config.js";
 import { normalizeCodebasePath as normalizeTrackedCodebasePath } from "./utils.js";
 
@@ -19,6 +20,8 @@ interface SnapshotManagerOptions {
     workspacePath?: string;
     scope?: SnapshotScope;
     saveDebounceMs?: number;
+    runtimeId?: string;
+    clientSessionId?: string;
 }
 
 type SnapshotSourceFormat = 'none' | 'v1' | 'v2' | 'corrupt';
@@ -26,6 +29,25 @@ type SnapshotSourceFormat = 'none' | 'v1' | 'v2' | 'corrupt';
 interface SnapshotReadResult {
     snapshot: CodebaseSnapshotV2 | null;
     sourceFormat: SnapshotSourceFormat;
+}
+
+interface SnapshotMutationResult<T> {
+    result: T;
+    changed: boolean;
+}
+
+export interface IndexingOwnershipClaimResult {
+    acquired: boolean;
+    reason: 'claimed' | 'already-owned' | 'reclaimed-stale-owner' | 'blocked-live-owner';
+    currentOwner?: IndexingOwnerInfo;
+    previousInfo?: CodebaseInfo;
+}
+
+export interface IndexingOwnershipInspectionResult {
+    state: 'not-indexing' | 'owned-by-current-runtime' | 'blocked-live-owner' | 'stale-owner';
+    currentOwner?: IndexingOwnerInfo;
+    info?: CodebaseInfo;
+    staleReason?: string;
 }
 
 export class SnapshotManager {
@@ -38,15 +60,19 @@ export class SnapshotManager {
     private indexingCodebases: Map<string, number> = new Map(); // Map of codebase path to progress percentage
     private codebaseFileCount: Map<string, number> = new Map(); // Map of codebase path to indexed file count
     private codebaseInfoMap: Map<string, CodebaseInfo> = new Map(); // Map of codebase path to complete info
-    private pendingDeletes: Map<string, string> = new Map(); // Map of codebase path to delete timestamp
+    private pendingDeletes: Map<string, string> = new Map(); // Durable delete tombstones keyed by normalized codebase path
     private readonly lockAcquireTimeoutMs: number;
     private readonly lockRetryIntervalMs: number;
     private readonly lockRetryJitterMs: number;
     private readonly lockStaleMs: number;
     private readonly saveDebounceMs: number;
+    private readonly runtimeId: string;
+    private readonly clientSessionId?: string;
+    private readonly ownerStaleMs: number;
+    private readonly ownerHeartbeatIntervalMs: number;
     private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingSaveReason: string | null = null;
-    private saveQueue: Promise<void> = Promise.resolve();
+    private saveQueue: Promise<unknown> = Promise.resolve();
     private lockWaitMsTotal = 0;
     private lockRetryCountTotal = 0;
     private lockTimeoutCount = 0;
@@ -62,6 +88,10 @@ export class SnapshotManager {
             process.env.MCP_SNAPSHOT_SAVE_DEBOUNCE_MS,
             options.saveDebounceMs ?? 2000
         );
+        this.runtimeId = options.runtimeId || crypto.randomUUID();
+        this.clientSessionId = options.clientSessionId;
+        this.ownerStaleMs = this.parsePositiveNumber(process.env.MCP_INDEXING_OWNER_STALE_MS, 5 * 60 * 1000);
+        this.ownerHeartbeatIntervalMs = this.parsePositiveNumber(process.env.MCP_INDEXING_OWNER_HEARTBEAT_MS, 30 * 1000);
         this.legacySnapshotFilePath = path.join(os.homedir(), '.context', 'mcp-codebase-snapshot.json');
         this.snapshotFilePath = this.resolveSnapshotPath();
         this.lockFilePath = `${this.snapshotFilePath}.lock`;
@@ -107,11 +137,115 @@ export class SnapshotManager {
         return normalizeTrackedCodebasePath(codebasePath);
     }
 
+    public getRuntimeId(): string {
+        return this.runtimeId;
+    }
+
+    public getOwnershipHeartbeatIntervalMs(): number {
+        return this.ownerHeartbeatIntervalMs;
+    }
+
+    public getSnapshotFilePath(): string {
+        return this.snapshotFilePath;
+    }
+
     private hasKnownIndexStats(info: CodebaseInfo): info is CodebaseInfoIndexed & { indexedFiles: number; totalChunks: number } {
         return info.status === 'indexed'
             && info.statsState !== 'unknown'
             && typeof info.indexedFiles === 'number'
             && typeof info.totalChunks === 'number';
+    }
+
+    private buildOwnerInfo(existingOwner?: IndexingOwnerInfo): IndexingOwnerInfo {
+        const now = new Date().toISOString();
+        return {
+            runtimeId: this.runtimeId,
+            pid: process.pid,
+            startedAt: existingOwner?.startedAt || now,
+            heartbeatAt: now,
+            ...(this.clientSessionId ? { clientSessionId: this.clientSessionId } : {})
+        };
+    }
+
+    private isCurrentRuntimeOwner(info: CodebaseInfo): info is CodebaseInfoIndexing {
+        return info.status === 'indexing'
+            && info.owner?.runtimeId === this.runtimeId
+            && info.owner?.pid === process.pid;
+    }
+
+    private isPidAlive(pid: number | undefined): boolean {
+        if (!Number.isInteger(pid) || pid === undefined || pid <= 0) {
+            return false;
+        }
+
+        try {
+            process.kill(pid, 0);
+            return true;
+        } catch (error: any) {
+            if (error?.code === 'EPERM') {
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private getOwnerHeartbeatAgeMs(owner: IndexingOwnerInfo | undefined): number {
+        if (!owner?.heartbeatAt) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        const heartbeatAt = Date.parse(owner.heartbeatAt);
+        if (Number.isNaN(heartbeatAt)) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        return Date.now() - heartbeatAt;
+    }
+
+    private isLiveIndexingOwner(info: CodebaseInfoIndexing): boolean {
+        if (!info.owner) {
+            return false;
+        }
+
+        if (!this.isPidAlive(info.owner.pid)) {
+            return false;
+        }
+
+        return this.getOwnerHeartbeatAgeMs(info.owner) <= this.ownerStaleMs;
+    }
+
+    private getIndexingOwnerStaleReason(info: CodebaseInfoIndexing): string {
+        if (!info.owner) {
+            return 'missing owner metadata';
+        }
+
+        if (!this.isPidAlive(info.owner.pid)) {
+            return `owner pid ${info.owner.pid} is not alive`;
+        }
+
+        const heartbeatAgeMs = this.getOwnerHeartbeatAgeMs(info.owner);
+        if (heartbeatAgeMs > this.ownerStaleMs) {
+            return `owner heartbeat stale (${heartbeatAgeMs}ms > ${this.ownerStaleMs}ms)`;
+        }
+
+        return 'owner is live';
+    }
+
+    private formatOwner(owner: IndexingOwnerInfo | undefined): string {
+        if (!owner) {
+            return 'unknown owner';
+        }
+
+        return `runtime=${owner.runtimeId} pid=${owner.pid} heartbeat=${owner.heartbeatAt}`;
+    }
+
+    private createInterruptedIndexingFailure(info: CodebaseInfoIndexing, reason: string): CodebaseInfoIndexFailed {
+        return {
+            status: 'indexfailed',
+            errorMessage: `Indexing was interrupted or abandoned (${reason}). Please run index_codebase again.`,
+            lastAttemptedPercentage: info.indexingPercentage,
+            lastUpdated: new Date().toISOString()
+        };
     }
 
     private normalizeCodebaseInfo(info: CodebaseInfo): CodebaseInfo {
@@ -164,8 +298,19 @@ export class SnapshotManager {
             : existingInfo;
     }
 
+    private selectPreferredDeletionTimestamp(existingDeletedAt: string | undefined, candidateDeletedAt: string): string {
+        if (!existingDeletedAt) {
+            return candidateDeletedAt;
+        }
+
+        return this.toTimestamp(candidateDeletedAt) >= this.toTimestamp(existingDeletedAt)
+            ? candidateDeletedAt
+            : existingDeletedAt;
+    }
+
     private normalizeSnapshot(snapshot: CodebaseSnapshotV2): CodebaseSnapshotV2 {
         const normalizedCodebases: Record<string, CodebaseInfo> = {};
+        const normalizedDeletedCodebases: Record<string, string> = {};
 
         for (const [codebasePath, info] of Object.entries(snapshot.codebases || {})) {
             const normalizedPath = this.normalizeCodebasePath(codebasePath);
@@ -179,31 +324,22 @@ export class SnapshotManager {
             );
         }
 
-        return {
-            formatVersion: 'v2',
-            codebases: normalizedCodebases,
-            lastUpdated: snapshot.lastUpdated || new Date().toISOString()
-        };
-    }
-
-    private isPathWithinWorkspace(candidatePath: string): boolean {
-        const absoluteCandidate = this.normalizeCodebasePath(candidatePath);
-        return absoluteCandidate === this.workspacePath || absoluteCandidate.startsWith(`${this.workspacePath}${path.sep}`);
-    }
-
-    private filterSnapshotForWorkspace(snapshot: CodebaseSnapshotV2): CodebaseSnapshotV2 {
-        const filteredCodebases: Record<string, CodebaseInfo> = {};
-
-        for (const [codebasePath, info] of Object.entries(this.normalizeSnapshot(snapshot).codebases)) {
-            if (this.isPathWithinWorkspace(codebasePath)) {
-                filteredCodebases[codebasePath] = info;
+        for (const [codebasePath, deletedAt] of Object.entries(snapshot.deletedCodebases || {})) {
+            const normalizedPath = this.normalizeCodebasePath(codebasePath);
+            if (normalizedPath !== codebasePath) {
+                console.log(`[SNAPSHOT-DEBUG] Canonicalized deleted codebase path '${codebasePath}' -> '${normalizedPath}'`);
             }
+            normalizedDeletedCodebases[normalizedPath] = this.selectPreferredDeletionTimestamp(
+                normalizedDeletedCodebases[normalizedPath],
+                deletedAt
+            );
         }
 
         return {
             formatVersion: 'v2',
-            codebases: filteredCodebases,
-            lastUpdated: new Date().toISOString()
+            codebases: normalizedCodebases,
+            deletedCodebases: Object.keys(normalizedDeletedCodebases).length > 0 ? normalizedDeletedCodebases : undefined,
+            lastUpdated: snapshot.lastUpdated || new Date().toISOString()
         };
     }
 
@@ -221,15 +357,18 @@ export class SnapshotManager {
             return;
         }
 
-        const filteredSnapshot = this.filterSnapshotForWorkspace(legacySnapshot);
-        const migratedCount = Object.keys(filteredSnapshot.codebases).length;
+        const migratedSnapshot = {
+            ...this.normalizeSnapshot(legacySnapshot),
+            lastUpdated: new Date().toISOString()
+        };
+        const migratedCount = Object.keys(migratedSnapshot.codebases).length;
         if (migratedCount === 0) {
             return;
         }
 
-        this.writeSnapshotToDiskUnsafe(filteredSnapshot, this.snapshotFilePath);
+        this.writeSnapshotToDiskUnsafe(migratedSnapshot, this.snapshotFilePath);
         console.log(
-            `[SNAPSHOT-DEBUG] Migrated ${migratedCount} codebase(s) from legacy snapshot to workspace-scoped snapshot`
+            `[SNAPSHOT-DEBUG] Migrated ${migratedCount} codebase(s) from legacy snapshot to workspace-scoped snapshot without path filtering`
         );
     }
 
@@ -328,15 +467,25 @@ export class SnapshotManager {
 
     private buildSnapshotFromMemory(): CodebaseSnapshotV2 {
         const codebases: Record<string, CodebaseInfo> = {};
+        const deletedCodebases: Record<string, string> = {};
 
         for (const [codebasePath, info] of this.codebaseInfoMap) {
             const normalizedPath = this.normalizeCodebasePath(codebasePath);
             codebases[normalizedPath] = this.selectPreferredCodebaseInfo(codebases[normalizedPath], info);
         }
 
+        for (const [codebasePath, deletedAt] of this.pendingDeletes) {
+            const normalizedPath = this.normalizeCodebasePath(codebasePath);
+            deletedCodebases[normalizedPath] = this.selectPreferredDeletionTimestamp(
+                deletedCodebases[normalizedPath],
+                deletedAt
+            );
+        }
+
         return {
             formatVersion: 'v2',
             codebases,
+            deletedCodebases: Object.keys(deletedCodebases).length > 0 ? deletedCodebases : undefined,
             lastUpdated: new Date().toISOString()
         };
     }
@@ -347,6 +496,7 @@ export class SnapshotManager {
         const indexingCodebases = new Map<string, number>();
         const codebaseFileCount = new Map<string, number>();
         const codebaseInfoMap = new Map<string, CodebaseInfo>();
+        const pendingDeletes = new Map<string, string>();
 
         for (const [codebasePath, info] of Object.entries(snapshot.codebases)) {
             codebaseInfoMap.set(codebasePath, info);
@@ -361,10 +511,15 @@ export class SnapshotManager {
             }
         }
 
+        for (const [codebasePath, deletedAt] of Object.entries(snapshot.deletedCodebases || {})) {
+            pendingDeletes.set(codebasePath, deletedAt);
+        }
+
         this.indexedCodebases = indexedCodebases;
         this.indexingCodebases = indexingCodebases;
         this.codebaseFileCount = codebaseFileCount;
         this.codebaseInfoMap = codebaseInfoMap;
+        this.pendingDeletes = pendingDeletes;
     }
 
     private convertV1ToV2(snapshot: CodebaseSnapshotV1): CodebaseSnapshotV2 {
@@ -506,6 +661,7 @@ export class SnapshotManager {
             return {
                 status: info.status,
                 indexingPercentage: info.indexingPercentage,
+                owner: info.owner,
                 lastUpdated: info.lastUpdated
             };
         }
@@ -521,14 +677,20 @@ export class SnapshotManager {
     private getComparableSnapshotSignature(snapshot: CodebaseSnapshotV2): string {
         const normalizedSnapshot = this.normalizeSnapshot(snapshot);
         const comparableCodebases: Record<string, Record<string, unknown>> = {};
+        const comparableDeletedCodebases: Record<string, string> = {};
 
         for (const codebasePath of Object.keys(normalizedSnapshot.codebases).sort()) {
             comparableCodebases[codebasePath] = this.createComparableCodebaseInfo(normalizedSnapshot.codebases[codebasePath]);
         }
 
+        for (const codebasePath of Object.keys(normalizedSnapshot.deletedCodebases || {}).sort()) {
+            comparableDeletedCodebases[codebasePath] = normalizedSnapshot.deletedCodebases![codebasePath];
+        }
+
         return JSON.stringify({
             formatVersion: 'v2',
-            codebases: comparableCodebases
+            codebases: comparableCodebases,
+            deletedCodebases: comparableDeletedCodebases
         });
     }
 
@@ -542,31 +704,50 @@ export class SnapshotManager {
 
     private mergeSnapshots(existingSnapshot: CodebaseSnapshotV2 | null, localSnapshot: CodebaseSnapshotV2): CodebaseSnapshotV2 {
         const mergedCodebases: Record<string, CodebaseInfo> = {};
+        const mergedDeletedCodebases: Record<string, string> = {};
 
         if (existingSnapshot) {
-            for (const [codebasePath, info] of Object.entries(this.normalizeSnapshot(existingSnapshot).codebases)) {
+            const normalizedExistingSnapshot = this.normalizeSnapshot(existingSnapshot);
+            for (const [codebasePath, info] of Object.entries(normalizedExistingSnapshot.codebases)) {
                 mergedCodebases[codebasePath] = this.selectPreferredCodebaseInfo(mergedCodebases[codebasePath], info);
+            }
+            for (const [codebasePath, deletedAt] of Object.entries(normalizedExistingSnapshot.deletedCodebases || {})) {
+                mergedDeletedCodebases[codebasePath] = this.selectPreferredDeletionTimestamp(
+                    mergedDeletedCodebases[codebasePath],
+                    deletedAt
+                );
             }
         }
 
-        for (const [codebasePath, localInfo] of Object.entries(this.normalizeSnapshot(localSnapshot).codebases)) {
+        const normalizedLocalSnapshot = this.normalizeSnapshot(localSnapshot);
+
+        for (const [codebasePath, deletedAt] of Object.entries(normalizedLocalSnapshot.deletedCodebases || {})) {
+            mergedDeletedCodebases[codebasePath] = this.selectPreferredDeletionTimestamp(
+                mergedDeletedCodebases[codebasePath],
+                deletedAt
+            );
+        }
+
+        for (const [codebasePath, localInfo] of Object.entries(normalizedLocalSnapshot.codebases)) {
             const existingInfo = mergedCodebases[codebasePath];
             if (!existingInfo || this.toTimestamp(localInfo.lastUpdated) >= this.toTimestamp(existingInfo.lastUpdated)) {
                 mergedCodebases[codebasePath] = localInfo;
             }
         }
 
-        for (const [codebasePath, deletedAt] of this.pendingDeletes.entries()) {
-            const normalizedPath = this.normalizeCodebasePath(codebasePath);
-            const currentInfo = mergedCodebases[normalizedPath];
+        for (const [codebasePath, deletedAt] of Object.entries(mergedDeletedCodebases)) {
+            const currentInfo = mergedCodebases[codebasePath];
             if (!currentInfo || this.toTimestamp(deletedAt) >= this.toTimestamp(currentInfo.lastUpdated)) {
-                delete mergedCodebases[normalizedPath];
+                delete mergedCodebases[codebasePath];
+            } else {
+                delete mergedDeletedCodebases[codebasePath];
             }
         }
 
         return {
             formatVersion: 'v2',
             codebases: mergedCodebases,
+            deletedCodebases: Object.keys(mergedDeletedCodebases).length > 0 ? mergedDeletedCodebases : undefined,
             lastUpdated: new Date().toISOString()
         };
     }
@@ -583,15 +764,43 @@ export class SnapshotManager {
         this.pendingSaveReason = null;
     }
 
-    private enqueueSave(reason: string): Promise<void> {
-        this.saveQueue = this.saveQueue
+    private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+        const queuedOperation = this.saveQueue
             .catch(() => {
-                // Keep queue alive even if prior save failed.
+                // Keep queue alive even if prior operation failed.
             })
-            .then(async () => {
-                await this.performSaveCodebaseSnapshot(reason);
+            .then(operation);
+
+        this.saveQueue = queuedOperation
+            .then(() => undefined)
+            .catch(() => undefined);
+
+        return queuedOperation;
+    }
+
+    private enqueueSave(reason: string): Promise<void> {
+        return this.enqueueOperation(async () => {
+            await this.performSaveCodebaseSnapshot(reason);
+        });
+    }
+
+    private inspectSnapshotWithLock<T>(
+        reason: string,
+        inspector: (snapshot: CodebaseSnapshotV2) => Promise<T> | T
+    ): Promise<T> {
+        return this.enqueueOperation(async () => {
+            console.log(`[SNAPSHOT-DEBUG] Inspecting codebase snapshot (reason=${reason})`);
+
+            return this.withSnapshotLock(async () => {
+                const existingSnapshot = this.readSnapshotFromDiskUnsafe();
+                const localSnapshot = this.buildSnapshotFromMemory();
+                const workingSnapshot = this.mergeSnapshots(existingSnapshot, localSnapshot);
+                const normalizedSnapshot = this.normalizeSnapshot(workingSnapshot);
+
+                this.applySnapshotToMemory(normalizedSnapshot);
+                return inspector(normalizedSnapshot);
             });
-        return this.saveQueue;
+        });
     }
 
     public scheduleSaveCodebaseSnapshot(reason: string = 'scheduled', delayMs: number = this.saveDebounceMs): void {
@@ -631,6 +840,41 @@ export class SnapshotManager {
         }
 
         await this.saveQueue;
+    }
+
+    private createEmptySnapshot(): CodebaseSnapshotV2 {
+        return {
+            formatVersion: 'v2',
+            codebases: {},
+            deletedCodebases: undefined,
+            lastUpdated: new Date().toISOString()
+        };
+    }
+
+    private async mutateSnapshotWithLock<T>(
+        reason: string,
+        mutator: (snapshot: CodebaseSnapshotV2) => Promise<SnapshotMutationResult<T>> | SnapshotMutationResult<T>
+    ): Promise<T> {
+        this.clearPendingSaveTimer();
+
+        return this.enqueueOperation(async () => {
+            console.log(`[SNAPSHOT-DEBUG] Mutating codebase snapshot (reason=${reason})`);
+
+            return this.withSnapshotLock(async () => {
+                const existingSnapshot = this.readSnapshotFromDiskUnsafe();
+                const localSnapshot = this.buildSnapshotFromMemory();
+                const workingSnapshot = this.mergeSnapshots(existingSnapshot, localSnapshot);
+                const { result, changed } = await mutator(workingSnapshot);
+                const normalizedSnapshot = this.normalizeSnapshot(workingSnapshot);
+
+                if (changed) {
+                    this.writeSnapshotToDiskUnsafe(normalizedSnapshot);
+                }
+
+                this.applySnapshotToMemory(normalizedSnapshot);
+                return result;
+            });
+        });
     }
 
     /**
@@ -682,6 +926,7 @@ export class SnapshotManager {
         this.indexedCodebases = validCodebases;
         this.indexingCodebases = new Map(); // Reset indexing codebases since they were interrupted
         this.codebaseFileCount = new Map(); // No file count info in v1 format
+        this.pendingDeletes = new Map();
 
         // Populate codebaseInfoMap for v1 indexed codebases (with minimal info)
         this.codebaseInfoMap = new Map();
@@ -707,6 +952,7 @@ export class SnapshotManager {
         const validIndexingCodebases = new Map<string, number>();
         const validFileCount = new Map<string, number>();
         const validCodebaseInfoMap = new Map<string, CodebaseInfo>();
+        const validPendingDeletes = new Map<string, string>();
 
         for (const [codebasePath, info] of Object.entries(snapshot.codebases)) {
             if (!fs.existsSync(codebasePath)) {
@@ -726,16 +972,20 @@ export class SnapshotManager {
                     `(${this.formatIndexedStat(info.indexedFiles)} files, ${this.formatIndexedStat(info.totalChunks)} chunks)`
                 );
             } else if (info.status === 'indexing') {
-                console.warn(`[SNAPSHOT-DEBUG] Found interrupted indexing codebase: ${codebasePath} (${info.indexingPercentage || 0}%). Treating as not indexed.`);
-                // Interrupted indexing should not block future indexing attempts.
-                // Convert it into a failed status to preserve diagnostics while avoiding stale "indexing" locks.
-                const interruptedInfo: CodebaseInfoIndexFailed = {
-                    status: 'indexfailed',
-                    errorMessage: 'Indexing was interrupted (likely due to MCP restart). Please run index_codebase again.',
-                    lastAttemptedPercentage: info.indexingPercentage,
-                    lastUpdated: new Date().toISOString()
-                };
-                validCodebaseInfoMap.set(codebasePath, interruptedInfo);
+                if (this.isLiveIndexingOwner(info)) {
+                    validCodebaseInfoMap.set(codebasePath, info);
+                    validIndexingCodebases.set(codebasePath, info.indexingPercentage || 0);
+                    console.log(
+                        `[SNAPSHOT-DEBUG] Preserving live indexing owner for ${codebasePath}: ${this.formatOwner(info.owner)}`
+                    );
+                } else {
+                    const staleReason = this.getIndexingOwnerStaleReason(info);
+                    console.warn(
+                        `[SNAPSHOT-DEBUG] Found stale indexing codebase: ${codebasePath} (${info.indexingPercentage || 0}%). ` +
+                        `Recovering as failed status. Reason: ${staleReason}`
+                    );
+                    validCodebaseInfoMap.set(codebasePath, this.createInterruptedIndexingFailure(info, staleReason));
+                }
             } else if (info.status === 'indexfailed') {
                 validCodebaseInfoMap.set(codebasePath, info);
                 console.warn(`[SNAPSHOT-DEBUG] Found failed indexing codebase: ${codebasePath}. Error: ${info.errorMessage}`);
@@ -747,6 +997,10 @@ export class SnapshotManager {
         this.indexingCodebases = validIndexingCodebases;
         this.codebaseFileCount = validFileCount;
         this.codebaseInfoMap = validCodebaseInfoMap;
+        for (const [codebasePath, deletedAt] of Object.entries(snapshot.deletedCodebases || {})) {
+            validPendingDeletes.set(codebasePath, deletedAt);
+        }
+        this.pendingDeletes = validPendingDeletes;
     }
 
     public getIndexedCodebases(): string[] {
@@ -927,6 +1181,7 @@ export class SnapshotManager {
      */
     public setCodebaseIndexing(codebasePath: string, progress: number = 0): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
+        const existingInfo = this.codebaseInfoMap.get(codebasePath);
         this.indexingCodebases.set(codebasePath, progress);
         this.pendingDeletes.delete(codebasePath);
 
@@ -938,7 +1193,10 @@ export class SnapshotManager {
         const info: CodebaseInfoIndexing = {
             status: 'indexing',
             indexingPercentage: progress,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: new Date().toISOString(),
+            ...(existingInfo?.status === 'indexing' && existingInfo.owner
+                ? { owner: this.buildOwnerInfo(existingInfo.owner) }
+                : {})
         };
         this.codebaseInfoMap.set(codebasePath, info);
     }
@@ -1062,6 +1320,266 @@ export class SnapshotManager {
         return this.codebaseInfoMap.get(this.normalizeCodebasePath(codebasePath));
     }
 
+    public getAllCodebaseInfo(): Record<string, CodebaseInfo> {
+        return Object.fromEntries(this.codebaseInfoMap.entries());
+    }
+
+    public async inspectIndexingOwnership(codebasePath: string): Promise<IndexingOwnershipInspectionResult> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.inspectSnapshotWithLock(
+            'index-ownership-inspect',
+            async (snapshot): Promise<IndexingOwnershipInspectionResult> => {
+                const existingInfo = snapshot.codebases[normalizedPath];
+                if (!existingInfo || existingInfo.status !== 'indexing') {
+                    return {
+                        state: 'not-indexing',
+                        info: existingInfo
+                    };
+                }
+
+                const indexingInfo: CodebaseInfoIndexing = existingInfo;
+                const currentOwner = indexingInfo.owner;
+                const ownedByCurrentRuntime =
+                    currentOwner?.runtimeId === this.runtimeId
+                    && currentOwner?.pid === process.pid;
+
+                if (ownedByCurrentRuntime) {
+                    return {
+                        state: 'owned-by-current-runtime',
+                        currentOwner,
+                        info: indexingInfo
+                    };
+                }
+
+                if (this.isLiveIndexingOwner(indexingInfo)) {
+                    return {
+                        state: 'blocked-live-owner',
+                        currentOwner,
+                        info: indexingInfo
+                    };
+                }
+
+                return {
+                    state: 'stale-owner',
+                    currentOwner,
+                    info: indexingInfo,
+                    staleReason: this.getIndexingOwnerStaleReason(indexingInfo)
+                };
+            }
+        );
+    }
+
+    public async acquireIndexingOwnership(
+        codebasePath: string,
+        progress: number = 0
+    ): Promise<IndexingOwnershipClaimResult> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.mutateSnapshotWithLock<IndexingOwnershipClaimResult>(
+            'index-ownership-acquire',
+            async (snapshot): Promise<SnapshotMutationResult<IndexingOwnershipClaimResult>> => {
+                const existingInfo = snapshot.codebases[normalizedPath];
+
+                if (existingInfo?.status === 'indexing') {
+                    const existingIndexingInfo = existingInfo as CodebaseInfoIndexing;
+                    const existingOwner = existingIndexingInfo.owner;
+
+                    if (this.isCurrentRuntimeOwner(existingIndexingInfo)) {
+                        const updatedInfo: CodebaseInfoIndexing = {
+                            ...existingIndexingInfo,
+                            indexingPercentage: progress,
+                            owner: this.buildOwnerInfo(existingOwner),
+                            lastUpdated: new Date().toISOString()
+                        };
+                        snapshot.codebases[normalizedPath] = {
+                            ...updatedInfo
+                        };
+                        if (snapshot.deletedCodebases) {
+                            delete snapshot.deletedCodebases[normalizedPath];
+                        }
+                        return {
+                            changed: true,
+                            result: {
+                                acquired: true,
+                                reason: 'already-owned',
+                                currentOwner: updatedInfo.owner,
+                                previousInfo: existingIndexingInfo
+                            }
+                        };
+                    }
+
+                    if (this.isLiveIndexingOwner(existingIndexingInfo)) {
+                        console.warn(
+                            `[SNAPSHOT-OWNERSHIP] Rejecting indexing for '${normalizedPath}'. ` +
+                            `Live owner already exists: ${this.formatOwner(existingOwner)}`
+                        );
+                        return {
+                            changed: false,
+                            result: {
+                                acquired: false,
+                                reason: 'blocked-live-owner',
+                                currentOwner: existingOwner,
+                                previousInfo: existingIndexingInfo
+                            }
+                        };
+                    }
+
+                    const staleReason = this.getIndexingOwnerStaleReason(existingIndexingInfo);
+                    const reclaimedInfo: CodebaseInfoIndexing = {
+                        status: 'indexing',
+                        indexingPercentage: progress,
+                        owner: this.buildOwnerInfo(),
+                        lastUpdated: new Date().toISOString()
+                    };
+                    snapshot.codebases[normalizedPath] = reclaimedInfo;
+                    if (snapshot.deletedCodebases) {
+                        delete snapshot.deletedCodebases[normalizedPath];
+                    }
+                    console.warn(
+                        `[SNAPSHOT-OWNERSHIP] Reclaiming stale indexing owner for '${normalizedPath}'. ` +
+                        `Previous owner: ${this.formatOwner(existingOwner)}. Reason: ${staleReason}`
+                    );
+                    return {
+                        changed: true,
+                        result: {
+                            acquired: true,
+                            reason: 'reclaimed-stale-owner',
+                            currentOwner: reclaimedInfo.owner,
+                            previousInfo: existingIndexingInfo
+                        }
+                    };
+                }
+
+                const nextInfo: CodebaseInfoIndexing = {
+                    status: 'indexing',
+                    indexingPercentage: progress,
+                    owner: this.buildOwnerInfo(),
+                    lastUpdated: new Date().toISOString()
+                };
+                snapshot.codebases[normalizedPath] = nextInfo;
+                if (snapshot.deletedCodebases) {
+                    delete snapshot.deletedCodebases[normalizedPath];
+                }
+
+                return {
+                    changed: true,
+                    result: {
+                        acquired: true,
+                        reason: 'claimed',
+                        currentOwner: nextInfo.owner,
+                        previousInfo: existingInfo
+                    }
+                };
+            }
+        );
+    }
+
+    public async refreshIndexingOwnership(codebasePath: string, progress?: number): Promise<boolean> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.mutateSnapshotWithLock('index-ownership-heartbeat', async (snapshot) => {
+            const existingInfo = snapshot.codebases[normalizedPath];
+            if (!existingInfo || existingInfo.status !== 'indexing' || !this.isCurrentRuntimeOwner(existingInfo)) {
+                console.warn(
+                    `[SNAPSHOT-OWNERSHIP] Skipping heartbeat refresh for '${normalizedPath}' because current runtime no longer owns indexing.`
+                );
+                return {
+                    changed: false,
+                    result: false
+                };
+            }
+
+            snapshot.codebases[normalizedPath] = {
+                ...existingInfo,
+                indexingPercentage: progress ?? existingInfo.indexingPercentage,
+                owner: this.buildOwnerInfo(existingInfo.owner),
+                lastUpdated: new Date().toISOString()
+            };
+            if (snapshot.deletedCodebases) {
+                delete snapshot.deletedCodebases[normalizedPath];
+            }
+
+            return {
+                changed: true,
+                result: true
+            };
+        });
+    }
+
+    public async completeIndexingOwnership(
+        codebasePath: string,
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }
+    ): Promise<boolean> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.mutateSnapshotWithLock('index-ownership-complete', async (snapshot) => {
+            const existingInfo = snapshot.codebases[normalizedPath];
+            if (!existingInfo || existingInfo.status !== 'indexing' || !this.isCurrentRuntimeOwner(existingInfo)) {
+                console.warn(
+                    `[SNAPSHOT-OWNERSHIP] Refusing to mark '${normalizedPath}' as indexed because current runtime is not the owner anymore.`
+                );
+                return {
+                    changed: false,
+                    result: false
+                };
+            }
+
+            snapshot.codebases[normalizedPath] = {
+                status: 'indexed',
+                indexedFiles: stats.indexedFiles,
+                totalChunks: stats.totalChunks,
+                indexStatus: stats.status,
+                statsState: 'known',
+                lastUpdated: new Date().toISOString()
+            };
+            if (snapshot.deletedCodebases) {
+                delete snapshot.deletedCodebases[normalizedPath];
+            }
+
+            return {
+                changed: true,
+                result: true
+            };
+        });
+    }
+
+    public async failIndexingOwnership(
+        codebasePath: string,
+        errorMessage: string,
+        lastAttemptedPercentage?: number
+    ): Promise<boolean> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.mutateSnapshotWithLock('index-ownership-fail', async (snapshot) => {
+            const existingInfo = snapshot.codebases[normalizedPath];
+            if (!existingInfo || existingInfo.status !== 'indexing' || !this.isCurrentRuntimeOwner(existingInfo)) {
+                console.warn(
+                    `[SNAPSHOT-OWNERSHIP] Refusing to mark '${normalizedPath}' as failed because current runtime is not the owner anymore.`
+                );
+                return {
+                    changed: false,
+                    result: false
+                };
+            }
+
+            snapshot.codebases[normalizedPath] = {
+                status: 'indexfailed',
+                errorMessage,
+                lastAttemptedPercentage,
+                lastUpdated: new Date().toISOString()
+            };
+            if (snapshot.deletedCodebases) {
+                delete snapshot.deletedCodebases[normalizedPath];
+            }
+
+            return {
+                changed: true,
+                result: true
+            };
+        });
+    }
+
     /**
      * Get all failed codebases
      */
@@ -1096,6 +1614,7 @@ export class SnapshotManager {
             const { snapshot, sourceFormat } = this.readSnapshotFromDiskWithMetadata();
             if (!snapshot) {
                 console.log('[SNAPSHOT-DEBUG] Snapshot file does not exist. Starting with empty codebase list.');
+                this.pendingDeletes.clear();
                 return;
             }
 
@@ -1124,7 +1643,6 @@ export class SnapshotManager {
             const merged = this.mergeSnapshots(existingSnapshot, localSnapshot);
             this.writeSnapshotToDiskUnsafe(merged);
             this.applySnapshotToMemory(merged);
-            this.pendingDeletes.clear();
             return merged;
         });
 

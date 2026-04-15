@@ -2,19 +2,30 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
-import { Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
+import { CodebaseSessionConfig, Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
+import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
+import { RuntimeStatusManager } from "./runtime-status.js";
 import { ensureAbsolutePath, normalizeCodebasePath, truncateContent, trackCodebasePath } from "./utils.js";
 
 export class ToolHandlers {
     private context: Context;
     private snapshotManager: SnapshotManager;
+    private codebaseConfigManager: CodebaseConfigManager;
+    private runtimeStatusManager?: RuntimeStatusManager;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
-    constructor(context: Context, snapshotManager: SnapshotManager) {
+    constructor(
+        context: Context,
+        snapshotManager: SnapshotManager,
+        codebaseConfigManager: CodebaseConfigManager,
+        runtimeStatusManager?: RuntimeStatusManager
+    ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
+        this.codebaseConfigManager = codebaseConfigManager;
+        this.runtimeStatusManager = runtimeStatusManager;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
@@ -173,6 +184,7 @@ export class ToolHandlers {
         }
 
         await this.snapshotManager.saveCodebaseSnapshot(saveReason);
+        await this.runtimeStatusManager?.refresh(saveReason);
         return recoveredStats !== null;
     }
 
@@ -183,6 +195,24 @@ export class ToolHandlers {
                 text: `Error: Index data for '${codebasePath}' has been lost (collection not found in Milvus). Please re-index using index_codebase with force=true.`
             }],
             isError: true
+        };
+    }
+
+    private formatOwnerForMessage(owner: { runtimeId: string; pid: number; heartbeatAt: string } | undefined): string {
+        if (!owner) {
+            return 'owner metadata is unavailable';
+        }
+
+        return `runtime=${owner.runtimeId}, pid=${owner.pid}, heartbeat=${owner.heartbeatAt}`;
+    }
+
+    private createPersistedSessionConfig(
+        customExtensions: string[],
+        customIgnorePatterns: string[]
+    ): CodebaseSessionConfig {
+        return {
+            customExtensions,
+            customIgnorePatterns
         };
     }
 
@@ -311,6 +341,9 @@ export class ToolHandlers {
         const splitterType = splitter || 'ast'; // Default to AST
         const customFileExtensions = customExtensions || [];
         const customIgnorePatterns = ignorePatterns || [];
+        const persistedSessionConfig = this.createPersistedSessionConfig(customFileExtensions, customIgnorePatterns);
+        let ownershipClaimed = false;
+        let claimedCodebasePath: string | null = null;
 
         try {
             // Sync indexed codebases from cloud first
@@ -352,29 +385,9 @@ export class ToolHandlers {
                 };
             }
 
-            const initialStatus = this.snapshotManager.getCodebaseStatus(absolutePath);
-
-            // Check if this process is already indexing the codebase.
-            // We intentionally rely on in-memory status here so stale on-disk "indexing"
-            // entries from previous MCP sessions don't block force reindex.
-            if (initialStatus === 'indexing') {
-                if (forceReindex) {
-                    console.log(`[FORCE-REINDEX] Clearing stale indexing state for '${absolutePath}'`);
-                    this.snapshotManager.removeCodebaseCompletely(absolutePath);
-                    await this.snapshotManager.saveCodebaseSnapshot('force-reindex-clear-stale-indexing');
-                } else {
-                    return {
-                        content: [{
-                            type: "text",
-                            text: `Codebase '${absolutePath}' is already being indexed in the background. Please wait for completion.`
-                        }],
-                        isError: true
-                    };
-                }
-            }
-
             const snapshotHasIndex = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
             const cloudHasIndex = await this.context.hasIndex(absolutePath);
+            const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
 
             // Reconcile local snapshot with cloud truth for this specific codebase
             if (snapshotHasIndex !== cloudHasIndex) {
@@ -397,6 +410,16 @@ export class ToolHandlers {
 
             // Check if already indexed in cloud (unless force is true)
             if (!forceReindex && cloudHasIndex) {
+                if (!hasPersistedSyncConfig) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Codebase '${absolutePath}' is already indexed, but its local per-codebase sync config is missing. Re-run index_codebase with force=true to restore restart-safe incremental sync.`
+                        }],
+                        isError: true
+                    };
+                }
+
                 return {
                     content: [{
                         type: "text",
@@ -404,19 +427,6 @@ export class ToolHandlers {
                     }],
                     isError: true
                 };
-            }
-
-            // If force reindex and codebase is already indexed, remove it
-            if (forceReindex) {
-                if (initialStatus !== 'not_found' || snapshotHasIndex) {
-                    console.log(`[FORCE-REINDEX] 🔄 Clearing local snapshot state for '${absolutePath}'`);
-                    this.snapshotManager.removeCodebaseCompletely(absolutePath);
-                    await this.snapshotManager.saveCodebaseSnapshot('force-reindex-clear-local-state');
-                }
-                if (cloudHasIndex) {
-                    console.log(`[FORCE-REINDEX] 🔄 Clearing index for '${absolutePath}'`);
-                    await this.context.clearIndex(absolutePath);
-                }
             }
 
             // CRITICAL: Pre-index collection creation validation
@@ -450,31 +460,55 @@ export class ToolHandlers {
                 };
             }
 
-            // Add custom extensions if provided
-            if (customFileExtensions.length > 0) {
-                console.log(`[CUSTOM-EXTENSIONS] Adding ${customFileExtensions.length} custom extensions: ${customFileExtensions.join(', ')}`);
-                this.context.addCustomExtensions(customFileExtensions);
+            const ownershipClaim = await this.snapshotManager.acquireIndexingOwnership(absolutePath, 0);
+            if (!ownershipClaim.acquired) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Codebase '${absolutePath}' is already being indexed by another MCP runtime. ${this.formatOwnerForMessage(ownershipClaim.currentOwner)}`
+                    }],
+                    isError: true
+                };
             }
 
-            // Add custom ignore patterns if provided (before loading file-based patterns)
-            if (customIgnorePatterns.length > 0) {
-                console.log(`[IGNORE-PATTERNS] Adding ${customIgnorePatterns.length} custom ignore patterns: ${customIgnorePatterns.join(', ')}`);
-                this.context.addCustomIgnorePatterns(customIgnorePatterns);
+            ownershipClaimed = true;
+            claimedCodebasePath = absolutePath;
+
+            if (ownershipClaim.reason === 'reclaimed-stale-owner') {
+                console.warn(
+                    `[INDEX-OWNERSHIP] Reclaimed stale indexing ownership for '${absolutePath}'. ` +
+                    `Previous owner: ${this.formatOwnerForMessage(
+                        ownershipClaim.previousInfo?.status === 'indexing' ? ownershipClaim.previousInfo.owner : undefined
+                    )}`
+                );
+            } else {
+                console.log(
+                    `[INDEX-OWNERSHIP] Acquired indexing ownership for '${absolutePath}'. ` +
+                    `${this.formatOwnerForMessage(ownershipClaim.currentOwner)}`
+                );
             }
+
+            await this.runtimeStatusManager?.refresh('index-ownership-acquired');
+
+            // If force reindex and codebase is already indexed, clear cloud state only after ownership is secured.
+            if (forceReindex && cloudHasIndex) {
+                console.log(`[FORCE-REINDEX] 🔄 Clearing index for '${absolutePath}'`);
+                await this.context.clearIndex(absolutePath);
+            }
+
+            this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
+            await this.codebaseConfigManager.saveConfig(absolutePath, persistedSessionConfig);
+            await this.runtimeStatusManager?.refresh('codebase-sync-config-saved');
 
             // Check current status and log if retrying after failure
-            const currentStatus = this.snapshotManager.getCodebaseStatus(absolutePath);
-            if (currentStatus === 'indexfailed') {
-                const failedInfo = this.snapshotManager.getCodebaseInfo(absolutePath) as any;
+            if (ownershipClaim.previousInfo?.status === 'indexfailed') {
+                const failedInfo = ownershipClaim.previousInfo as any;
                 console.log(`[BACKGROUND-INDEX] Retrying indexing for previously failed codebase. Previous error: ${failedInfo?.errorMessage || 'Unknown error'}`);
             }
 
-            // Set to indexing status and save snapshot immediately
-            this.snapshotManager.setCodebaseIndexing(absolutePath, 0);
-            await this.snapshotManager.saveCodebaseSnapshot('index-started');
-
             // Track the codebase path for syncing
             trackCodebasePath(absolutePath);
+            await this.runtimeStatusManager?.refresh('index-started');
 
             // Start background indexing - now safe to proceed
             this.startBackgroundIndexing(absolutePath, forceReindex, splitterType);
@@ -502,6 +536,18 @@ export class ToolHandlers {
             // Enhanced error handling to prevent MCP service crash
             console.error('Error in handleIndexCodebase:', error);
 
+            if (ownershipClaimed && claimedCodebasePath) {
+                try {
+                    await this.snapshotManager.failIndexingOwnership(
+                        claimedCodebasePath,
+                        error.message || String(error)
+                    );
+                    await this.runtimeStatusManager?.refresh('index-start-failed');
+                } catch (ownershipError: any) {
+                    console.error(`[INDEX-OWNERSHIP] Failed to release ownership for '${claimedCodebasePath}':`, ownershipError);
+                }
+            }
+
             // Ensure we always return a proper MCP response, never throw
             return {
                 content: [{
@@ -516,14 +562,31 @@ export class ToolHandlers {
     private async startBackgroundIndexing(codebasePath: string, forceReindex: boolean, splitterType: string) {
         const absolutePath = codebasePath;
         let lastPersistedProgress = -1;
+        const heartbeatIntervalMs = this.snapshotManager.getOwnershipHeartbeatIntervalMs();
+        let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+        const stopHeartbeat = () => {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+        };
 
         try {
             console.log(`[BACKGROUND-INDEX] Starting background indexing for: ${absolutePath}`);
+            await this.runtimeStatusManager?.refresh('index-background-starting');
 
             // Note: If force reindex, collection was already cleared during validation phase
             if (forceReindex) {
                 console.log(`[BACKGROUND-INDEX] ℹ️  Force reindex mode - collection was already cleared during validation`);
             }
+
+            const persistedConfig = await this.codebaseConfigManager.getConfig(absolutePath);
+            if (!persistedConfig) {
+                throw new Error(`Persisted codebase sync config is missing for '${absolutePath}'. Re-run index_codebase with force=true.`);
+            }
+
+            this.context.configureCodebaseSession(absolutePath, persistedConfig);
 
             // Use the existing Context instance for indexing.
             let contextForThisTask = this.context;
@@ -536,7 +599,7 @@ export class ToolHandlers {
 
             // Initialize file synchronizer with proper ignore patterns (including project-specific patterns)
             const { FileSynchronizer } = await import("@zilliz/claude-context-core");
-            const ignorePatterns = this.context.getIgnorePatterns() || [];
+            const ignorePatterns = this.context.getIgnorePatterns(absolutePath) || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
             const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns);
             await synchronizer.initialize();
@@ -544,7 +607,7 @@ export class ToolHandlers {
             // Store synchronizer in the context (let context manage collection names)
             await this.context.getPreparedCollection(absolutePath);
             const collectionName = this.context.getCollectionName(absolutePath);
-            this.context.setSynchronizer(collectionName, synchronizer);
+            this.context.setSynchronizerForCodebase(absolutePath, synchronizer);
             if (contextForThisTask !== this.context) {
                 contextForThisTask.setSynchronizer(collectionName, synchronizer);
             }
@@ -554,6 +617,17 @@ export class ToolHandlers {
             // Log embedding provider information before indexing
             const embeddingProvider = this.context.getEmbedding();
             console.log(`[BACKGROUND-INDEX] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} with dimension: ${embeddingProvider.getDimension()}`);
+
+            heartbeatTimer = setInterval(() => {
+                void this.snapshotManager.refreshIndexingOwnership(absolutePath).then((refreshed) => {
+                    if (!refreshed) {
+                        console.warn(`[INDEX-OWNERSHIP] Heartbeat refresh lost ownership for '${absolutePath}'.`);
+                    }
+                }).catch((error: any) => {
+                    console.error(`[INDEX-OWNERSHIP] Heartbeat refresh failed for '${absolutePath}':`, error);
+                });
+            }, heartbeatIntervalMs);
+            heartbeatTimer.unref?.();
 
             // Start indexing with the appropriate context and progress tracking
             console.log(`[BACKGROUND-INDEX] 🚀 Beginning codebase indexing process...`);
@@ -577,12 +651,14 @@ export class ToolHandlers {
             });
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
 
-            // Set codebase to indexed status with complete statistics
-            this.snapshotManager.setCodebaseIndexed(absolutePath, stats);
+            stopHeartbeat();
             this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
 
-            // Save snapshot after updating codebase lists
-            await this.snapshotManager.saveCodebaseSnapshot('index-completed');
+            const completed = await this.snapshotManager.completeIndexingOwnership(absolutePath, stats);
+            if (!completed) {
+                console.warn(`[INDEX-OWNERSHIP] Background indexing finished for '${absolutePath}' but ownership completion was rejected.`);
+            }
+            await this.runtimeStatusManager?.refresh('index-completed');
 
             let message = `Background indexing completed for '${absolutePath}' using ${splitterType.toUpperCase()} splitter.\nIndexed ${stats.indexedFiles} files, ${stats.totalChunks} chunks.`;
             if (stats.status === 'limit_reached') {
@@ -592,15 +668,18 @@ export class ToolHandlers {
             console.log(`[BACKGROUND-INDEX] ${message}`);
 
         } catch (error: any) {
+            stopHeartbeat();
             console.error(`[BACKGROUND-INDEX] Error during indexing for ${absolutePath}:`, error);
 
             // Get the last attempted progress
             const lastProgress = this.snapshotManager.getIndexingProgress(absolutePath);
 
-            // Set codebase to failed status with error information
             const errorMessage = error.message || String(error);
-            this.snapshotManager.setCodebaseIndexFailed(absolutePath, errorMessage, lastProgress);
-            await this.snapshotManager.saveCodebaseSnapshot('index-failed');
+            const failed = await this.snapshotManager.failIndexingOwnership(absolutePath, errorMessage, lastProgress);
+            if (!failed) {
+                console.warn(`[INDEX-OWNERSHIP] Background indexing failed for '${absolutePath}' but ownership failure update was rejected.`);
+            }
+            await this.runtimeStatusManager?.refresh('index-failed');
 
             // Log error but don't crash MCP service - indexing errors are handled gracefully
             console.error(`[BACKGROUND-INDEX] Indexing failed for ${absolutePath}: ${errorMessage}`);
@@ -828,6 +907,7 @@ export class ToolHandlers {
             const isIndexed = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
             const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
+            const ownershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
 
             if (!isIndexed && !isIndexing && !hasCloudIndex) {
                 return {
@@ -837,6 +917,30 @@ export class ToolHandlers {
                     }],
                     isError: true
                 };
+            }
+
+            if (ownershipState.state === 'owned-by-current-runtime' || ownershipState.state === 'blocked-live-owner') {
+                const ownerDescription = this.formatOwnerForMessage(ownershipState.currentOwner);
+                const ownerScope = ownershipState.state === 'owned-by-current-runtime'
+                    ? 'this MCP runtime'
+                    : 'another MCP runtime';
+
+                return {
+                    content: [{
+                        type: "text",
+                        text:
+                            `Error: Codebase '${absolutePath}' is currently being indexed by ${ownerScope}. ` +
+                            `clear_index is blocked until indexing completes or fails. ${ownerDescription}`
+                    }],
+                    isError: true
+                };
+            }
+
+            if (ownershipState.state === 'stale-owner') {
+                console.warn(
+                    `[CLEAR] Proceeding with clear_index for '${absolutePath}' despite stale ownership metadata. ` +
+                    `Reason: ${ownershipState.staleReason || 'unknown stale owner'}`
+                );
             }
 
             console.log(`[CLEAR] Clearing codebase: ${absolutePath}`);
@@ -862,12 +966,14 @@ export class ToolHandlers {
 
             // Completely remove the cleared codebase from snapshot
             this.snapshotManager.removeCodebaseCompletely(absolutePath);
+            await this.codebaseConfigManager.removeConfig(absolutePath);
 
             // Reset indexing stats if this was the active codebase
             this.indexingStats = null;
 
             // Save snapshot after clearing index
             await this.snapshotManager.saveCodebaseSnapshot('clear-index');
+            await this.runtimeStatusManager?.refresh('clear-index');
 
             let resultText = `Successfully cleared codebase '${absolutePath}'`;
 
@@ -945,6 +1051,7 @@ export class ToolHandlers {
             let info = this.snapshotManager.getCodebaseInfo(absolutePath);
             let recoveredFromCloud = false;
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
+            const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
 
             // Self-heal snapshot if cloud has index but local status is missing
             if (status === 'not_found' && hasCloudIndex) {
@@ -965,6 +1072,7 @@ export class ToolHandlers {
             if (status === 'indexed' && !hasCloudIndex) {
                 this.snapshotManager.removeCodebaseCompletely(absolutePath);
                 await this.snapshotManager.saveCodebaseSnapshot('status-reconcile-cloud-missing');
+                await this.runtimeStatusManager?.refresh('status-reconcile-cloud-missing');
                 status = 'not_found';
                 info = undefined;
                 console.log(`[STATUS] 🧹 Removed stale indexed snapshot entry without cloud index for: ${absolutePath}`);
@@ -975,6 +1083,7 @@ export class ToolHandlers {
                 if (recoveredStats) {
                     this.snapshotManager.setCodebaseIndexed(absolutePath, recoveredStats);
                     await this.snapshotManager.saveCodebaseSnapshot('status-recovered-index-stats');
+                    await this.runtimeStatusManager?.refresh('status-recovered-index-stats');
                     info = this.snapshotManager.getCodebaseInfo(absolutePath);
                     console.log(`[STATUS] 📊 Recovered missing index statistics for: ${absolutePath}`);
                 }
@@ -1000,6 +1109,9 @@ export class ToolHandlers {
                     }
                     if (recoveredFromCloud) {
                         statusMessage += `\nℹ️ Index was detected directly in vector database and local snapshot state was restored.`;
+                    }
+                    if (!hasPersistedSyncConfig) {
+                        statusMessage += `\n⚠️ Incremental sync is degraded because persisted per-codebase sync config is missing. Re-index with force=true to restore restart-safe sync.`;
                     }
                     break;
 

@@ -120,12 +120,28 @@ export interface ContextConfig {
     customIgnorePatterns?: string[]; // New: custom ignore patterns from MCP
 }
 
+export interface CodebaseSessionConfig {
+    customExtensions?: string[];
+    customIgnorePatterns?: string[];
+}
+
+interface CodebaseSessionState {
+    codebasePath: string;
+    customExtensions: string[];
+    customIgnorePatterns: string[];
+    fileIgnorePatterns: string[];
+    effectiveExtensions: string[];
+    effectiveIgnorePatterns: string[];
+    synchronizer?: FileSynchronizer;
+}
+
 export class Context {
     private embedding: Embedding;
     private vectorDatabase: VectorDatabase;
     private codeSplitter: Splitter;
-    private supportedExtensions: string[];
-    private ignorePatterns: string[];
+    private defaultSupportedExtensions: string[];
+    private defaultIgnorePatterns: string[];
+    private codebaseSessions = new Map<string, CodebaseSessionState>();
     private synchronizers = new Map<string, FileSynchronizer>();
 
     constructor(config: ContextConfig = {}) {
@@ -154,7 +170,7 @@ export class Context {
             ...envCustomExtensions
         ];
         // Remove duplicates
-        this.supportedExtensions = [...new Set(allSupportedExtensions)];
+        this.defaultSupportedExtensions = [...new Set(allSupportedExtensions)];
 
         // Load custom ignore patterns from environment variables  
         const envCustomIgnorePatterns = this.getCustomIgnorePatternsFromEnv();
@@ -167,15 +183,116 @@ export class Context {
             ...envCustomIgnorePatterns
         ];
         // Remove duplicates
-        this.ignorePatterns = [...new Set(allIgnorePatterns)];
+        this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
 
-        console.log(`[Context] 🔧 Initialized with ${this.supportedExtensions.length} supported extensions and ${this.ignorePatterns.length} ignore patterns`);
+        console.log(`[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`);
         if (envCustomExtensions.length > 0) {
             console.log(`[Context] 📎 Loaded ${envCustomExtensions.length} custom extensions from environment: ${envCustomExtensions.join(', ')}`);
         }
         if (envCustomIgnorePatterns.length > 0) {
             console.log(`[Context] 🚫 Loaded ${envCustomIgnorePatterns.length} custom ignore patterns from environment: ${envCustomIgnorePatterns.join(', ')}`);
         }
+    }
+
+    private normalizeExtensionsList(extensions: string[] = []): string[] {
+        return [...new Set(
+            extensions
+                .map(ext => ext.trim())
+                .filter(ext => ext.length > 0)
+                .map(ext => ext.startsWith('.') ? ext : `.${ext}`)
+        )];
+    }
+
+    private normalizeIgnorePatternsList(patterns: string[] = []): string[] {
+        return [...new Set(
+            patterns
+                .map(pattern => pattern.trim())
+                .filter(pattern => pattern.length > 0)
+        )];
+    }
+
+    private buildEffectiveExtensions(customExtensions: string[] = []): string[] {
+        return [...new Set([...this.defaultSupportedExtensions, ...customExtensions])];
+    }
+
+    private buildEffectiveIgnorePatterns(customIgnorePatterns: string[] = [], fileIgnorePatterns: string[] = []): string[] {
+        return [...new Set([...this.defaultIgnorePatterns, ...customIgnorePatterns, ...fileIgnorePatterns])];
+    }
+
+    private getCodebaseSession(codebasePath: string): CodebaseSessionState | undefined {
+        return this.codebaseSessions.get(normalizeCodebasePath(codebasePath));
+    }
+
+    private getOrCreateCodebaseSession(codebasePath: string): CodebaseSessionState {
+        const normalizedPath = normalizeCodebasePath(codebasePath);
+        const existingSession = this.codebaseSessions.get(normalizedPath);
+        if (existingSession) {
+            return existingSession;
+        }
+
+        const nextSession: CodebaseSessionState = {
+            codebasePath: normalizedPath,
+            customExtensions: [],
+            customIgnorePatterns: [],
+            fileIgnorePatterns: [],
+            effectiveExtensions: [...this.defaultSupportedExtensions],
+            effectiveIgnorePatterns: [...this.defaultIgnorePatterns]
+        };
+        this.codebaseSessions.set(normalizedPath, nextSession);
+        return nextSession;
+    }
+
+    private updateSessionEffectiveState(session: CodebaseSessionState): void {
+        session.effectiveExtensions = this.buildEffectiveExtensions(session.customExtensions);
+        session.effectiveIgnorePatterns = this.buildEffectiveIgnorePatterns(
+            session.customIgnorePatterns,
+            session.fileIgnorePatterns
+        );
+        session.synchronizer?.updateIgnorePatterns(session.effectiveIgnorePatterns);
+    }
+
+    configureCodebaseSession(codebasePath: string, config: CodebaseSessionConfig = {}): CodebaseSessionConfig {
+        const session = this.getOrCreateCodebaseSession(codebasePath);
+        session.customExtensions = this.normalizeExtensionsList(config.customExtensions || []);
+        session.customIgnorePatterns = this.normalizeIgnorePatternsList(config.customIgnorePatterns || []);
+        this.updateSessionEffectiveState(session);
+
+        console.log(
+            `[Context] 🧩 Configured codebase session for ${session.codebasePath}: ` +
+            `${session.customExtensions.length} custom extensions, ${session.customIgnorePatterns.length} custom ignore patterns`
+        );
+
+        return this.getCodebaseSessionConfig(session.codebasePath) || {};
+    }
+
+    getCodebaseSessionConfig(codebasePath: string): CodebaseSessionConfig | undefined {
+        const session = this.getCodebaseSession(codebasePath);
+        if (!session) {
+            return undefined;
+        }
+
+        return {
+            customExtensions: [...session.customExtensions],
+            customIgnorePatterns: [...session.customIgnorePatterns]
+        };
+    }
+
+    hasCodebaseSession(codebasePath: string): boolean {
+        return this.codebaseSessions.has(normalizeCodebasePath(codebasePath));
+    }
+
+    clearCodebaseSession(codebasePath: string): void {
+        const normalizedPath = normalizeCodebasePath(codebasePath);
+        const collectionName = this.getCollectionName(normalizedPath);
+        this.codebaseSessions.delete(normalizedPath);
+        this.synchronizers.delete(collectionName);
+    }
+
+    setSynchronizerForCodebase(codebasePath: string, synchronizer: FileSynchronizer): void {
+        const normalizedPath = normalizeCodebasePath(codebasePath);
+        const session = this.getOrCreateCodebaseSession(normalizedPath);
+        session.synchronizer = synchronizer;
+        this.synchronizers.set(this.getCollectionName(normalizedPath), synchronizer);
     }
 
     /**
@@ -202,15 +319,23 @@ export class Context {
     /**
      * Get supported extensions
      */
-    getSupportedExtensions(): string[] {
-        return [...this.supportedExtensions];
+    getSupportedExtensions(codebasePath?: string): string[] {
+        if (!codebasePath) {
+            return [...this.defaultSupportedExtensions];
+        }
+
+        return [...this.getOrCreateCodebaseSession(codebasePath).effectiveExtensions];
     }
 
     /**
      * Get ignore patterns
      */
-    getIgnorePatterns(): string[] {
-        return [...this.ignorePatterns];
+    getIgnorePatterns(codebasePath?: string): string[] {
+        if (!codebasePath) {
+            return [...this.defaultIgnorePatterns];
+        }
+
+        return [...this.getOrCreateCodebaseSession(codebasePath).effectiveIgnorePatterns];
     }
 
     /**
@@ -232,6 +357,7 @@ export class Context {
      */
     async getLoadedIgnorePatterns(codebasePath: string): Promise<void> {
         codebasePath = normalizeCodebasePath(codebasePath);
+        this.getOrCreateCodebaseSession(codebasePath);
         return this.loadIgnorePatterns(codebasePath);
     }
 
@@ -240,6 +366,7 @@ export class Context {
      */
     async getPreparedCollection(codebasePath: string): Promise<void> {
         codebasePath = normalizeCodebasePath(codebasePath);
+        this.getOrCreateCodebaseSession(codebasePath);
         return this.prepareCollection(codebasePath);
     }
 
@@ -278,6 +405,7 @@ export class Context {
         forceReindex: boolean = false
     ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
         codebasePath = normalizeCodebasePath(codebasePath);
+        const session = this.getOrCreateCodebaseSession(codebasePath);
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
         console.log(`[Context] 🚀 Starting to index codebase with ${searchType}: ${codebasePath}`);
@@ -292,7 +420,7 @@ export class Context {
 
         // 3. Recursively traverse codebase to get all supported files
         progressCallback?.({ phase: 'Scanning files...', current: 5, total: 100, percentage: 5 });
-        const codeFiles = await this.getCodeFiles(codebasePath);
+        const codeFiles = await this.getCodeFiles(codebasePath, session);
         console.log(`[Context] 📁 Found ${codeFiles.length} code files`);
 
         if (codeFiles.length === 0) {
@@ -344,20 +472,26 @@ export class Context {
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void
     ): Promise<{ added: number, removed: number, modified: number }> {
         codebasePath = normalizeCodebasePath(codebasePath);
+        const session = this.getOrCreateCodebaseSession(codebasePath);
         const collectionName = this.getCollectionName(codebasePath);
-        const synchronizer = this.synchronizers.get(collectionName);
+        const synchronizer = session.synchronizer || this.synchronizers.get(collectionName);
+
+        if (synchronizer && !session.synchronizer) {
+            session.synchronizer = synchronizer;
+        }
 
         if (!synchronizer) {
             // Load project-specific ignore patterns before creating FileSynchronizer
             await this.loadIgnorePatterns(codebasePath);
 
             // To be safe, let's initialize if it's not there.
-            const newSynchronizer = new FileSynchronizer(codebasePath, this.ignorePatterns);
+            const newSynchronizer = new FileSynchronizer(codebasePath, session.effectiveIgnorePatterns);
             await newSynchronizer.initialize();
+            session.synchronizer = newSynchronizer;
             this.synchronizers.set(collectionName, newSynchronizer);
         }
 
-        const currentSynchronizer = this.synchronizers.get(collectionName)!;
+        const currentSynchronizer = session.synchronizer || this.synchronizers.get(collectionName)!;
 
         progressCallback?.({ phase: 'Checking for file changes...', current: 0, total: 100, percentage: 0 });
         const { added, removed, modified } = await currentSynchronizer.checkForChanges();
@@ -580,6 +714,7 @@ export class Context {
 
         // Delete snapshot file
         await FileSynchronizer.deleteSnapshot(codebasePath);
+        this.clearCodebaseSession(codebasePath);
 
         progressCallback?.({ phase: 'Index cleared', current: 100, total: 100, percentage: 100 });
         console.log('[Context] ✅ Index data cleaned');
@@ -589,38 +724,72 @@ export class Context {
      * Update ignore patterns (merges with default patterns and existing patterns)
      * @param ignorePatterns Array of ignore patterns to add to defaults
      */
-    updateIgnorePatterns(ignorePatterns: string[]): void {
-        // Merge with default patterns and any existing custom patterns, avoiding duplicates
-        const mergedPatterns = [...DEFAULT_IGNORE_PATTERNS, ...ignorePatterns];
-        const uniquePatterns: string[] = [];
-        const patternSet = new Set(mergedPatterns);
-        patternSet.forEach(pattern => uniquePatterns.push(pattern));
-        this.ignorePatterns = uniquePatterns;
-        console.log(`[Context] 🚫 Updated ignore patterns: ${ignorePatterns.length} new + ${DEFAULT_IGNORE_PATTERNS.length} default = ${this.ignorePatterns.length} total patterns`);
+    updateIgnorePatterns(ignorePatterns: string[], codebasePath?: string): void {
+        const normalizedPatterns = this.normalizeIgnorePatternsList(ignorePatterns);
+
+        if (codebasePath) {
+            const session = this.getOrCreateCodebaseSession(codebasePath);
+            session.customIgnorePatterns = normalizedPatterns;
+            this.updateSessionEffectiveState(session);
+            console.log(
+                `[Context] 🚫 Updated codebase-specific ignore patterns for ${session.codebasePath}: ` +
+                `${session.customIgnorePatterns.length} custom, ${session.effectiveIgnorePatterns.length} effective`
+            );
+            return;
+        }
+
+        this.defaultIgnorePatterns = this.buildEffectiveIgnorePatterns(normalizedPatterns);
+        console.log(
+            `[Context] 🚫 Updated default ignore patterns: ${normalizedPatterns.length} custom + ` +
+            `${DEFAULT_IGNORE_PATTERNS.length} built-in = ${this.defaultIgnorePatterns.length} total`
+        );
     }
 
     /**
      * Add custom ignore patterns (from MCP or other sources) without replacing existing ones
      * @param customPatterns Array of custom ignore patterns to add
      */
-    addCustomIgnorePatterns(customPatterns: string[]): void {
+    addCustomIgnorePatterns(customPatterns: string[], codebasePath?: string): void {
         if (customPatterns.length === 0) return;
 
-        // Merge current patterns with new custom patterns, avoiding duplicates
-        const mergedPatterns = [...this.ignorePatterns, ...customPatterns];
-        const uniquePatterns: string[] = [];
-        const patternSet = new Set(mergedPatterns);
-        patternSet.forEach(pattern => uniquePatterns.push(pattern));
-        this.ignorePatterns = uniquePatterns;
-        console.log(`[Context] 🚫 Added ${customPatterns.length} custom ignore patterns. Total: ${this.ignorePatterns.length} patterns`);
+        const normalizedPatterns = this.normalizeIgnorePatternsList(customPatterns);
+
+        if (codebasePath) {
+            const session = this.getOrCreateCodebaseSession(codebasePath);
+            session.customIgnorePatterns = this.normalizeIgnorePatternsList([
+                ...session.customIgnorePatterns,
+                ...normalizedPatterns
+            ]);
+            this.updateSessionEffectiveState(session);
+            console.log(
+                `[Context] 🚫 Added ${normalizedPatterns.length} codebase-specific ignore patterns for ${session.codebasePath}. ` +
+                `Total effective patterns: ${session.effectiveIgnorePatterns.length}`
+            );
+            return;
+        }
+
+        this.defaultIgnorePatterns = this.buildEffectiveIgnorePatterns([
+            ...this.defaultIgnorePatterns.filter(pattern => !DEFAULT_IGNORE_PATTERNS.includes(pattern)),
+            ...normalizedPatterns
+        ]);
+        console.log(`[Context] 🚫 Added ${normalizedPatterns.length} custom ignore patterns. Total default patterns: ${this.defaultIgnorePatterns.length}`);
     }
 
     /**
      * Reset ignore patterns to defaults only
      */
-    resetIgnorePatternsToDefaults(): void {
-        this.ignorePatterns = [...DEFAULT_IGNORE_PATTERNS];
-        console.log(`[Context] 🔄 Reset ignore patterns to defaults: ${this.ignorePatterns.length} patterns`);
+    resetIgnorePatternsToDefaults(codebasePath?: string): void {
+        if (codebasePath) {
+            const session = this.getOrCreateCodebaseSession(codebasePath);
+            session.customIgnorePatterns = [];
+            session.fileIgnorePatterns = [];
+            this.updateSessionEffectiveState(session);
+            console.log(`[Context] 🔄 Reset ignore patterns to defaults for ${session.codebasePath}: ${session.effectiveIgnorePatterns.length} patterns`);
+            return;
+        }
+
+        this.defaultIgnorePatterns = [...DEFAULT_IGNORE_PATTERNS];
+        console.log(`[Context] 🔄 Reset default ignore patterns: ${this.defaultIgnorePatterns.length} patterns`);
     }
 
     /**
@@ -690,7 +859,7 @@ export class Context {
     /**
      * Recursively get all code files in the codebase
      */
-    private async getCodeFiles(codebasePath: string): Promise<string[]> {
+    private async getCodeFiles(codebasePath: string, session: CodebaseSessionState): Promise<string[]> {
         const files: string[] = [];
 
         const traverseDirectory = async (currentPath: string) => {
@@ -700,7 +869,7 @@ export class Context {
                 const fullPath = path.join(currentPath, entry.name);
 
                 // Check if path matches ignore patterns
-                if (this.matchesIgnorePattern(fullPath, codebasePath)) {
+                if (this.matchesIgnorePattern(fullPath, codebasePath, session.effectiveIgnorePatterns)) {
                     continue;
                 }
 
@@ -708,7 +877,7 @@ export class Context {
                     await traverseDirectory(fullPath);
                 } else if (entry.isFile()) {
                     const ext = path.extname(entry.name);
-                    if (this.supportedExtensions.includes(ext)) {
+                    if (session.effectiveExtensions.includes(ext)) {
                         files.push(fullPath);
                     }
                 }
@@ -978,6 +1147,7 @@ export class Context {
      */
     private async loadIgnorePatterns(codebasePath: string): Promise<void> {
         try {
+            const session = this.getOrCreateCodebaseSession(codebasePath);
             let fileBasedPatterns: string[] = [];
 
             // Load all .xxxignore files in codebase directory
@@ -991,16 +1161,20 @@ export class Context {
             const globalIgnorePatterns = await this.loadGlobalIgnoreFile();
             fileBasedPatterns.push(...globalIgnorePatterns);
 
-            // Merge file-based patterns with existing patterns (which may include custom MCP patterns)
-            if (fileBasedPatterns.length > 0) {
-                this.addCustomIgnorePatterns(fileBasedPatterns);
-                console.log(`[Context] 🚫 Loaded total ${fileBasedPatterns.length} ignore patterns from all ignore files`);
+            session.fileIgnorePatterns = this.normalizeIgnorePatternsList(fileBasedPatterns);
+            this.updateSessionEffectiveState(session);
+
+            if (session.fileIgnorePatterns.length > 0) {
+                console.log(
+                    `[Context] 🚫 Loaded total ${session.fileIgnorePatterns.length} file-based ignore patterns for ${session.codebasePath}. ` +
+                    `Effective ignore count: ${session.effectiveIgnorePatterns.length}`
+                );
             } else {
-                console.log('📄 No ignore files found, keeping existing patterns');
+                console.log(`[Context] 📄 No ignore files found for ${session.codebasePath}. Using ${session.effectiveIgnorePatterns.length} effective ignore patterns`);
             }
         } catch (error) {
             console.warn(`[Context] ⚠️ Failed to load ignore patterns: ${error}`);
-            // Continue with existing patterns on error - don't reset them
+            // Continue with existing session patterns on error.
         }
     }
 
@@ -1082,15 +1256,15 @@ export class Context {
      * @param basePath Base path for relative pattern matching
      * @returns True if path should be ignored
      */
-    private matchesIgnorePattern(filePath: string, basePath: string): boolean {
-        if (this.ignorePatterns.length === 0) {
+    private matchesIgnorePattern(filePath: string, basePath: string, ignorePatterns: string[]): boolean {
+        if (ignorePatterns.length === 0) {
             return false;
         }
 
         const relativePath = path.relative(basePath, filePath);
         const normalizedPath = relativePath.replace(/\\/g, '/'); // Normalize path separators
 
-        for (const pattern of this.ignorePatterns) {
+        for (const pattern of ignorePatterns) {
             if (this.isPatternMatch(normalizedPath, pattern)) {
                 return true;
             }
@@ -1193,19 +1367,27 @@ export class Context {
      * Add custom extensions (from MCP or other sources) without replacing existing ones
      * @param customExtensions Array of custom extensions to add
      */
-    addCustomExtensions(customExtensions: string[]): void {
+    addCustomExtensions(customExtensions: string[], codebasePath?: string): void {
         if (customExtensions.length === 0) return;
 
-        // Ensure extensions start with dot
-        const normalizedExtensions = customExtensions.map(ext =>
-            ext.startsWith('.') ? ext : `.${ext}`
-        );
+        const normalizedExtensions = this.normalizeExtensionsList(customExtensions);
 
-        // Merge current extensions with new custom extensions, avoiding duplicates
-        const mergedExtensions = [...this.supportedExtensions, ...normalizedExtensions];
-        const uniqueExtensions: string[] = [...new Set(mergedExtensions)];
-        this.supportedExtensions = uniqueExtensions;
-        console.log(`[Context] 📎 Added ${customExtensions.length} custom extensions. Total: ${this.supportedExtensions.length} extensions`);
+        if (codebasePath) {
+            const session = this.getOrCreateCodebaseSession(codebasePath);
+            session.customExtensions = this.normalizeExtensionsList([
+                ...session.customExtensions,
+                ...normalizedExtensions
+            ]);
+            this.updateSessionEffectiveState(session);
+            console.log(
+                `[Context] 📎 Added ${normalizedExtensions.length} codebase-specific extensions for ${session.codebasePath}. ` +
+                `Total effective extensions: ${session.effectiveExtensions.length}`
+            );
+            return;
+        }
+
+        this.defaultSupportedExtensions = this.buildEffectiveExtensions(normalizedExtensions);
+        console.log(`[Context] 📎 Added ${normalizedExtensions.length} custom extensions. Total default extensions: ${this.defaultSupportedExtensions.length}`);
     }
 
     /**

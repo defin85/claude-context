@@ -19,6 +19,10 @@ export class FileSynchronizer {
         this.ignorePatterns = ignorePatterns;
     }
 
+    public updateIgnorePatterns(ignorePatterns: string[]): void {
+        this.ignorePatterns = [...ignorePatterns];
+    }
+
     private getSnapshotPath(codebasePath: string): string {
         const homeDir = os.homedir();
         const merkleDir = path.join(homeDir, '.context', 'merkle');

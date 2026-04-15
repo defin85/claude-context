@@ -1,6 +1,6 @@
 # Unified MCP Stability and Shared Service Plan
 
-Status: draft  
+Status: in_progress  
 Date: 2026-04-15  
 Scope: `packages/mcp`, `packages/core`, `packages/vscode-extension`, `docs`
 
@@ -19,6 +19,40 @@ This document merges three parallel planning threads into one execution order:
 3. the longer-term shared multi-repo MCP service rollout.
 
 The main decision is sequencing: do not expand the runtime model before snapshot semantics, indexing ownership, and per-codebase mutable state are correct.
+
+## Current Execution Slice
+
+Implemented on 2026-04-15:
+
+- Phase 0 baseline is now partially landed:
+  - runtime status file at `~/.context/mcp/runtime/<pid>.json`;
+  - explicit sync skip reasons and per-codebase sync outcome logging.
+- Phase 1 is now partially landed:
+  - snapshot-owned `indexing` ownership with runtime id, pid, and heartbeat metadata;
+  - second-runtime rejection while a live owner exists;
+  - deterministic stale-owner reclaim;
+  - startup recovery that preserves live owners and converts stale owners to `indexfailed`;
+  - legacy global snapshot migration now preserves valid absolute codebase paths and canonicalizes aliased paths instead of filtering by `process.cwd()`;
+  - delete protection is now durable across processes via persisted snapshot tombstones instead of process-local memory only;
+  - regression smoke now covers real separate-process delete/save race and live-owner blocking, not only multiple `SnapshotManager` instances in one PID.
+- Phase 2 is now partially landed:
+  - `Context` now keeps per-codebase session state instead of reusing one mutable ignore/extensions bag across repositories;
+  - custom extensions and custom ignore patterns are persisted per codebase under the workspace-scoped MCP state directory;
+  - background sync restores persisted per-codebase config before `reindexByChange()`;
+  - background sync can now self-heal an empty local snapshot from persisted per-codebase config plus cloud-backed index presence;
+  - if persisted per-codebase config is missing, sync now fails closed with an explicit degraded-state reason instead of silently continuing with different semantics;
+  - VS Code now persists the indexed codebase identity in extension state and routes search, sync, clear-index, status checks, and search-result open-file actions through that identity instead of inferring the target from `workspaceFolders[0]`;
+  - regression smoke now covers an actual add/modify/delete incremental sync lifecycle on a temporary repository, not only handler-level or `SyncManager`-level stubs;
+  - restart-safe sync semantics are now covered end-to-end for persisted custom extensions and ignore patterns, including new `.vue` files and ignored paths after a fresh `Context` + `SyncManager` startup;
+  - corrupted local snapshot recovery is now covered end-to-end: `SyncManager` can self-heal from persisted config plus existing index state and still preserve per-codebase sync semantics.
+
+Still open after this slice:
+
+- finish the remaining Phase 1 acceptance coverage:
+  - complete the remaining manual migration/startup repros and final acceptance checks;
+- finish the rest of Phase 2:
+  - broader incremental sync regressions on real repositories and manual repo-scale validation;
+- do not start Phase 3 daemon work before those two blocks are closed.
 
 ## Executive Summary
 

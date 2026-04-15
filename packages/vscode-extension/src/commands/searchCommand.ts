@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { Context, SearchQuery, SemanticSearchResult } from '@zilliz/claude-context-core';
 import * as path from 'path';
+import { CodebaseTargetManager } from '../codebaseTargetManager';
 
 export class SearchCommand {
     private context: Context;
+    private codebaseTargetManager: CodebaseTargetManager;
 
-    constructor(context: Context) {
+    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
         this.context = context;
+        this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
@@ -44,13 +47,14 @@ export class SearchCommand {
             }, async (progress) => {
                 progress.report({ increment: 0, message: 'Performing semantic search...' });
 
-                // Get workspace root for codebase path
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (!workspaceFolders || workspaceFolders.length === 0) {
-                    vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+                const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath({
+                    promptIfMissing: true,
+                    placeHolder: 'Select indexed folder to search'
+                });
+                if (!codebasePath) {
+                    vscode.window.showErrorMessage('No indexed codebase selected.');
                     return;
                 }
-                const codebasePath = workspaceFolders[0].uri.fsPath;
 
                 // Check if index exists
                 progress.report({ increment: 20, message: 'Checking index...' });
@@ -122,7 +126,7 @@ export class SearchCommand {
                 });
 
                 if (selected) {
-                    await this.openResult(selected.result);
+                    await this.openResult(selected.result, selected.codebasePath);
                 }
             });
 
@@ -132,18 +136,11 @@ export class SearchCommand {
         }
     }
 
-    private async openResult(result: SemanticSearchResult): Promise<void> {
+    private async openResult(result: SemanticSearchResult, codebasePath: string): Promise<void> {
         try {
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders || workspaceFolders.length === 0) {
-                vscode.window.showWarningMessage('No workspace folder found');
-                return;
-            }
-
-            const workspaceRoot = workspaceFolders[0].uri.fsPath;
             let fullPath = result.relativePath;
             if (!result.relativePath.startsWith('/') && !result.relativePath.includes(':')) {
-                fullPath = path.join(workspaceRoot, result.relativePath);
+                fullPath = path.join(codebasePath, result.relativePath);
             }
 
             const document = await vscode.workspace.openTextDocument(fullPath);
@@ -166,13 +163,18 @@ export class SearchCommand {
     /**
      * Execute search for webview (without UI prompts)
      */
-    async executeForWebview(searchTerm: string, limit: number = 50, fileExtensions: string[] = []): Promise<SemanticSearchResult[]> {
-        // Get workspace root for codebase path
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            throw new Error('No workspace folder found. Please open a folder first.');
+    async executeForWebview(
+        searchTerm: string,
+        limit: number = 50,
+        fileExtensions: string[] = []
+    ): Promise<{ codebasePath: string; results: SemanticSearchResult[] }> {
+        const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath({
+            promptIfMissing: true,
+            placeHolder: 'Select indexed folder to search'
+        });
+        if (!codebasePath) {
+            throw new Error('No indexed codebase selected. Please index a folder first.');
         }
-        const codebasePath = workspaceFolders[0].uri.fsPath;
 
         // Check if index exists
         const hasIndex = await this.context.hasIndex(codebasePath);
@@ -193,14 +195,17 @@ export class SearchCommand {
             filterExpr = `fileExtension in [${quoted}]`;
         }
 
-        let results = await this.context.semanticSearch(
+        const results = await this.context.semanticSearch(
             codebasePath,
             searchTerm,
             limit,
             0.3, // similarity threshold
             filterExpr
         );
-        return results;
+        return {
+            codebasePath,
+            results
+        };
     }
 
     /**
@@ -218,7 +223,7 @@ export class SearchCommand {
     /**
      * Generate quick pick items for VS Code
      */
-    private generateQuickPickItems(results: SemanticSearchResult[], searchTerm: string, workspaceRoot?: string) {
+    private generateQuickPickItems(results: SemanticSearchResult[], searchTerm: string, codebasePath: string) {
         return results.slice(0, 20).map((result, index) => {
             let displayPath = result.relativePath;
             // Truncate content for display
@@ -233,8 +238,9 @@ export class SearchCommand {
                 label: `$(file-code) ${displayPath}`,
                 description: `$(search) semantic search${rankText}`,
                 detail: truncatedContent,
-                result: result
+                result: result,
+                codebasePath
             };
         });
     }
-} 
+}

@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
 import { Context } from '@zilliz/claude-context-core';
 import * as fs from 'fs';
+import { CodebaseTargetManager } from '../codebaseTargetManager';
 
 export class SyncCommand {
     private context: Context;
+    private codebaseTargetManager: CodebaseTargetManager;
     private isSyncing: boolean = false;
 
-    constructor(context: Context) {
+    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
         this.context = context;
+        this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
@@ -32,9 +35,14 @@ export class SyncCommand {
             return;
         }
 
-        // Use the first workspace folder as target
-        const targetFolder = workspaceFolders[0];
-        const codebasePath = targetFolder.uri.fsPath;
+        const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath({
+            promptIfMissing: true,
+            placeHolder: 'Select indexed folder to sync'
+        });
+        if (!codebasePath) {
+            vscode.window.showErrorMessage('No indexed codebase selected.');
+            return;
+        }
 
         // Check if the workspace folder exists
         if (!fs.existsSync(codebasePath)) {
@@ -135,8 +143,11 @@ export class SyncCommand {
             return;
         }
 
-        const targetFolder = workspaceFolders[0];
-        const codebasePath = targetFolder.uri.fsPath;
+        const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath();
+        if (!codebasePath) {
+            console.log('[AUTO-SYNC] No indexed codebase target resolved, skipping...');
+            return;
+        }
 
         if (!fs.existsSync(codebasePath)) {
             console.warn(`[AUTO-SYNC] Workspace folder '${codebasePath}' does not exist`);

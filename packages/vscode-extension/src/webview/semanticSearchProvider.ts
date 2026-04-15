@@ -5,6 +5,7 @@ import { IndexCommand } from '../commands/indexCommand';
 import { SyncCommand } from '../commands/syncCommand';
 import { ConfigManager, EmbeddingProviderConfig } from '../config/configManager';
 import * as path from 'path';
+import { CodebaseTargetManager } from '../codebaseTargetManager';
 
 export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'semanticSearchView';
@@ -12,12 +13,21 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
     private indexCommand: IndexCommand;
     private syncCommand: SyncCommand;
     private configManager: ConfigManager;
+    private codebaseTargetManager: CodebaseTargetManager;
 
-    constructor(private readonly _extensionUri: vscode.Uri, searchCommand: SearchCommand, indexCommand: IndexCommand, syncCommand: SyncCommand, configManager: ConfigManager) {
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        searchCommand: SearchCommand,
+        indexCommand: IndexCommand,
+        syncCommand: SyncCommand,
+        configManager: ConfigManager,
+        codebaseTargetManager: CodebaseTargetManager
+    ) {
         this.searchCommand = searchCommand;
         this.indexCommand = indexCommand;
         this.syncCommand = syncCommand;
         this.configManager = configManager;
+        this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
@@ -77,14 +87,14 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
                     case 'search':
                         try {
                             // Use search command
-                            const searchResults = await this.searchCommand.executeForWebview(
+                            const { codebasePath, results: searchResults } = await this.searchCommand.executeForWebview(
                                 message.text,
                                 50,
                                 Array.isArray(message.fileExtensions) ? message.fileExtensions : []
                             );
 
                             // Convert SemanticSearchResult[] to webview format
-                            const results = this.convertSearchResultsToWebviewFormat(searchResults);
+                            const results = this.convertSearchResultsToWebviewFormat(searchResults, codebasePath);
 
                             // Send results back to webview
                             webviewView.webview.postMessage({
@@ -128,9 +138,15 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
                     case 'openFile':
                         // Handle file opening
                         try {
-                            const workspaceFolders = vscode.workspace.workspaceFolders;
-                            const workspaceRoot = workspaceFolders ? workspaceFolders[0].uri.fsPath : '';
-                            const absPath = path.join(workspaceRoot, message.relativePath);
+                            const baseCodebasePath = typeof message.codebasePath === 'string'
+                                ? message.codebasePath
+                                : this.codebaseTargetManager.getIndexedCodebasePath();
+                            if (!baseCodebasePath && !path.isAbsolute(message.relativePath)) {
+                                throw new Error('No indexed codebase path available for this search result');
+                            }
+                            const absPath = path.isAbsolute(message.relativePath)
+                                ? message.relativePath
+                                : path.join(baseCodebasePath || '', message.relativePath);
                             const uri = vscode.Uri.file(absPath);
                             const document = await vscode.workspace.openTextDocument(uri);
                             const editor = await vscode.window.showTextDocument(document);
@@ -162,14 +178,11 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
     /**
      * Convert SemanticSearchResult[] from core to webview format
      */
-    private convertSearchResultsToWebviewFormat(searchResults: any[]): any[] {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        const baseWorkspacePath = workspaceFolders ? workspaceFolders[0].uri.fsPath : '/tmp';
-
+    private convertSearchResultsToWebviewFormat(searchResults: any[], codebasePath: string): any[] {
         return searchResults.map(result => {
             let filePath = result.relativePath;
             if (result.relativePath && !result.relativePath.startsWith('/') && !result.relativePath.includes(':')) {
-                filePath = `${baseWorkspacePath}/${result.relativePath}`;
+                filePath = path.join(codebasePath, result.relativePath);
             }
 
             let displayPath = result.relativePath;
@@ -182,6 +195,7 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
             return {
                 file: displayPath,
                 filePath: filePath,
+                codebasePath,
                 relativePath: result.relativePath,
                 line: result.startLine,
                 preview: truncatedContent,
@@ -207,12 +221,15 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            const codebasePath = workspaceFolders[0].uri.fsPath;
-            const hasIndex = await this.searchCommand.hasIndex(codebasePath);
+            const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath();
+            const hasIndex = codebasePath
+                ? await this.searchCommand.hasIndex(codebasePath)
+                : false;
 
             webview.postMessage({
                 command: 'updateIndexStatus',
-                hasIndex: hasIndex
+                hasIndex: hasIndex,
+                codebasePath
             });
         } catch (error) {
             console.error('Failed to check index status:', error);

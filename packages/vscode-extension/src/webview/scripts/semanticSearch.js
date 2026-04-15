@@ -215,8 +215,16 @@ class SemanticSearchController {
      * @returns {string} HTML string
      */
     createResultHTML(result, rank) {
+        const payload = encodeURIComponent(JSON.stringify({
+            relativePath: result.relativePath,
+            codebasePath: result.codebasePath,
+            line: result.line,
+            startLine: result.startLine,
+            endLine: result.endLine
+        }));
+
         return `
-            <div class="result-item" onclick="searchController.openFile('${result.relativePath}', ${result.line}, ${result.startLine}, ${result.endLine})">
+            <div class="result-item" onclick="searchController.openFileFromPayload('${payload}')">
                 <div class="result-file">
                     <span class="result-filename">${result.file}</span>
                     <span class="result-line">Lines ${result.startLine || result.line}-${result.endLine || result.line}</span>
@@ -230,15 +238,32 @@ class SemanticSearchController {
 
     /**
      * Open file in VSCode editor
+     * @param {string} payload - Encoded search result payload
+     */
+    openFileFromPayload(payload) {
+        const parsedPayload = JSON.parse(decodeURIComponent(payload));
+        this.openFile(
+            parsedPayload.relativePath,
+            parsedPayload.codebasePath,
+            parsedPayload.line,
+            parsedPayload.startLine,
+            parsedPayload.endLine
+        );
+    }
+
+    /**
+     * Open file in VSCode editor
      * @param {string} relativePath - File relative path
+     * @param {string | undefined} codebasePath - Indexed codebase path
      * @param {number} line - Line number
      * @param {number} startLine - Start line
      * @param {number} endLine - End line
      */
-    openFile(relativePath, line, startLine, endLine) {
+    openFile(relativePath, codebasePath, line, startLine, endLine) {
         this.vscode.postMessage({
             command: 'openFile',
             relativePath: relativePath,
+            codebasePath: codebasePath,
             line: line,
             startLine: startLine,
             endLine: endLine

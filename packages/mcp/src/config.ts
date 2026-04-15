@@ -34,10 +34,19 @@ interface CodebaseInfoBase {
     lastUpdated: string;
 }
 
+export interface IndexingOwnerInfo {
+    runtimeId: string;
+    pid: number;
+    startedAt: string;
+    heartbeatAt: string;
+    clientSessionId?: string;
+}
+
 // Indexing state - when indexing is in progress
 export interface CodebaseInfoIndexing extends CodebaseInfoBase {
     status: 'indexing';
     indexingPercentage: number;  // Current progress percentage
+    owner?: IndexingOwnerInfo;
 }
 
 // Indexed state - when indexing completed successfully
@@ -62,6 +71,7 @@ export type CodebaseInfo = CodebaseInfoIndexing | CodebaseInfoIndexed | Codebase
 export interface CodebaseSnapshotV2 {
     formatVersion: 'v2';
     codebases: Record<string, CodebaseInfo>;  // codebasePath -> CodebaseInfo
+    deletedCodebases?: Record<string, string>;  // codebasePath -> deletion timestamp
     lastUpdated: string;
 }
 

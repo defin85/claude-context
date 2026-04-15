@@ -15,6 +15,7 @@ console.warn = (...args: any[]) => {
 
 // console.error already goes to stderr by default
 
+import * as crypto from "crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -27,16 +28,20 @@ import { MilvusVectorDatabase } from "@zilliz/claude-context-core";
 // Import our modular components
 import { createMcpConfig, logConfigurationSummary, showHelpMessage, ContextMcpConfig } from "./config.js";
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from "./embedding.js";
+import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { SyncManager } from "./sync.js";
 import { ToolHandlers } from "./handlers.js";
+import { RuntimeStatusManager } from "./runtime-status.js";
 
 class ContextMcpServer {
     private server: Server;
     private context: Context;
+    private codebaseConfigManager: CodebaseConfigManager;
     private snapshotManager: SnapshotManager;
     private syncManager: SyncManager;
     private toolHandlers: ToolHandlers;
+    private runtimeStatusManager: RuntimeStatusManager;
 
     constructor(config: ContextMcpConfig) {
         // Initialize MCP server
@@ -71,13 +76,32 @@ class ContextMcpServer {
             vectorDatabase
         });
 
+        const runtimeId = crypto.randomUUID();
+
         // Initialize managers
-        this.snapshotManager = new SnapshotManager();
-        this.syncManager = new SyncManager(this.context, this.snapshotManager);
-        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager);
+        this.codebaseConfigManager = new CodebaseConfigManager();
+        this.snapshotManager = new SnapshotManager({ runtimeId });
+        this.runtimeStatusManager = new RuntimeStatusManager({
+            runtimeId,
+            workspacePath: process.cwd(),
+            snapshotManager: this.snapshotManager
+        });
+        this.syncManager = new SyncManager(
+            this.context,
+            this.snapshotManager,
+            this.codebaseConfigManager,
+            this.runtimeStatusManager
+        );
+        this.toolHandlers = new ToolHandlers(
+            this.context,
+            this.snapshotManager,
+            this.codebaseConfigManager,
+            this.runtimeStatusManager
+        );
 
         // Load existing codebase snapshot on startup
         this.snapshotManager.loadCodebaseSnapshot();
+        void this.runtimeStatusManager.refresh('startup');
 
         this.setupTools();
     }

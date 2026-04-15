@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { Context } from '@zilliz/claude-context-core';
-import * as path from 'path';
+import { CodebaseTargetManager } from '../codebaseTargetManager';
 
 export class IndexCommand {
     private context: Context;
+    private codebaseTargetManager: CodebaseTargetManager;
 
-    constructor(context: Context) {
+    constructor(context: Context, codebaseTargetManager: CodebaseTargetManager) {
         this.context = context;
+        this.codebaseTargetManager = codebaseTargetManager;
     }
 
     /**
@@ -23,24 +25,12 @@ export class IndexCommand {
             return;
         }
 
-        // Let user select the folder to index (default is the first workspace folder)
-        let selectedFolder = workspaceFolders[0];
-
-        if (workspaceFolders.length > 1) {
-            const items = workspaceFolders.map(folder => ({
-                label: folder.name,
-                description: folder.uri.fsPath,
-                folder: folder
-            }));
-
-            const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Select folder to index'
-            });
-
-            if (!selected) {
-                return;
-            }
-            selectedFolder = selected.folder;
+        const selectedFolder = await this.codebaseTargetManager.pickWorkspaceFolder(
+            'Select folder to index',
+            this.codebaseTargetManager.getIndexedCodebasePath()
+        );
+        if (!selectedFolder) {
+            return;
         }
 
         const confirm = await vscode.window.showInformationMessage(
@@ -75,12 +65,14 @@ export class IndexCommand {
                 // Initialize file synchronizer
                 progress.report({ increment: 0, message: 'Initializing file synchronizer...' });
                 const { FileSynchronizer } = await import("@zilliz/claude-context-core");
-                const synchronizer = new FileSynchronizer(selectedFolder.uri.fsPath, this.context.getIgnorePatterns() || []);
+                const synchronizer = new FileSynchronizer(
+                    selectedFolder.uri.fsPath,
+                    this.context.getIgnorePatterns(selectedFolder.uri.fsPath) || []
+                );
                 await synchronizer.initialize();
                 // Store synchronizer in the context's internal map using the collection name from context
                 await this.context.getPreparedCollection(selectedFolder.uri.fsPath);
-                const collectionName = this.context.getCollectionName(selectedFolder.uri.fsPath);
-                this.context.setSynchronizer(collectionName, synchronizer);
+                this.context.setSynchronizerForCodebase(selectedFolder.uri.fsPath, synchronizer);
 
                 // Start indexing with progress callback
                 indexStats = await this.context.indexCodebase(
@@ -99,6 +91,7 @@ export class IndexCommand {
             });
 
             if (indexStats) {
+                await this.codebaseTargetManager.setIndexedCodebasePath(selectedFolder.uri.fsPath);
                 const { indexedFiles, totalChunks, status } = indexStats;
                 if (status === 'limit_reached') {
                     vscode.window.showWarningMessage(
@@ -132,20 +125,29 @@ export class IndexCommand {
     }
 
     async clearIndex(): Promise<void> {
-        const confirm = await vscode.window.showWarningMessage(
-            'Clear all indexed data?',
-            'Yes',
-            'Cancel'
-        );
-
-        if (confirm !== 'Yes') {
-            return;
-        }
-
         try {
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (!workspaceFolders || workspaceFolders.length === 0) {
                 vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+                return;
+            }
+
+            const codebasePath = await this.codebaseTargetManager.resolveIndexedCodebasePath({
+                promptIfMissing: true,
+                placeHolder: 'Select indexed folder to clear'
+            });
+            if (!codebasePath) {
+                vscode.window.showErrorMessage('No indexed codebase selected.');
+                return;
+            }
+
+            const confirm = await vscode.window.showWarningMessage(
+                `Clear indexed data for '${codebasePath}'?`,
+                'Yes',
+                'Cancel'
+            );
+
+            if (confirm !== 'Yes') {
                 return;
             }
 
@@ -155,7 +157,7 @@ export class IndexCommand {
                 cancellable: false
             }, async (progress) => {
                 await this.context.clearIndex(
-                    workspaceFolders[0].uri.fsPath,
+                    codebasePath,
                     (progressInfo) => {
                         progress.report({
                             increment: progressInfo.percentage,
@@ -165,6 +167,9 @@ export class IndexCommand {
                 );
             });
 
+            if (this.codebaseTargetManager.getIndexedCodebasePath() === codebasePath) {
+                await this.codebaseTargetManager.clearIndexedCodebasePath();
+            }
             vscode.window.showInformationMessage('✅ Index cleared successfully');
         } catch (error) {
             console.error('Failed to clear index:', error);

@@ -1,37 +1,96 @@
 import * as fs from "fs";
 import { Context, FileSynchronizer } from "@zilliz/claude-context-core";
+import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
+import { RuntimeStatusManager, RuntimeSyncCodebaseResult } from "./runtime-status.js";
 
 export class SyncManager {
     private context: Context;
     private snapshotManager: SnapshotManager;
+    private codebaseConfigManager: CodebaseConfigManager;
+    private runtimeStatusManager?: RuntimeStatusManager;
     private isSyncing: boolean = false;
 
-    constructor(context: Context, snapshotManager: SnapshotManager) {
+    constructor(
+        context: Context,
+        snapshotManager: SnapshotManager,
+        codebaseConfigManager: CodebaseConfigManager,
+        runtimeStatusManager?: RuntimeStatusManager
+    ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
+        this.codebaseConfigManager = codebaseConfigManager;
+        this.runtimeStatusManager = runtimeStatusManager;
+    }
+
+    private async recoverIndexedCodebasesFromPersistedConfig(): Promise<string[]> {
+        const configuredCodebases = await this.codebaseConfigManager.listConfiguredCodebases();
+        if (configuredCodebases.length === 0) {
+            console.log('[SYNC-DEBUG] No persisted codebase configs found for snapshot self-heal.');
+            return [];
+        }
+
+        console.log(`[SYNC-DEBUG] Attempting snapshot self-heal from ${configuredCodebases.length} persisted codebase config(s).`);
+
+        const recoveredCodebases: string[] = [];
+
+        for (const codebasePath of configuredCodebases) {
+            if (!fs.existsSync(codebasePath)) {
+                console.warn(`[SYNC-DEBUG] Skipping self-heal candidate '${codebasePath}': path no longer exists.`);
+                continue;
+            }
+
+            try {
+                const hasCloudIndex = await this.context.hasIndex(codebasePath);
+                if (!hasCloudIndex) {
+                    console.log(`[SYNC-DEBUG] Self-heal candidate '${codebasePath}' has no cloud index. Skipping.`);
+                    continue;
+                }
+
+                this.snapshotManager.setCodebaseIndexedWithoutStats(codebasePath);
+                recoveredCodebases.push(codebasePath);
+                console.log(`[SYNC-DEBUG] Self-healed snapshot entry for '${codebasePath}' from persisted config + cloud index.`);
+            } catch (error: any) {
+                console.warn(`[SYNC-DEBUG] Failed self-heal check for '${codebasePath}':`, error.message || error);
+            }
+        }
+
+        if (recoveredCodebases.length > 0) {
+            await this.snapshotManager.saveCodebaseSnapshot('sync-self-heal-cloud-present');
+        }
+
+        return recoveredCodebases;
     }
 
     public async handleSyncIndex(): Promise<void> {
         const syncStartTime = Date.now();
         console.log(`[SYNC-DEBUG] handleSyncIndex() called at ${new Date().toISOString()}`);
 
-        const indexedCodebases = this.snapshotManager.getIndexedCodebases();
+        let indexedCodebases = this.snapshotManager.getIndexedCodebases();
+        const codebaseResults: RuntimeSyncCodebaseResult[] = [];
 
         if (indexedCodebases.length === 0) {
-            console.log('[SYNC-DEBUG] No codebases indexed. Skipping sync.');
-            return;
+            indexedCodebases = await this.recoverIndexedCodebasesFromPersistedConfig();
+            if (indexedCodebases.length === 0) {
+                const skipReason = 'no indexed codebases present in snapshot and snapshot self-heal found no cloud-backed candidates';
+                console.log(`[SYNC-DEBUG] Skipping sync: ${skipReason}`);
+                await this.runtimeStatusManager?.markSyncSkipped(skipReason);
+                return;
+            }
         }
 
         console.log(`[SYNC-DEBUG] Found ${indexedCodebases.length} indexed codebases:`, indexedCodebases);
 
         if (this.isSyncing) {
-            console.log('[SYNC-DEBUG] Index sync already in progress. Skipping.');
+            const skipReason = 'sync already in progress in this runtime';
+            console.log(`[SYNC-DEBUG] Skipping sync: ${skipReason}`);
+            await this.runtimeStatusManager?.markSyncSkipped(skipReason);
             return;
         }
 
         this.isSyncing = true;
         console.log(`[SYNC-DEBUG] Starting index sync for all ${indexedCodebases.length} codebases...`);
+        await this.runtimeStatusManager?.markSyncStarted();
 
         try {
             let totalStats = { added: 0, removed: 0, modified: 0 };
@@ -48,15 +107,41 @@ export class SyncManager {
                     console.log(`[SYNC-DEBUG] Codebase path exists: ${pathExists}`);
 
                     if (!pathExists) {
+                        const skipReason = 'codebase path no longer exists';
                         console.warn(`[SYNC-DEBUG] Codebase path '${codebasePath}' no longer exists. Skipping sync.`);
+                        codebaseResults.push({
+                            path: codebasePath,
+                            outcome: 'skipped',
+                            reason: skipReason
+                        });
                         continue;
                     }
                 } catch (pathError: any) {
                     console.error(`[SYNC-DEBUG] Error checking codebase path '${codebasePath}':`, pathError);
+                    codebaseResults.push({
+                        path: codebasePath,
+                        outcome: 'failed',
+                        reason: `path validation failed: ${pathError.message || pathError}`
+                    });
                     continue;
                 }
 
                 try {
+                    const persistedConfig = await this.codebaseConfigManager.getConfig(codebasePath);
+                    if (!persistedConfig) {
+                        const skipReason = 'missing persisted per-codebase sync config; reindex required to restore incremental sync';
+                        console.warn(`[SYNC-DEBUG] Skipping sync for '${codebasePath}': ${skipReason}`);
+                        codebaseResults.push({
+                            path: codebasePath,
+                            outcome: 'skipped',
+                            reason: skipReason
+                        });
+                        continue;
+                    }
+
+                    this.context.configureCodebaseSession(codebasePath, persistedConfig);
+                    await this.context.getLoadedIgnorePatterns(codebasePath);
+
                     console.log(`[SYNC-DEBUG] Calling context.reindexByChange() for '${codebasePath}'`);
                     const stats = await this.context.reindexByChange(codebasePath);
                     const codebaseElapsed = Date.now() - codebaseStartTime;
@@ -77,8 +162,23 @@ export class SyncManager {
                             await this.snapshotManager.saveCodebaseSnapshot('sync-incremental-updated');
                         }
 
+                        codebaseResults.push({
+                            path: codebasePath,
+                            outcome: 'synced',
+                            added: stats.added,
+                            removed: stats.removed,
+                            modified: stats.modified,
+                            durationMs: codebaseElapsed
+                        });
+
                         console.log(`[SYNC] Sync complete for '${codebasePath}'. Added: ${stats.added}, Removed: ${stats.removed}, Modified: ${stats.modified} (${codebaseElapsed}ms)`);
                     } else {
+                        codebaseResults.push({
+                            path: codebasePath,
+                            outcome: 'unchanged',
+                            reason: 'no file changes detected',
+                            durationMs: codebaseElapsed
+                        });
                         console.log(`[SYNC] No changes detected for '${codebasePath}' (${codebaseElapsed}ms)`);
                     }
                 } catch (error: any) {
@@ -99,18 +199,28 @@ export class SyncManager {
                         console.error(`[SYNC-DEBUG] Error errno: ${error.errno}`);
                     }
 
+                    codebaseResults.push({
+                        path: codebasePath,
+                        outcome: 'failed',
+                        reason: error.message || String(error),
+                        durationMs: codebaseElapsed
+                    });
+
                     // Continue with next codebase even if one fails
                 }
             }
 
             const totalElapsed = Date.now() - syncStartTime;
             console.log(`[SYNC-DEBUG] Total sync stats across all codebases: Added: ${totalStats.added}, Removed: ${totalStats.removed}, Modified: ${totalStats.modified}`);
+            console.log(`[SYNC-DEBUG] Codebase sync outcomes: ${JSON.stringify(codebaseResults)}`);
             console.log(`[SYNC-DEBUG] Index sync completed for all codebases in ${totalElapsed}ms`);
             console.log(`[SYNC] Index sync completed for all codebases. Total changes - Added: ${totalStats.added}, Removed: ${totalStats.removed}, Modified: ${totalStats.modified}`);
+            await this.runtimeStatusManager?.markSyncCompleted(totalStats, codebaseResults);
         } catch (error: any) {
             const totalElapsed = Date.now() - syncStartTime;
             console.error(`[SYNC-DEBUG] Error during index sync after ${totalElapsed}ms:`, error);
             console.error(`[SYNC-DEBUG] Error stack:`, error.stack);
+            await this.runtimeStatusManager?.markSyncFailed(error.message || String(error), codebaseResults);
         } finally {
             this.isSyncing = false;
             const totalElapsed = Date.now() - syncStartTime;

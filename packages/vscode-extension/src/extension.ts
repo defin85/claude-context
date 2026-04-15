@@ -4,6 +4,7 @@ import { SemanticSearchViewProvider } from './webview/semanticSearchProvider';
 import { SearchCommand } from './commands/searchCommand';
 import { IndexCommand } from './commands/indexCommand';
 import { SyncCommand } from './commands/syncCommand';
+import { CodebaseTargetManager } from './codebaseTargetManager';
 import { ConfigManager } from './config/configManager';
 import { Context, OpenAIEmbedding, VoyageAIEmbedding, GeminiEmbedding, MilvusRestfulVectorDatabase, AstCodeSplitter, LangChainCodeSplitter, SplitterType } from '@zilliz/claude-context-core';
 import { envManager } from '@zilliz/claude-context-core';
@@ -14,6 +15,7 @@ let indexCommand: IndexCommand;
 let syncCommand: SyncCommand;
 let configManager: ConfigManager;
 let codeContext: Context;
+let codebaseTargetManager: CodebaseTargetManager;
 let autoSyncDisposable: vscode.Disposable | null = null;
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -21,15 +23,23 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize config manager
     configManager = new ConfigManager(context);
+    codebaseTargetManager = new CodebaseTargetManager(context);
 
     // Initialize shared context instance with embedding configuration
     codeContext = createContextWithConfig(configManager);
 
     // Initialize providers and commands
-    searchCommand = new SearchCommand(codeContext);
-    indexCommand = new IndexCommand(codeContext);
-    syncCommand = new SyncCommand(codeContext);
-    semanticSearchProvider = new SemanticSearchViewProvider(context.extensionUri, searchCommand, indexCommand, syncCommand, configManager);
+    searchCommand = new SearchCommand(codeContext, codebaseTargetManager);
+    indexCommand = new IndexCommand(codeContext, codebaseTargetManager);
+    syncCommand = new SyncCommand(codeContext, codebaseTargetManager);
+    semanticSearchProvider = new SemanticSearchViewProvider(
+        context.extensionUri,
+        searchCommand,
+        indexCommand,
+        syncCommand,
+        configManager,
+        codebaseTargetManager
+    );
 
     // Register command handlers
     const disposables = [
