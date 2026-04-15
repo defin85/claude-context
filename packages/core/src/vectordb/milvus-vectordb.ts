@@ -423,7 +423,7 @@ export class MilvusVectorDatabase implements VectorDatabase {
         });
     }
 
-    async query(collectionName: string, filter: string, outputFields: string[], limit?: number): Promise<Record<string, any>[]> {
+    async query(collectionName: string, filter: string | undefined, outputFields: string[], limit?: number): Promise<Record<string, any>[]> {
         await this.ensureInitialized();
         await this.ensureLoaded(collectionName);
 
@@ -432,6 +432,7 @@ export class MilvusVectorDatabase implements VectorDatabase {
         }
 
         try {
+            const isAggregateCountQuery = outputFields.some((field) => field.trim().toLowerCase() === 'count(*)');
             const queryParams: any = {
                 collection_name: collectionName,
                 output_fields: outputFields,
@@ -443,8 +444,10 @@ export class MilvusVectorDatabase implements VectorDatabase {
                 queryParams.filter = filter;
             }
 
-            // Add limit if provided, or default when no filter is specified
-            if (limit !== undefined) {
+            // Milvus aggregate queries like count(*) must not receive a limit.
+            if (isAggregateCountQuery) {
+                // No-op.
+            } else if (limit !== undefined) {
                 queryParams.limit = limit;
             } else if (!filter || filter.trim() === '') {
                 // Milvus requires limit when no filter expression is provided

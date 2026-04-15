@@ -73,11 +73,7 @@ export class SyncManager {
                         // Refresh snapshot metadata so get_indexing_status shows recent incremental reindex time.
                         const currentInfo = this.snapshotManager.getCodebaseInfo(codebasePath);
                         if (currentInfo && currentInfo.status === 'indexed') {
-                            this.snapshotManager.setCodebaseIndexed(codebasePath, {
-                                indexedFiles: currentInfo.indexedFiles,
-                                totalChunks: currentInfo.totalChunks,
-                                status: currentInfo.indexStatus
-                            });
+                            this.snapshotManager.touchCodebaseIndexed(codebasePath);
                             await this.snapshotManager.saveCodebaseSnapshot('sync-incremental-updated');
                         }
 

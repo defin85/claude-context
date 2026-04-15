@@ -485,13 +485,14 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         }
     }
 
-    async query(collectionName: string, filter: string, outputFields: string[], limit?: number): Promise<Record<string, any>[]> {
+    async query(collectionName: string, filter: string | undefined, outputFields: string[], limit?: number): Promise<Record<string, any>[]> {
         await this.ensureInitialized();
         await this.ensureLoaded(collectionName);
 
         try {
             const restfulConfig = this.config as MilvusRestfulConfig;
-            const queryRequest: Record<string, any> = {
+            const isAggregateCountQuery = outputFields.some((field) => field.trim().toLowerCase() === 'count(*)');
+            const queryRequest: any = {
                 collectionName,
                 dbName: restfulConfig.database,
                 outputFields,
@@ -501,8 +502,10 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
             if (filter && filter.trim() !== '') {
                 queryRequest.filter = filter;
             }
-            // Add limit if provided, or default when no filter is specified
-            if (limit !== undefined) {
+            // Milvus REST aggregate queries require limit=0 for count(*).
+            if (isAggregateCountQuery) {
+                queryRequest.limit = 0;
+            } else if (limit !== undefined) {
                 queryRequest.limit = limit;
             } else if (!filter || filter.trim() === '') {
                 queryRequest.limit = 16384;

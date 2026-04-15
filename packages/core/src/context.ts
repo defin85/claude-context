@@ -23,6 +23,30 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { FileSynchronizer } from './sync/synchronizer';
 
+function normalizeCodebasePath(codebasePath: string): string {
+    const trimmedPath = codebasePath.trim();
+
+    if (process.platform === 'linux') {
+        const match = trimmedPath.match(/^\\\\wsl(?:\.localhost)?\\([^\\]+)\\(.*)$/i);
+        if (match) {
+            const [, distroName, rawPath] = match;
+            const currentDistro = process.env.WSL_DISTRO_NAME;
+
+            if (currentDistro && distroName.toLowerCase() !== currentDistro.toLowerCase()) {
+                console.warn(
+                    `[Context] Received WSL UNC path for distro '${distroName}', ` +
+                    `but current runtime is '${currentDistro}'. Attempting best-effort normalization.`
+                );
+            }
+
+            const posixPath = `/${rawPath.split('\\').filter(Boolean).join('/')}`;
+            return path.resolve(posixPath);
+        }
+    }
+
+    return path.resolve(trimmedPath);
+}
+
 const DEFAULT_SUPPORTED_EXTENSIONS = [
     // Programming languages
     '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cpp', '.c', '.h', '.hpp',
@@ -207,6 +231,7 @@ export class Context {
      * Public wrapper for loadIgnorePatterns private method
      */
     async getLoadedIgnorePatterns(codebasePath: string): Promise<void> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         return this.loadIgnorePatterns(codebasePath);
     }
 
@@ -214,6 +239,7 @@ export class Context {
      * Public wrapper for prepareCollection private method
      */
     async getPreparedCollection(codebasePath: string): Promise<void> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         return this.prepareCollection(codebasePath);
     }
 
@@ -233,7 +259,7 @@ export class Context {
      */
     public getCollectionName(codebasePath: string): string {
         const isHybrid = this.getIsHybrid();
-        const normalizedPath = path.resolve(codebasePath);
+        const normalizedPath = normalizeCodebasePath(codebasePath);
         const hash = crypto.createHash('md5').update(normalizedPath).digest('hex');
         const prefix = isHybrid === true ? 'hybrid_code_chunks' : 'code_chunks';
         return `${prefix}_${hash.substring(0, 8)}`;
@@ -251,6 +277,7 @@ export class Context {
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
         forceReindex: boolean = false
     ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
         console.log(`[Context] 🚀 Starting to index codebase with ${searchType}: ${codebasePath}`);
@@ -316,6 +343,7 @@ export class Context {
         codebasePath: string,
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void
     ): Promise<{ added: number, removed: number, modified: number }> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         const collectionName = this.getCollectionName(codebasePath);
         const synchronizer = this.synchronizers.get(collectionName);
 
@@ -407,6 +435,7 @@ export class Context {
      * @param threshold Similarity threshold
      */
     async semanticSearch(codebasePath: string, query: string, topK: number = 5, threshold: number = 0.5, filterExpr?: string): Promise<SemanticSearchResult[]> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
         console.log(`[Context] 🔍 Executing ${searchType}: "${query}" in ${codebasePath}`);
@@ -424,7 +453,7 @@ export class Context {
         if (isHybrid === true) {
             try {
                 // Check collection stats to see if it has data
-                const stats = await this.vectorDatabase.query(collectionName, '', ['id'], 1);
+                const stats = await this.vectorDatabase.query(collectionName, undefined, ['id'], 1);
                 console.log(`[Context] 🔍 Collection '${collectionName}' exists and appears to have data`);
             } catch (error) {
                 console.log(`[Context] ⚠️  Collection '${collectionName}' exists but may be empty or not properly indexed:`, error);
@@ -521,6 +550,7 @@ export class Context {
      * @returns Whether index exists
      */
     async hasIndex(codebasePath: string): Promise<boolean> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         const collectionName = this.getCollectionName(codebasePath);
         return await this.vectorDatabase.hasCollection(collectionName);
     }
@@ -534,6 +564,7 @@ export class Context {
         codebasePath: string,
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void
     ): Promise<void> {
+        codebasePath = normalizeCodebasePath(codebasePath);
         console.log(`[Context] 🧹 Cleaning index data for ${codebasePath}...`);
 
         progressCallback?.({ phase: 'Checking existing index...', current: 0, total: 100, percentage: 0 });

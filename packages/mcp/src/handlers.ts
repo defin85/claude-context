@@ -106,7 +106,7 @@ export class ToolHandlers {
     private async getTotalChunkCountFromCollection(codebasePath: string): Promise<number | undefined> {
         try {
             const collectionName = this.context.getCollectionName(codebasePath);
-            const rows = await this.context.getVectorDatabase().query(collectionName, undefined as any, ['count(*)']);
+            const rows = await this.context.getVectorDatabase().query(collectionName, undefined, ['count(*)']);
             const totalChunks = this.parseCountQueryResult(rows);
 
             if (typeof totalChunks === 'number') {
@@ -176,6 +176,16 @@ export class ToolHandlers {
         return recoveredStats !== null;
     }
 
+    private createLostCollectionError(codebasePath: string) {
+        return {
+            content: [{
+                type: "text",
+                text: `Error: Index data for '${codebasePath}' has been lost (collection not found in Milvus). Please re-index using index_codebase with force=true.`
+            }],
+            isError: true
+        };
+    }
+
     /**
      * Best-effort cloud sync for diagnostics.
      *
@@ -234,7 +244,7 @@ export class ToolHandlers {
                         try {
                             const results = await vectorDb.query(
                                 collectionName,
-                                undefined as any,
+                                undefined,
                                 ['metadata'],
                                 1
                             );
@@ -650,7 +660,15 @@ export class ToolHandlers {
                 );
             }
 
-            if (!hasCloudIndex && !isIndexing) {
+            if (!hasCloudIndex && isIndexedInSnapshot && !isIndexing) {
+                const collectionName = this.context.getCollectionName(absolutePath);
+                const hasCollection = await this.context.getVectorDatabase().hasCollection(collectionName);
+                if (!hasCollection) {
+                    return this.createLostCollectionError(absolutePath);
+                }
+            }
+
+            if (!hasCloudIndex && !isIndexing && !isIndexedInSnapshot) {
                 return {
                     content: [{
                         type: "text",
@@ -710,10 +728,7 @@ export class ToolHandlers {
                     const collectionName = this.context.getCollectionName(absolutePath);
                     const hasCollection = await this.context.getVectorDatabase().hasCollection(collectionName);
                     if (!hasCollection) {
-                        return {
-                            content: [{ type: "text", text: `Error: Index data for '${absolutePath}' has been lost (collection not found in Milvus). Please re-index using index_codebase with force=true.` }],
-                            isError: true
-                        };
+                        return this.createLostCollectionError(absolutePath);
                     }
                 }
 

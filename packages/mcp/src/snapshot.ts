@@ -21,6 +21,13 @@ interface SnapshotManagerOptions {
     saveDebounceMs?: number;
 }
 
+type SnapshotSourceFormat = 'none' | 'v1' | 'v2' | 'corrupt';
+
+interface SnapshotReadResult {
+    snapshot: CodebaseSnapshotV2 | null;
+    sourceFormat: SnapshotSourceFormat;
+}
+
 export class SnapshotManager {
     private snapshotFilePath: string;
     private lockFilePath: string;
@@ -400,9 +407,9 @@ export class SnapshotManager {
         };
     }
 
-    private readSnapshotFileUnsafe(snapshotPath: string, rotateCorruptFile: boolean): CodebaseSnapshotV2 | null {
+    private readSnapshotFileWithMetadata(snapshotPath: string, rotateCorruptFile: boolean): SnapshotReadResult {
         if (!fs.existsSync(snapshotPath)) {
-            return null;
+            return { snapshot: null, sourceFormat: 'none' };
         }
 
         try {
@@ -410,14 +417,20 @@ export class SnapshotManager {
             const snapshot: CodebaseSnapshot = JSON.parse(snapshotData);
 
             if (this.isV2Format(snapshot)) {
-                return this.normalizeSnapshot(snapshot);
+                return {
+                    snapshot: this.normalizeSnapshot(snapshot),
+                    sourceFormat: 'v2'
+                };
             }
 
-            return this.normalizeSnapshot(this.convertV1ToV2(snapshot));
+            return {
+                snapshot: this.normalizeSnapshot(this.convertV1ToV2(snapshot)),
+                sourceFormat: 'v1'
+            };
         } catch (error: any) {
             console.warn('[SNAPSHOT-DEBUG] Failed to parse snapshot from disk:', error);
             if (!rotateCorruptFile) {
-                return null;
+                return { snapshot: null, sourceFormat: 'corrupt' };
             }
 
             try {
@@ -429,12 +442,20 @@ export class SnapshotManager {
                     console.warn('[SNAPSHOT-DEBUG] Failed to rotate corrupted snapshot file:', rotateError);
                 }
             }
-            return null;
+            return { snapshot: null, sourceFormat: 'corrupt' };
         }
+    }
+
+    private readSnapshotFileUnsafe(snapshotPath: string, rotateCorruptFile: boolean): CodebaseSnapshotV2 | null {
+        return this.readSnapshotFileWithMetadata(snapshotPath, rotateCorruptFile).snapshot;
     }
 
     private readSnapshotFromDiskUnsafe(): CodebaseSnapshotV2 | null {
         return this.readSnapshotFileUnsafe(this.snapshotFilePath, true);
+    }
+
+    private readSnapshotFromDiskWithMetadata(): SnapshotReadResult {
+        return this.readSnapshotFileWithMetadata(this.snapshotFilePath, true);
     }
 
     private writeSnapshotToDiskUnsafe(snapshot: CodebaseSnapshotV2, snapshotPath: string = this.snapshotFilePath): void {
@@ -467,6 +488,56 @@ export class SnapshotManager {
 
         const parsed = Date.parse(value);
         return Number.isNaN(parsed) ? 0 : parsed;
+    }
+
+    private createComparableCodebaseInfo(info: CodebaseInfo): Record<string, unknown> {
+        if (info.status === 'indexed') {
+            return {
+                status: info.status,
+                indexStatus: info.indexStatus,
+                statsState: info.statsState || 'known',
+                indexedFiles: info.indexedFiles,
+                totalChunks: info.totalChunks,
+                lastUpdated: info.lastUpdated
+            };
+        }
+
+        if (info.status === 'indexing') {
+            return {
+                status: info.status,
+                indexingPercentage: info.indexingPercentage,
+                lastUpdated: info.lastUpdated
+            };
+        }
+
+        return {
+            status: info.status,
+            errorMessage: info.errorMessage,
+            lastAttemptedPercentage: info.lastAttemptedPercentage,
+            lastUpdated: info.lastUpdated
+        };
+    }
+
+    private getComparableSnapshotSignature(snapshot: CodebaseSnapshotV2): string {
+        const normalizedSnapshot = this.normalizeSnapshot(snapshot);
+        const comparableCodebases: Record<string, Record<string, unknown>> = {};
+
+        for (const codebasePath of Object.keys(normalizedSnapshot.codebases).sort()) {
+            comparableCodebases[codebasePath] = this.createComparableCodebaseInfo(normalizedSnapshot.codebases[codebasePath]);
+        }
+
+        return JSON.stringify({
+            formatVersion: 'v2',
+            codebases: comparableCodebases
+        });
+    }
+
+    private shouldPersistLoadedSnapshot(snapshot: CodebaseSnapshotV2, sourceFormat: SnapshotSourceFormat): boolean {
+        if (sourceFormat !== 'v2') {
+            return true;
+        }
+
+        return this.getComparableSnapshotSignature(snapshot) !== this.getComparableSnapshotSignature(this.buildSnapshotFromMemory());
     }
 
     private mergeSnapshots(existingSnapshot: CodebaseSnapshotV2 | null, localSnapshot: CodebaseSnapshotV2): CodebaseSnapshotV2 {
@@ -1022,7 +1093,7 @@ export class SnapshotManager {
             this.pendingDeletes.clear();
             this.migrateLegacySnapshotIfNeeded();
 
-            const snapshot = this.readSnapshotFromDiskUnsafe();
+            const { snapshot, sourceFormat } = this.readSnapshotFromDiskWithMetadata();
             if (!snapshot) {
                 console.log('[SNAPSHOT-DEBUG] Snapshot file does not exist. Starting with empty codebase list.');
                 return;
@@ -1032,10 +1103,11 @@ export class SnapshotManager {
 
             this.loadV2Format(snapshot);
 
-            // Always save in v2 format after loading (migration)
-            void this.saveCodebaseSnapshot('post-load-migration').catch((error: any) => {
-                console.error('[SNAPSHOT-DEBUG] Error persisting post-load migration snapshot:', error);
-            });
+            if (this.shouldPersistLoadedSnapshot(snapshot, sourceFormat)) {
+                void this.saveCodebaseSnapshot('post-load-migration').catch((error: any) => {
+                    console.error('[SNAPSHOT-DEBUG] Error persisting post-load migration snapshot:', error);
+                });
+            }
 
         } catch (error: any) {
             console.error('[SNAPSHOT-DEBUG] Error loading snapshot:', error);

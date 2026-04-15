@@ -120,11 +120,11 @@ export interface VectorDatabase {
     /**
      * Query documents with filter conditions
      * @param collectionName Collection name
-     * @param filter Filter expression
+     * @param filter Optional filter expression
      * @param outputFields Fields to return
      * @param limit Maximum number of results
      */
-    query(collectionName: string, filter: string, outputFields: string[], limit?: number): Promise<Record<string, any>[]>;
+    query(collectionName: string, filter: string | undefined, outputFields: string[], limit?: number): Promise<Record<string, any>[]>;
 
     /**
      * Get collection description
