@@ -8,6 +8,10 @@ interface WorkloadManagerOptions {
     mode: McpRuntimeMode;
     maxIndexingConcurrency?: number;
     maxSearchConcurrency?: number;
+    backgroundSyncBaseBackoffMs?: number;
+    backgroundSyncMaxBackoffMs?: number;
+    interactivePriorityWindowMs?: number;
+    interactiveRepoPriorityBoost?: number;
     onStateChanged?: (snapshot: WorkloadSnapshot, reason: string) => void | Promise<void>;
 }
 
@@ -16,8 +20,10 @@ interface QueuedWorkloadJob<T> {
     lane: WorkloadLane;
     type: WorkloadJobType;
     codebasePath: string;
+    basePriority: number;
     priority: number;
     enqueuedAt: string;
+    readyAt?: number;
     run: () => Promise<T>;
     resolve: (value: T) => void;
     reject: (reason?: unknown) => void;
@@ -28,9 +34,15 @@ interface ActiveWorkloadJob {
     lane: WorkloadLane;
     type: WorkloadJobType;
     codebasePath: string;
+    basePriority: number;
     priority: number;
     enqueuedAt: string;
     startedAt: string;
+}
+
+interface BackgroundSyncBackoffState {
+    consecutiveFailures: number;
+    retryAfterAt: number;
 }
 
 export interface WorkloadJobSnapshot {
@@ -40,6 +52,7 @@ export interface WorkloadJobSnapshot {
     priority: number;
     enqueuedAt: string;
     startedAt?: string;
+    readyAt?: string;
 }
 
 export interface WorkloadLaneSnapshot {
@@ -72,16 +85,33 @@ export class WorkloadManager {
     private readonly mode: McpRuntimeMode;
     private readonly maxIndexingConcurrency: number;
     private readonly maxSearchConcurrency: number;
+    private readonly backgroundSyncBaseBackoffMs: number;
+    private readonly backgroundSyncMaxBackoffMs: number;
+    private readonly interactivePriorityWindowMs: number;
+    private readonly interactiveRepoPriorityBoost: number;
     private readonly onStateChanged?: (snapshot: WorkloadSnapshot, reason: string) => void | Promise<void>;
     private readonly indexingQueue: Array<QueuedWorkloadJob<unknown>> = [];
     private readonly searchQueue: Array<QueuedWorkloadJob<unknown>> = [];
     private readonly activeIndexingJobs = new Map<string, ActiveWorkloadJob>();
     private readonly activeSearchJobs = new Map<string, ActiveWorkloadJob>();
+    private readonly backgroundSyncBackoff = new Map<string, BackgroundSyncBackoffState>();
+    private readonly recentInteractiveActivity = new Map<string, number>();
+    private readonly laneWakeTimers: Partial<Record<WorkloadLane, ReturnType<typeof setTimeout>>> = {};
 
     constructor(options: WorkloadManagerOptions) {
         this.mode = options.mode;
         this.maxIndexingConcurrency = this.normalizeLimit(options.maxIndexingConcurrency, 1);
         this.maxSearchConcurrency = this.normalizeLimit(options.maxSearchConcurrency, 4);
+        this.backgroundSyncBaseBackoffMs = this.normalizeLimit(options.backgroundSyncBaseBackoffMs, 30_000);
+        this.backgroundSyncMaxBackoffMs = Math.max(
+            this.backgroundSyncBaseBackoffMs,
+            this.normalizeLimit(options.backgroundSyncMaxBackoffMs, 5 * 60 * 1000)
+        );
+        this.interactivePriorityWindowMs = this.normalizeLimit(options.interactivePriorityWindowMs, 10 * 60 * 1000);
+        this.interactiveRepoPriorityBoost = Math.max(
+            0,
+            Math.floor(options.interactiveRepoPriorityBoost ?? 25)
+        );
         this.onStateChanged = options.onStateChanged;
     }
 
@@ -94,6 +124,10 @@ export class WorkloadManager {
     }
 
     public enqueueInteractiveIndexing<T>(codebasePath: string, run: () => Promise<T>): EnqueuedIndexingTask<T> {
+        if (this.mode === 'daemon') {
+            this.recordInteractiveActivity(codebasePath);
+        }
+
         return this.enqueueIndexingTask(codebasePath, run, {
             codebasePath,
             priority: 0,
@@ -114,6 +148,8 @@ export class WorkloadManager {
         if (this.mode !== 'daemon') {
             return run();
         }
+
+        this.recordInteractiveActivity(codebasePath);
 
         return this.enqueueWork('search', run, {
             codebasePath,
@@ -148,6 +184,10 @@ export class WorkloadManager {
         const activeJobs = this.getActiveJobs(lane);
         const jobId = crypto.randomUUID();
         const enqueuedAt = new Date().toISOString();
+        const readyAt = options.type === 'background-sync'
+            ? this.getBackgroundSyncReadyAt(options.codebasePath)
+            : undefined;
+        const priority = this.computePriority(options.type, options.codebasePath, options.priority);
 
         let resolveCompletion!: (value: T) => void;
         let rejectCompletion!: (reason?: unknown) => void;
@@ -161,14 +201,18 @@ export class WorkloadManager {
             lane,
             type: options.type,
             codebasePath: options.codebasePath,
-            priority: options.priority,
+            basePriority: options.priority,
+            priority,
             enqueuedAt,
+            readyAt,
             run,
             resolve: resolveCompletion,
             reject: rejectCompletion
         };
 
-        const startedImmediately = activeJobs.size < this.getMaxConcurrency(lane) && queue.length === 0;
+        const startedImmediately = activeJobs.size < this.getMaxConcurrency(lane)
+            && queue.length === 0
+            && readyAt === undefined;
         if (startedImmediately) {
             void this.startQueuedJob(job);
             return {
@@ -181,6 +225,7 @@ export class WorkloadManager {
         queue.push(job as QueuedWorkloadJob<unknown>);
         this.sortQueue(queue);
         this.notifyStateChanged(`${lane}-queued`);
+        void this.drainQueue(lane);
 
         return {
             startedImmediately: false,
@@ -196,6 +241,7 @@ export class WorkloadManager {
             lane: job.lane,
             type: job.type,
             codebasePath: job.codebasePath,
+            basePriority: job.basePriority,
             priority: job.priority,
             enqueuedAt: job.enqueuedAt,
             startedAt: new Date().toISOString()
@@ -206,8 +252,18 @@ export class WorkloadManager {
 
         try {
             const result = await job.run();
+            if (job.type === 'background-sync') {
+                this.clearBackgroundSyncBackoff(job.codebasePath);
+            }
             job.resolve(result);
         } catch (error) {
+            if (job.type === 'background-sync') {
+                const backoffMs = this.recordBackgroundSyncFailure(job.codebasePath);
+                console.warn(
+                    `[WORKLOAD] Background sync for '${job.codebasePath}' failed. ` +
+                    `Applying retry backoff of ${backoffMs}ms.`
+                );
+            }
             job.reject(error);
         } finally {
             activeJobs.delete(job.id);
@@ -221,13 +277,26 @@ export class WorkloadManager {
         const activeJobs = this.getActiveJobs(lane);
         const maxConcurrency = this.getMaxConcurrency(lane);
 
+        this.clearWakeTimer(lane);
+
         while (queue.length > 0 && activeJobs.size < maxConcurrency) {
-            const nextJob = queue.shift();
+            this.sortQueue(queue);
+            const nextJob = queue[0];
             if (!nextJob) {
                 break;
             }
 
+            if (typeof nextJob.readyAt === 'number' && nextJob.readyAt > Date.now()) {
+                this.scheduleWakeTimer(lane, nextJob.readyAt);
+                break;
+            }
+
+            queue.shift();
             void this.startQueuedJob(nextJob);
+        }
+
+        if (queue.length === 0) {
+            this.clearWakeTimer(lane);
         }
 
         this.notifyStateChanged(`${lane}-drained`);
@@ -235,6 +304,11 @@ export class WorkloadManager {
 
     private sortQueue(queue: Array<QueuedWorkloadJob<unknown>>): void {
         queue.sort((left, right) => {
+            const leftReadyAt = left.readyAt ?? 0;
+            const rightReadyAt = right.readyAt ?? 0;
+            if (leftReadyAt !== rightReadyAt) {
+                return leftReadyAt - rightReadyAt;
+            }
             if (left.priority !== right.priority) {
                 return left.priority - right.priority;
             }
@@ -283,9 +357,106 @@ export class WorkloadManager {
                 type: job.type,
                 codebasePath: job.codebasePath,
                 priority: job.priority,
-                enqueuedAt: job.enqueuedAt
+                enqueuedAt: job.enqueuedAt,
+                ...(typeof job.readyAt === 'number' ? { readyAt: new Date(job.readyAt).toISOString() } : {})
             }))
         };
+    }
+
+    private recordInteractiveActivity(codebasePath: string): void {
+        this.recentInteractiveActivity.set(codebasePath, Date.now());
+        this.reprioritizeQueuedBackgroundSyncJobs();
+    }
+
+    private reprioritizeQueuedBackgroundSyncJobs(): void {
+        let changed = false;
+        for (const job of this.indexingQueue) {
+            if (job.type !== 'background-sync') {
+                continue;
+            }
+
+            const nextPriority = this.computePriority(job.type, job.codebasePath, job.basePriority);
+            if (nextPriority !== job.priority) {
+                job.priority = nextPriority;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.sortQueue(this.indexingQueue);
+            this.notifyStateChanged('indexing-reprioritized');
+        }
+    }
+
+    private computePriority(type: WorkloadJobType, codebasePath: string, basePriority: number): number {
+        if (type !== 'background-sync') {
+            return basePriority;
+        }
+
+        const lastInteractiveAt = this.recentInteractiveActivity.get(codebasePath);
+        if (!lastInteractiveAt) {
+            return basePriority;
+        }
+
+        if ((Date.now() - lastInteractiveAt) > this.interactivePriorityWindowMs) {
+            return basePriority;
+        }
+
+        return Math.max(1, basePriority - this.interactiveRepoPriorityBoost);
+    }
+
+    private getBackgroundSyncReadyAt(codebasePath: string): number | undefined {
+        const state = this.backgroundSyncBackoff.get(codebasePath);
+        if (!state) {
+            return undefined;
+        }
+
+        if (state.retryAfterAt <= Date.now()) {
+            this.backgroundSyncBackoff.delete(codebasePath);
+            return undefined;
+        }
+
+        return state.retryAfterAt;
+    }
+
+    private clearBackgroundSyncBackoff(codebasePath: string): void {
+        this.backgroundSyncBackoff.delete(codebasePath);
+    }
+
+    private recordBackgroundSyncFailure(codebasePath: string): number {
+        const currentState = this.backgroundSyncBackoff.get(codebasePath);
+        const consecutiveFailures = (currentState?.consecutiveFailures ?? 0) + 1;
+        const backoffMs = Math.min(
+            this.backgroundSyncBaseBackoffMs * (2 ** (consecutiveFailures - 1)),
+            this.backgroundSyncMaxBackoffMs
+        );
+
+        this.backgroundSyncBackoff.set(codebasePath, {
+            consecutiveFailures,
+            retryAfterAt: Date.now() + backoffMs
+        });
+
+        return backoffMs;
+    }
+
+    private scheduleWakeTimer(lane: WorkloadLane, readyAt: number): void {
+        this.clearWakeTimer(lane);
+
+        const delayMs = Math.max(0, readyAt - Date.now());
+        this.laneWakeTimers[lane] = setTimeout(() => {
+            this.laneWakeTimers[lane] = undefined;
+            void this.drainQueue(lane);
+        }, delayMs);
+    }
+
+    private clearWakeTimer(lane: WorkloadLane): void {
+        const timer = this.laneWakeTimers[lane];
+        if (!timer) {
+            return;
+        }
+
+        clearTimeout(timer);
+        this.laneWakeTimers[lane] = undefined;
     }
 
     private notifyStateChanged(reason: string): void {

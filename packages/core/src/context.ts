@@ -6,6 +6,7 @@ import {
 import {
     Embedding,
     EmbeddingVector,
+    EmbeddingContextLimitError,
     OpenAIEmbedding
 } from './embedding';
 import {
@@ -45,6 +46,17 @@ function normalizeCodebasePath(codebasePath: string): string {
     }
 
     return path.resolve(trimmedPath);
+}
+
+function isFatalEmbeddingBatchError(error: unknown): boolean {
+    if (error instanceof EmbeddingContextLimitError) {
+        return true;
+    }
+
+    return typeof error === 'object'
+        && error !== null
+        && 'code' in error
+        && (error as { code?: unknown }).code === 'EMBEDDING_CONTEXT_LIMIT_EXCEEDED';
 }
 
 const DEFAULT_SUPPORTED_EXTENSIONS = [
@@ -935,6 +947,9 @@ export class Context {
                         try {
                             await this.processChunkBuffer(chunkBuffer);
                         } catch (error) {
+                            if (isFatalEmbeddingBatchError(error)) {
+                                throw error;
+                            }
                             const searchType = isHybrid === true ? 'hybrid' : 'regular';
                             console.error(`[Context] ❌ Failed to process chunk batch for ${searchType}:`, error);
                             if (error instanceof Error) {
@@ -961,6 +976,9 @@ export class Context {
                 }
 
             } catch (error) {
+                if (isFatalEmbeddingBatchError(error)) {
+                    throw error;
+                }
                 console.warn(`[Context] ⚠️  Skipping file ${filePath}: ${error}`);
             }
         }
@@ -972,6 +990,9 @@ export class Context {
             try {
                 await this.processChunkBuffer(chunkBuffer);
             } catch (error) {
+                if (isFatalEmbeddingBatchError(error)) {
+                    throw error;
+                }
                 console.error(`[Context] ❌ Failed to process final chunk batch for ${searchType}:`, error);
                 if (error instanceof Error) {
                     console.error('[Context] Stack trace:', error.stack);

@@ -1647,6 +1647,32 @@ export class SnapshotManager {
         });
     }
 
+    public async failCurrentRuntimeOwnedIndexingCodebases(errorMessage: string): Promise<string[]> {
+        return this.mutateSnapshotWithLock('index-ownership-fail-runtime-shutdown', async (snapshot) => {
+            const failedCodebases: string[] = [];
+            const lastUpdated = new Date().toISOString();
+
+            for (const [codebasePath, info] of Object.entries(snapshot.codebases)) {
+                if (!info || info.status !== 'indexing' || !this.isCurrentRuntimeOwner(info)) {
+                    continue;
+                }
+
+                snapshot.codebases[codebasePath] = {
+                    status: 'indexfailed',
+                    errorMessage,
+                    lastAttemptedPercentage: info.indexingPercentage,
+                    lastUpdated
+                };
+                failedCodebases.push(codebasePath);
+            }
+
+            return {
+                changed: failedCodebases.length > 0,
+                result: failedCodebases
+            };
+        });
+    }
+
     /**
      * Get all failed codebases
      */

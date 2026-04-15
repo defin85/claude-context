@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Context } from '../packages/core/src/context.ts';
+import { OllamaEmbedding } from '../packages/core/src/embedding/ollama-embedding.ts';
 import { FileSynchronizer } from '../packages/core/src/sync/synchronizer.ts';
 import { MilvusRestfulVectorDatabase } from '../packages/core/src/vectordb/milvus-restful-vectordb.ts';
 import { MilvusVectorDatabase } from '../packages/core/src/vectordb/milvus-vectordb.ts';
@@ -971,6 +972,48 @@ async function main(): Promise<void> {
         });
     });
 
+    await runCheck('shutdown cleanup marks only current runtime owned indexing jobs as failed', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir, outsideCodebaseDir }) => {
+            const currentRuntime = new SnapshotManager({
+                workspacePath: workspaceDir,
+                saveDebounceMs: 0,
+                runtimeId: 'runtime-shutdown-current'
+            });
+            const otherRuntime = new SnapshotManager({
+                workspacePath: workspaceDir,
+                saveDebounceMs: 0,
+                runtimeId: 'runtime-shutdown-other'
+            });
+
+            const currentClaim = await currentRuntime.acquireIndexingOwnership(codebaseDir, 42);
+            const otherClaim = await otherRuntime.acquireIndexingOwnership(outsideCodebaseDir, 7);
+            assert.equal(currentClaim.acquired, true);
+            assert.equal(otherClaim.acquired, true);
+
+            const failedCodebases = await currentRuntime.failCurrentRuntimeOwnedIndexingCodebases('runtime shutdown');
+
+            assert.deepEqual(failedCodebases, [codebaseDir]);
+
+            currentRuntime.loadCodebaseSnapshot();
+            otherRuntime.loadCodebaseSnapshot();
+
+            const currentInfo = currentRuntime.getCodebaseInfo(codebaseDir);
+            assert.equal(currentInfo?.status, 'indexfailed');
+            if (!currentInfo || currentInfo.status !== 'indexfailed') {
+                throw new Error('Expected current runtime codebase to be marked as indexfailed.');
+            }
+            assert.equal(currentInfo.lastAttemptedPercentage, 42);
+            assert.match(currentInfo.errorMessage, /runtime shutdown/);
+
+            const otherInfo = otherRuntime.getCodebaseInfo(outsideCodebaseDir);
+            assert.equal(otherInfo?.status, 'indexing');
+            if (!otherInfo || otherInfo.status !== 'indexing') {
+                throw new Error('Expected other runtime codebase to remain in indexing state.');
+            }
+            assert.equal(otherInfo.indexingPercentage, 7);
+        });
+    });
+
     await runCheck('runtime status file records process metadata and known codebases', async () => {
         await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
             const manager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-status' });
@@ -1208,6 +1251,97 @@ async function main(): Promise<void> {
         assert.deepEqual(executionOrder, ['first-start', 'first-finish', 'interactive-run', 'sync-run']);
     });
 
+    await runCheck('WorkloadManager boosts background sync priority for recently interactive repositories', async () => {
+        const workloadManager = new WorkloadManager({
+            mode: 'daemon',
+            maxIndexingConcurrency: 1,
+            maxSearchConcurrency: 2,
+            interactivePriorityWindowMs: 60_000,
+            interactiveRepoPriorityBoost: 40
+        });
+
+        let releaseFirst!: () => void;
+        const firstCompletion = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+
+        const executionOrder: string[] = [];
+        const firstTask = workloadManager.enqueueInteractiveIndexing('/repo/blocker', async () => {
+            executionOrder.push('blocker-start');
+            await firstCompletion;
+            executionOrder.push('blocker-finish');
+        });
+
+        await workloadManager.runSearch('/repo/hot', async () => undefined);
+
+        const coldBackground = workloadManager.runBackgroundSync('/repo/cold', async () => {
+            executionOrder.push('cold-sync');
+        });
+        const hotBackground = workloadManager.runBackgroundSync('/repo/hot', async () => {
+            executionOrder.push('hot-sync');
+        });
+
+        const queuedBeforeRelease = workloadManager.getSnapshot().indexing.queuedJobs.map((job) => ({
+            codebasePath: job.codebasePath,
+            priority: job.priority
+        }));
+        assert.deepEqual(queuedBeforeRelease, [
+            { codebasePath: '/repo/hot', priority: 60 },
+            { codebasePath: '/repo/cold', priority: 100 }
+        ]);
+
+        releaseFirst();
+        await firstTask.completion;
+        await hotBackground;
+        await coldBackground;
+
+        assert.deepEqual(executionOrder, ['blocker-start', 'blocker-finish', 'hot-sync', 'cold-sync']);
+    });
+
+    await runCheck('WorkloadManager backs off flaky background sync repositories instead of immediate retry', async () => {
+        const workloadManager = new WorkloadManager({
+            mode: 'daemon',
+            maxIndexingConcurrency: 1,
+            maxSearchConcurrency: 2,
+            backgroundSyncBaseBackoffMs: 50,
+            backgroundSyncMaxBackoffMs: 50
+        });
+
+        await assert.rejects(
+            workloadManager.runBackgroundSync('/repo/flaky', async () => {
+                throw new Error('expected background sync failure');
+            }),
+            /expected background sync failure/
+        );
+
+        const executionOrder: string[] = [];
+        let releaseHealthy!: () => void;
+        const healthyGate = new Promise<void>((resolve) => {
+            releaseHealthy = resolve;
+        });
+        const flakyRetry = workloadManager.runBackgroundSync('/repo/flaky', async () => {
+            executionOrder.push('flaky-retry');
+        });
+        const healthySync = workloadManager.runBackgroundSync('/repo/healthy', async () => {
+            executionOrder.push('healthy-sync');
+            await healthyGate;
+        });
+
+        await flushAsyncWork();
+
+        const queuedJobs = workloadManager.getSnapshot().indexing.queuedJobs;
+        assert.equal(workloadManager.getSnapshot().indexing.activeJobs[0]?.codebasePath, '/repo/healthy');
+        assert.equal(queuedJobs.length, 1);
+        assert.equal(queuedJobs[0].codebasePath, '/repo/flaky');
+        assert.ok(typeof queuedJobs[0].readyAt === 'string');
+
+        releaseHealthy();
+        await healthySync;
+        await flakyRetry;
+
+        assert.deepEqual(executionOrder, ['healthy-sync', 'flaky-retry']);
+    });
+
     await runCheck('WorkloadManager enforces bounded search concurrency', async () => {
         const workloadManager = new WorkloadManager({
             mode: 'daemon',
@@ -1339,6 +1473,75 @@ async function main(): Promise<void> {
 
             assert.equal(context.getSupportedExtensions().includes('.vue'), false);
             assert.equal(context.getIgnorePatterns().includes('alpha/**'), false);
+        });
+    });
+
+    await runCheck('OllamaEmbedding splits overflowing batch requests and preserves input order', async () => {
+        const embedding = new OllamaEmbedding({
+            model: 'nomic-embed-text'
+        });
+
+        (embedding as any).dimensionDetected = true;
+        (embedding as any).dimension = 3;
+        (embedding as any).client = {
+            embed: async ({ input }: { input: string | string[] }) => {
+                if (Array.isArray(input) && input.length > 1) {
+                    throw new Error('input length exceeds the context length');
+                }
+
+                const items = Array.isArray(input) ? input : [input];
+                return {
+                    embeddings: items.map((item) => [item.length, item.length + 1, item.length + 2])
+                };
+            }
+        };
+
+        const result = await embedding.embedBatch(['aa', 'bbbb']);
+
+        assert.deepEqual(result.map((item) => item.vector), [
+            [2, 3, 4],
+            [4, 5, 6]
+        ]);
+    });
+
+    await runCheck('Context rethrows fatal embedding context-limit errors instead of silently dropping batches', async () => {
+        await withSandbox(async ({ codebaseDir }) => {
+            const filePath = path.join(codebaseDir, 'fatal-batch.ts');
+            await fs.writeFile(filePath, 'export const fatalBatch = true;\n');
+
+            const fatalError = new Error('embedding context limit exceeded');
+            (fatalError as Error & { code?: string }).code = 'EMBEDDING_CONTEXT_LIMIT_EXCEEDED';
+
+            const context = new Context({
+                embedding: {
+                    getProvider: () => 'stub',
+                    getDimension: () => 1,
+                    embedBatch: async () => {
+                        throw fatalError;
+                    }
+                } as any,
+                vectorDatabase: {
+                    insert: async () => undefined,
+                    insertHybrid: async () => undefined,
+                    hasCollection: async () => true
+                } as any,
+                codeSplitter: {
+                    split: async (_content: string, _language: string, resolvedFilePath: string) => [{
+                        content: 'chunk',
+                        metadata: {
+                            filePath: resolvedFilePath,
+                            startLine: 1,
+                            endLine: 1,
+                            language: 'typescript'
+                        }
+                    }]
+                } as any
+            });
+
+            await assert.rejects(
+                () => (context as any).processFileList([filePath], codebaseDir),
+                /embedding context limit exceeded/
+            );
         });
     });
 

@@ -21,6 +21,7 @@
         "release:vscode": "pnpm --filter @zilliz/claude-context-core build && pnpm --filter semanticcodesearch run webpack && pnpm --filter semanticcodesearch release",
         "example:basic": "pnpm --filter claude-context-basic-example start",
         "benchmark": "node scripts/build-benchmark.js",
+        "benchmark:daemon-idle": "node scripts/daemon-idle-benchmark.js",
         "verify:upstream-merge": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-upstream-merge.ts"
     },
     "devDependencies": {

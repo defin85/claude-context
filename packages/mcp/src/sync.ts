@@ -12,6 +12,9 @@ export class SyncManager {
     private runtimeStatusManager?: RuntimeStatusManager;
     private workloadManager?: WorkloadManager;
     private isSyncing: boolean = false;
+    private isStopped: boolean = false;
+    private initialSyncTimer?: ReturnType<typeof setTimeout>;
+    private periodicSyncTimer?: ReturnType<typeof setInterval>;
 
     constructor(
         context: Context,
@@ -67,6 +70,11 @@ export class SyncManager {
     }
 
     public async handleSyncIndex(): Promise<void> {
+        if (this.isStopped) {
+            console.log('[SYNC-DEBUG] Skipping sync: background sync manager is stopped.');
+            return;
+        }
+
         const syncStartTime = Date.now();
         console.log(`[SYNC-DEBUG] handleSyncIndex() called at ${new Date().toISOString()}`);
 
@@ -243,10 +251,20 @@ export class SyncManager {
 
     public startBackgroundSync(): void {
         console.log('[SYNC-DEBUG] startBackgroundSync() called');
+        if (this.initialSyncTimer || this.periodicSyncTimer) {
+            console.log('[SYNC-DEBUG] Background sync already started. Skipping duplicate start request.');
+            return;
+        }
+        this.isStopped = false;
 
         // Execute initial sync immediately after a short delay to let server initialize
         console.log('[SYNC-DEBUG] Scheduling initial sync in 5 seconds...');
-        setTimeout(async () => {
+        this.initialSyncTimer = setTimeout(async () => {
+            this.initialSyncTimer = undefined;
+            if (this.isStopped) {
+                console.log('[SYNC-DEBUG] Initial sync timer fired after stop request. Skipping.');
+                return;
+            }
             console.log('[SYNC-DEBUG] Executing initial sync after server startup');
             try {
                 await this.handleSyncIndex();
@@ -263,11 +281,31 @@ export class SyncManager {
 
         // Periodically check for file changes and update the index
         console.log('[SYNC-DEBUG] Setting up periodic sync every 5 minutes (300000ms)');
-        const syncInterval = setInterval(() => {
+        this.periodicSyncTimer = setInterval(() => {
+            if (this.isStopped) {
+                console.log('[SYNC-DEBUG] Periodic sync tick observed after stop request. Skipping.');
+                return;
+            }
             console.log('[SYNC-DEBUG] Executing scheduled periodic sync');
-            this.handleSyncIndex();
+            void this.handleSyncIndex();
         }, 5 * 60 * 1000); // every 5 minutes
 
-        console.log('[SYNC-DEBUG] Background sync setup complete. Interval ID:', syncInterval);
+        console.log('[SYNC-DEBUG] Background sync setup complete. Interval ID:', this.periodicSyncTimer);
+    }
+
+    public stopBackgroundSync(): void {
+        this.isStopped = true;
+
+        if (this.initialSyncTimer) {
+            clearTimeout(this.initialSyncTimer);
+            this.initialSyncTimer = undefined;
+        }
+
+        if (this.periodicSyncTimer) {
+            clearInterval(this.periodicSyncTimer);
+            this.periodicSyncTimer = undefined;
+        }
+
+        console.log('[SYNC-DEBUG] Background sync timers stopped.');
     }
 } 

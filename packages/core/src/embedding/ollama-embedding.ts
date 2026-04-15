@@ -11,6 +11,19 @@ export interface OllamaEmbeddingConfig {
     maxTokens?: number; // Optional max tokens parameter
 }
 
+export class EmbeddingContextLimitError extends Error {
+    public readonly code = 'EMBEDDING_CONTEXT_LIMIT_EXCEEDED';
+    public readonly provider = 'Ollama';
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message);
+        this.name = 'EmbeddingContextLimitError';
+        if (options && 'cause' in options) {
+            (this as Error & { cause?: unknown }).cause = options.cause;
+        }
+    }
+}
+
 export class OllamaEmbedding extends Embedding {
     private client: Ollama;
     private config: OllamaEmbeddingConfig;
@@ -55,70 +68,22 @@ export class OllamaEmbedding extends Embedding {
     }
 
     async embed(text: string): Promise<EmbeddingVector> {
-        // Preprocess the text
         const processedText = this.preprocessText(text);
+        await this.ensureDimensionDetected();
 
-        // Detect dimension on first use if not configured
-        if (!this.dimensionDetected && !this.config.dimension) {
-            this.dimension = await this.detectDimension();
-            this.dimensionDetected = true;
-            console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
-        }
-
-        const embedOptions: any = {
-            model: this.config.model,
-            input: processedText,
-            options: this.config.options,
-        };
-
-        // Only include keep_alive if it has a valid value
-        if (this.config.keepAlive && this.config.keepAlive !== '') {
-            embedOptions.keep_alive = this.config.keepAlive;
-        }
-
-        const response = await this.client.embed(embedOptions);
-
-        if (!response.embeddings || !response.embeddings[0]) {
-            throw new Error('Ollama API returned invalid response');
-        }
-
+        const embedding = await this.embedProcessedSingle(processedText);
         return {
-            vector: response.embeddings[0],
+            vector: embedding,
             dimension: this.dimension
         };
     }
 
     async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
-        // Preprocess all texts
         const processedTexts = this.preprocessTexts(texts);
+        await this.ensureDimensionDetected();
 
-        // Detect dimension on first use if not configured
-        if (!this.dimensionDetected && !this.config.dimension) {
-            this.dimension = await this.detectDimension();
-            this.dimensionDetected = true;
-            console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
-        }
-
-        // Use Ollama's native batch embedding API
-        const embedOptions: any = {
-            model: this.config.model,
-            input: processedTexts, // Pass array directly to Ollama
-            options: this.config.options,
-        };
-
-        // Only include keep_alive if it has a valid value
-        if (this.config.keepAlive && this.config.keepAlive !== '') {
-            embedOptions.keep_alive = this.config.keepAlive;
-        }
-
-        const response = await this.client.embed(embedOptions);
-
-        if (!response.embeddings || !Array.isArray(response.embeddings)) {
-            throw new Error('Ollama API returned invalid batch response');
-        }
-
-        // Convert to EmbeddingVector format
-        return response.embeddings.map((embedding: number[]) => ({
+        const embeddings = await this.embedProcessedBatch(processedTexts);
+        return embeddings.map((embedding) => ({
             vector: embedding,
             dimension: this.dimension
         }));
@@ -195,22 +160,12 @@ export class OllamaEmbedding extends Embedding {
         return this.client;
     }
 
-    async detectDimension(testText: string = "test"): Promise<number> {
-        console.log(`[OllamaEmbedding] Detecting embedding dimension...`);
+    async detectDimension(testText: string = 'test'): Promise<number> {
+        console.log('[OllamaEmbedding] Detecting embedding dimension...');
 
         try {
             const processedText = this.preprocessText(testText);
-            const embedOptions: any = {
-                model: this.config.model,
-                input: processedText,
-                options: this.config.options,
-            };
-
-            if (this.config.keepAlive && this.config.keepAlive !== '') {
-                embedOptions.keep_alive = this.config.keepAlive;
-            }
-
-            const response = await this.client.embed(embedOptions);
+            const response = await this.client.embed(this.buildEmbedOptions(processedText));
 
             if (!response.embeddings || !response.embeddings[0]) {
                 throw new Error('Ollama API returned invalid response');
@@ -224,5 +179,111 @@ export class OllamaEmbedding extends Embedding {
             console.error(`[OllamaEmbedding] Failed to detect dimension: ${errorMessage}`);
             throw new Error(`Failed to detect Ollama embedding dimension: ${errorMessage}`);
         }
+    }
+
+    private async ensureDimensionDetected(): Promise<void> {
+        if (this.dimensionDetected || this.config.dimension) {
+            return;
+        }
+
+        this.dimension = await this.detectDimension();
+        this.dimensionDetected = true;
+        console.log(`[OllamaEmbedding] 📏 Detected Ollama embedding dimension: ${this.dimension} for model: ${this.config.model}`);
+    }
+
+    private buildEmbedOptions(input: string | string[]): any {
+        const embedOptions: any = {
+            model: this.config.model,
+            input,
+            options: this.config.options,
+        };
+
+        if (this.config.keepAlive && this.config.keepAlive !== '') {
+            embedOptions.keep_alive = this.config.keepAlive;
+        }
+
+        return embedOptions;
+    }
+
+    private async embedProcessedBatch(processedTexts: string[]): Promise<number[][]> {
+        try {
+            const response = await this.client.embed(this.buildEmbedOptions(processedTexts));
+            if (!response.embeddings || !Array.isArray(response.embeddings)) {
+                throw new Error('Ollama API returned invalid batch response');
+            }
+            if (response.embeddings.length !== processedTexts.length) {
+                throw new Error(
+                    `Ollama API returned ${response.embeddings.length} embeddings for ${processedTexts.length} inputs`
+                );
+            }
+            return response.embeddings as number[][];
+        } catch (error) {
+            if (!this.isContextLengthError(error)) {
+                throw error;
+            }
+
+            if (processedTexts.length === 1) {
+                return [await this.embedProcessedSingle(processedTexts[0])];
+            }
+
+            const midpoint = Math.ceil(processedTexts.length / 2);
+            console.warn(
+                `[OllamaEmbedding] Batch of ${processedTexts.length} inputs exceeded context length. ` +
+                `Retrying as ${midpoint} + ${processedTexts.length - midpoint}.`
+            );
+
+            const left = await this.embedProcessedBatch(processedTexts.slice(0, midpoint));
+            const right = await this.embedProcessedBatch(processedTexts.slice(midpoint));
+            return [...left, ...right];
+        }
+    }
+
+    private async embedProcessedSingle(processedText: string, attempt: number = 0): Promise<number[]> {
+        try {
+            const response = await this.client.embed(this.buildEmbedOptions(processedText));
+            if (!response.embeddings || !response.embeddings[0]) {
+                throw new Error('Ollama API returned invalid response');
+            }
+            return response.embeddings[0] as number[];
+        } catch (error) {
+            if (!this.isContextLengthError(error)) {
+                throw error;
+            }
+
+            const truncatedText = this.shrinkProcessedText(processedText);
+            if (truncatedText === processedText || attempt >= 8) {
+                throw new EmbeddingContextLimitError(
+                    `Ollama refused a single embedding input after ${attempt + 1} context-length retries.`,
+                    { cause: error }
+                );
+            }
+
+            console.warn(
+                `[OllamaEmbedding] Single input exceeded context length. ` +
+                `Retrying with ${truncatedText.length} chars (attempt ${attempt + 1}).`
+            );
+            return this.embedProcessedSingle(truncatedText, attempt + 1);
+        }
+    }
+
+    private shrinkProcessedText(processedText: string): string {
+        if (processedText.length <= 1) {
+            return processedText;
+        }
+
+        if (processedText.length <= 64) {
+            return processedText.slice(0, processedText.length - 1);
+        }
+
+        return processedText.slice(0, Math.max(64, Math.floor(processedText.length / 2)));
+    }
+
+    private isContextLengthError(error: unknown): boolean {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const normalizedMessage = errorMessage.toLowerCase();
+
+        return normalizedMessage.includes('context length')
+            || normalizedMessage.includes('input length exceeds')
+            || normalizedMessage.includes('prompt is too long');
     }
 }

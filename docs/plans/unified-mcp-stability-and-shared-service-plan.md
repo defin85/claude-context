@@ -64,19 +64,29 @@ Implemented on 2026-04-15:
     - bounded indexing/sync concurrency with a queue keyed by codebase identity;
     - separate bounded search concurrency;
     - interactive indexing requests are prioritized ahead of background sync work when both are queued;
+    - recently interactive repositories now get a bounded priority boost for queued background sync work;
+    - background sync retries now apply per-repository backoff instead of immediately competing for the indexing lane again after a failure;
     - queued indexing now keeps ownership heartbeat alive while waiting for an execution slot;
     - runtime status now records daemon workload state for active and queued jobs;
+  - graceful stop is now fail-closed for current-runtime indexing ownership:
+    - background sync timers are stopped during shutdown;
+    - any `indexing` entries still owned by the current runtime are proactively converted to `indexfailed` instead of waiting for a later stale-owner recovery pass;
+  - reproducible idle resource evidence now exists in-repo:
+    - `pnpm benchmark:daemon-idle` spins up one daemon runtime and a comparable one-subprocess-per-repo stdio set against temporary repositories and a temporary `HOME`, then measures idle `VmRSS` from `/proc/<pid>/status`;
+    - the benchmark uses a dedicated `MCP_BENCHMARK_IDLE_STUBS=1` startup mode so the measurement captures MCP runtime overhead rather than requiring live `Milvus`/embedding services;
+    - on 2026-04-15, the local benchmark with 3 simulated repositories measured `110308 KiB` total RSS for one daemon versus `330592 KiB` across 3 stdio runtimes, so daemon idle usage was lower by `66.6%`;
   - regression smoke now covers daemon runtime config parsing, daemon registry metadata, collision-safe runtime status writes, dedicated daemon state paths, allowlist rejection, queue ordering, queued indexing responses, and bounded search concurrency.
   - manual multi-repo daemon acceptance is now partially complete:
     - one live daemon runtime served `vk-turn-proxy`, `bsl-gradual-types`, and `codex-cli-profiles` concurrently;
     - while `bsl-gradual-types` held the single indexing lane, `vk-turn-proxy` remained searchable and a second `force` index request for `codex-cli-profiles` was queued instead of starting uncontrolled parallel indexing;
     - out-of-scope `/tmp` requests were rejected by the daemon allowlist, and runtime status published the expected active/queued job state.
+  - manual daemon restart acceptance is now complete:
+    - on an isolated temporary `HOME`, the daemon registry was recreated cleanly on restart and removed again on graceful shutdown;
+    - stale `indexing` ownership with a dead PID was recovered to explicit `indexfailed` state during startup snapshot load;
+    - persisted per-codebase `.vue` extension and ignore-pattern config survived restart-safe sync, and when the persisted config file was deleted the daemon reported an explicit degraded sync state instead of silently diverging.
 
 Still open after this slice:
 
-- queue backoff and richer repository-priority policy are not implemented yet;
-- daemon restart semantics and explicit stale-runtime recovery are not manually verified yet;
-- idle resource usage has not been compared yet against the one-subprocess-per-repo model;
 - daemon discovery, compatibility bridge, restart/admin workflows, and snapshot migration between workspace and daemon scopes remain deferred to later phases.
 
 ## Executive Summary
@@ -333,9 +343,10 @@ Goal: move from one-client-one-subprocess operation to one long-lived local runt
   - bounded queueing instead of uncontrolled parallel indexing;
   - unauthorized or out-of-scope path requests rejected by policy.
 - Verify daemon restart semantics:
-  - runtime registry is recreated cleanly;
-  - stale ownership is recovered correctly;
-  - persisted per-codebase sync configuration is preserved or explicit degraded state is reported.
+  - completed on 2026-04-15 against an isolated temporary `HOME` and temporary `.vue` repository:
+    - runtime registry was recreated cleanly;
+    - stale ownership was recovered correctly;
+    - persisted per-codebase sync configuration was preserved, and explicit degraded state was reported when that config was removed.
 
 ## Phase 4: Compatibility Layer and Operational Hardening
 

@@ -40,6 +40,26 @@ import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
 import { WorkloadManager } from './workload-manager.js';
 
+function isIdleBenchmarkStubModeEnabled(): boolean {
+    return process.env.MCP_BENCHMARK_IDLE_STUBS === '1';
+}
+
+function createIdleBenchmarkEmbeddingStub() {
+    return {
+        getProvider: () => 'idle-benchmark-stub',
+        getDimension: () => 1,
+        detectDimension: async () => 1,
+        embed: async () => ({ vector: [0], dimension: 1 }),
+        embedBatch: async (texts: string[]) => texts.map(() => ({ vector: [0], dimension: 1 }))
+    };
+}
+
+function createIdleBenchmarkVectorDatabaseStub() {
+    return {
+        hasCollection: async () => false
+    };
+}
+
 class ContextMcpServer {
     private readonly config: ContextMcpConfig;
     private readonly runtimeConfig: McpRuntimeConfig;
@@ -64,13 +84,26 @@ class ContextMcpServer {
         console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
         console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
 
-        const embedding = createEmbeddingInstance(config);
-        logEmbeddingProviderInfo(config, embedding);
+        const idleBenchmarkStubMode = isIdleBenchmarkStubModeEnabled();
+        if (idleBenchmarkStubMode) {
+            console.log('[BENCHMARK] Using idle benchmark stubs for embedding and vector database.');
+        }
 
-        const vectorDatabase = new MilvusVectorDatabase({
-            address: config.milvusAddress,
-            ...(config.milvusToken && { token: config.milvusToken })
-        });
+        let embedding: any;
+        if (idleBenchmarkStubMode) {
+            embedding = createIdleBenchmarkEmbeddingStub();
+            console.log('[BENCHMARK] Idle benchmark stub embedding initialized (dimension: 1).');
+        } else {
+            embedding = createEmbeddingInstance(config);
+            logEmbeddingProviderInfo(config, embedding);
+        }
+
+        const vectorDatabase: any = idleBenchmarkStubMode
+            ? createIdleBenchmarkVectorDatabaseStub()
+            : new MilvusVectorDatabase({
+                address: config.milvusAddress,
+                ...(config.milvusToken && { token: config.milvusToken })
+            });
 
         this.context = new Context({
             embedding,
@@ -547,7 +580,17 @@ This tool is versatile and can be used before completing various tasks to retrie
         }
         this.isClosed = true;
 
+        this.syncManager.stopBackgroundSync();
         this.daemonRegistryManager?.stopHeartbeat();
+
+        const shutdownErrorMessage = `MCP runtime shutdown interrupted indexing before completion.`;
+        const interruptedCodebases = await this.snapshotManager.failCurrentRuntimeOwnedIndexingCodebases(shutdownErrorMessage);
+        if (interruptedCodebases.length > 0) {
+            console.warn(
+                `[MCP] Marked ${interruptedCodebases.length} runtime-owned indexing job(s) as failed during shutdown: ` +
+                interruptedCodebases.join(', ')
+            );
+        }
 
         if (this.daemonHttpServer) {
             await new Promise<void>((resolve, reject) => {
