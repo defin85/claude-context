@@ -6,13 +6,17 @@ import { CodebaseSessionConfig, Context, COLLECTION_LIMIT_MESSAGE } from "@zilli
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
-import { ensureAbsolutePath, normalizeCodebasePath, truncateContent, trackCodebasePath } from "./utils.js";
+import { normalizeCodebasePath, truncateContent, trackCodebasePath } from "./utils.js";
+import { CodebaseAccessPolicy } from "./access-policy.js";
+import { WorkloadManager } from "./workload-manager.js";
 
 export class ToolHandlers {
     private context: Context;
     private snapshotManager: SnapshotManager;
     private codebaseConfigManager: CodebaseConfigManager;
     private runtimeStatusManager?: RuntimeStatusManager;
+    private accessPolicy: CodebaseAccessPolicy;
+    private workloadManager?: WorkloadManager;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
@@ -20,12 +24,16 @@ export class ToolHandlers {
         context: Context,
         snapshotManager: SnapshotManager,
         codebaseConfigManager: CodebaseConfigManager,
-        runtimeStatusManager?: RuntimeStatusManager
+        runtimeStatusManager?: RuntimeStatusManager,
+        accessPolicy: CodebaseAccessPolicy = new CodebaseAccessPolicy({ mode: 'stdio' }),
+        workloadManager?: WorkloadManager
     ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
         this.codebaseConfigManager = codebaseConfigManager;
         this.runtimeStatusManager = runtimeStatusManager;
+        this.accessPolicy = accessPolicy;
+        this.workloadManager = workloadManager;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
@@ -173,19 +181,20 @@ export class ToolHandlers {
         codebasePath: string,
         saveReason: string,
         indexStatus: 'completed' | 'limit_reached' = 'completed'
-    ): Promise<boolean> {
+    ): Promise<'restored-with-stats' | 'restored-without-stats' | 'skipped-live-owner'> {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const recoveredStats = await this.tryRecoverIndexStats(normalizedPath, indexStatus);
+        const restoreResult = await this.snapshotManager.restoreIndexedCodebaseFromCloud(
+            normalizedPath,
+            recoveredStats || undefined,
+            indexStatus
+        );
 
-        if (recoveredStats) {
-            this.snapshotManager.setCodebaseIndexed(normalizedPath, recoveredStats);
-        } else {
-            this.snapshotManager.setCodebaseIndexedWithoutStats(normalizedPath, indexStatus);
+        if (restoreResult !== 'skipped-live-owner') {
+            await this.runtimeStatusManager?.refresh(saveReason);
         }
 
-        await this.snapshotManager.saveCodebaseSnapshot(saveReason);
-        await this.runtimeStatusManager?.refresh(saveReason);
-        return recoveredStats !== null;
+        return restoreResult;
     }
 
     private createLostCollectionError(codebasePath: string) {
@@ -206,6 +215,23 @@ export class ToolHandlers {
         return `runtime=${owner.runtimeId}, pid=${owner.pid}, heartbeat=${owner.heartbeatAt}`;
     }
 
+    private createBlockedIndexingResponse(
+        codebasePath: string,
+        ownershipState: { state: string; currentOwner?: { runtimeId: string; pid: number; heartbeatAt: string } }
+    ) {
+        const ownerScope = ownershipState.state === 'owned-by-current-runtime'
+            ? 'this MCP runtime'
+            : 'another MCP runtime';
+
+        return {
+            content: [{
+                type: "text",
+                text: `Codebase '${codebasePath}' is already being indexed by ${ownerScope}. ${this.formatOwnerForMessage(ownershipState.currentOwner)}`
+            }],
+            isError: true
+        };
+    }
+
     private createPersistedSessionConfig(
         customExtensions: string[],
         customIgnorePatterns: string[]
@@ -213,6 +239,56 @@ export class ToolHandlers {
         return {
             customExtensions,
             customIgnorePatterns
+        };
+    }
+
+    private startOwnershipHeartbeat(codebasePath: string): { stop: () => void } {
+        const heartbeatIntervalMs = this.snapshotManager.getOwnershipHeartbeatIntervalMs();
+        const heartbeatTimer = setInterval(() => {
+            void this.snapshotManager.refreshIndexingOwnership(codebasePath).then((refreshed) => {
+                if (!refreshed) {
+                    console.warn(`[INDEX-OWNERSHIP] Heartbeat refresh lost ownership for '${codebasePath}'.`);
+                }
+            }).catch((error: any) => {
+                console.error(`[INDEX-OWNERSHIP] Heartbeat refresh failed for '${codebasePath}':`, error);
+            });
+        }, heartbeatIntervalMs);
+        heartbeatTimer.unref?.();
+
+        return {
+            stop: () => {
+                clearInterval(heartbeatTimer);
+            }
+        };
+    }
+
+    private createAccessDeniedResponse(absolutePath: string) {
+        const allowedRoots = this.accessPolicy.getAllowedRoots();
+        const allowedRootsSuffix = allowedRoots.length > 0
+            ? ` Allowed roots: ${allowedRoots.join(', ')}`
+            : '';
+
+        return {
+            content: [{
+                type: 'text',
+                text: `Error: Access to codebase '${absolutePath}' is outside the configured daemon allowlist.${allowedRootsSuffix}`
+            }],
+            isError: true
+        };
+    }
+
+    private enforceAccessPolicy(codebasePath: string) {
+        const decision = this.accessPolicy.evaluateCodebasePath(codebasePath);
+        if (!decision.allowed) {
+            return {
+                absolutePath: decision.absolutePath,
+                response: this.createAccessDeniedResponse(decision.absolutePath)
+            };
+        }
+
+        return {
+            absolutePath: decision.absolutePath,
+            response: null
         };
     }
 
@@ -360,7 +436,11 @@ export class ToolHandlers {
                 };
             }
             // Force absolute path resolution - warn if relative path provided
-            const absolutePath = ensureAbsolutePath(codebasePath);
+            const accessDecision = this.enforceAccessPolicy(codebasePath);
+            if (accessDecision.response) {
+                return accessDecision.response;
+            }
+            const absolutePath = accessDecision.absolutePath;
 
             // Validate path exists
             if (!fs.existsSync(absolutePath)) {
@@ -385,6 +465,11 @@ export class ToolHandlers {
                 };
             }
 
+            const ownershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
+            if (ownershipState.state === 'owned-by-current-runtime' || ownershipState.state === 'blocked-live-owner') {
+                return this.createBlockedIndexingResponse(absolutePath, ownershipState);
+            }
+
             const snapshotHasIndex = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
             const cloudHasIndex = await this.context.hasIndex(absolutePath);
             const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
@@ -393,14 +478,24 @@ export class ToolHandlers {
             if (snapshotHasIndex !== cloudHasIndex) {
                 console.warn(`[INDEX-VALIDATION] ❌ Snapshot and cloud index mismatch: ${absolutePath}`);
                 if (cloudHasIndex && !snapshotHasIndex) {
-                    const restoredStats = await this.restoreIndexedSnapshotEntry(
+                    const restoreResult = await this.restoreIndexedSnapshotEntry(
                         absolutePath,
                         'index-reconcile-cloud-present'
                     );
-                    console.log(
-                        `[INDEX-VALIDATION] 🛠️  Recovered missing snapshot entry from cloud index: ${absolutePath}` +
-                        (restoredStats ? ' (with recovered stats)' : '')
-                    );
+                    if (restoreResult === 'skipped-live-owner') {
+                        const latestOwnershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
+                        if (latestOwnershipState.state === 'owned-by-current-runtime' || latestOwnershipState.state === 'blocked-live-owner') {
+                            return this.createBlockedIndexingResponse(absolutePath, latestOwnershipState);
+                        }
+                        console.warn(
+                            `[INDEX-VALIDATION] Skipped cloud snapshot reconcile for '${absolutePath}' because live indexing ownership changed during the request.`
+                        );
+                    } else {
+                        console.log(
+                            `[INDEX-VALIDATION] 🛠️  Recovered missing snapshot entry from cloud index: ${absolutePath}` +
+                            (restoreResult === 'restored-with-stats' ? ' (with recovered stats)' : '')
+                        );
+                    }
                 } else if (!cloudHasIndex && snapshotHasIndex) {
                     this.snapshotManager.removeCodebaseCompletely(absolutePath);
                     await this.snapshotManager.saveCodebaseSnapshot('index-reconcile-cloud-missing');
@@ -510,8 +605,26 @@ export class ToolHandlers {
             trackCodebasePath(absolutePath);
             await this.runtimeStatusManager?.refresh('index-started');
 
-            // Start background indexing - now safe to proceed
-            this.startBackgroundIndexing(absolutePath, forceReindex, splitterType);
+            const ownershipHeartbeat = this.startOwnershipHeartbeat(absolutePath);
+            const runIndexingJob = async () => {
+                try {
+                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType);
+                } finally {
+                    ownershipHeartbeat.stop();
+                }
+            };
+
+            const queuedIndexingJob = this.workloadManager
+                ? this.workloadManager.enqueueInteractiveIndexing(absolutePath, runIndexingJob)
+                : {
+                    startedImmediately: true,
+                    queuePosition: 0,
+                    completion: runIndexingJob()
+                };
+
+            void queuedIndexingJob.completion.catch((error: any) => {
+                console.error(`[BACKGROUND-INDEX] Queued indexing task failed for '${absolutePath}':`, error?.message || error);
+            });
 
             const pathInfo = codebasePath !== absolutePath
                 ? `\nNote: Input path '${codebasePath}' was resolved to absolute path '${absolutePath}'`
@@ -525,10 +638,14 @@ export class ToolHandlers {
                 ? `\nUsing ${customIgnorePatterns.length} custom ignore patterns: ${customIgnorePatterns.join(', ')}`
                 : '';
 
+            const queueInfo = queuedIndexingJob.startedImmediately
+                ? `\nIndexing started immediately.`
+                : `\nIndexing request queued at position ${queuedIndexingJob.queuePosition}. Ownership is reserved in this runtime while the job waits for an indexing slot.`;
+
             return {
                 content: [{
                     type: "text",
-                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
+                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
                 }]
             };
 
@@ -562,15 +679,6 @@ export class ToolHandlers {
     private async startBackgroundIndexing(codebasePath: string, forceReindex: boolean, splitterType: string) {
         const absolutePath = codebasePath;
         let lastPersistedProgress = -1;
-        const heartbeatIntervalMs = this.snapshotManager.getOwnershipHeartbeatIntervalMs();
-        let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-        const stopHeartbeat = () => {
-            if (heartbeatTimer) {
-                clearInterval(heartbeatTimer);
-                heartbeatTimer = null;
-            }
-        };
 
         try {
             console.log(`[BACKGROUND-INDEX] Starting background indexing for: ${absolutePath}`);
@@ -618,17 +726,6 @@ export class ToolHandlers {
             const embeddingProvider = this.context.getEmbedding();
             console.log(`[BACKGROUND-INDEX] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} with dimension: ${embeddingProvider.getDimension()}`);
 
-            heartbeatTimer = setInterval(() => {
-                void this.snapshotManager.refreshIndexingOwnership(absolutePath).then((refreshed) => {
-                    if (!refreshed) {
-                        console.warn(`[INDEX-OWNERSHIP] Heartbeat refresh lost ownership for '${absolutePath}'.`);
-                    }
-                }).catch((error: any) => {
-                    console.error(`[INDEX-OWNERSHIP] Heartbeat refresh failed for '${absolutePath}':`, error);
-                });
-            }, heartbeatIntervalMs);
-            heartbeatTimer.unref?.();
-
             // Start indexing with the appropriate context and progress tracking
             console.log(`[BACKGROUND-INDEX] 🚀 Beginning codebase indexing process...`);
             const stats = await contextForThisTask.indexCodebase(absolutePath, (progress) => {
@@ -650,8 +747,6 @@ export class ToolHandlers {
                 console.log(`[BACKGROUND-INDEX] Progress: ${progress.phase} - ${progress.percentage}% (${progress.current}/${progress.total})`);
             });
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
-
-            stopHeartbeat();
             this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
 
             const completed = await this.snapshotManager.completeIndexingOwnership(absolutePath, stats);
@@ -668,7 +763,6 @@ export class ToolHandlers {
             console.log(`[BACKGROUND-INDEX] ${message}`);
 
         } catch (error: any) {
-            stopHeartbeat();
             console.error(`[BACKGROUND-INDEX] Error during indexing for ${absolutePath}:`, error);
 
             // Get the last attempted progress
@@ -689,121 +783,65 @@ export class ToolHandlers {
     public async handleSearchCode(args: any) {
         const { path: codebasePath, query, limit = 10, extensionFilter } = args;
         const resultLimit = limit || 10;
+        const executeSearch = async () => {
+            try {
+                // Sync indexed codebases from cloud first
+                await this.syncIndexedCodebasesFromCloud();
 
-        try {
-            // Sync indexed codebases from cloud first
-            await this.syncIndexedCodebasesFromCloud();
-
-            // Force absolute path resolution - warn if relative path provided
-            const absolutePath = ensureAbsolutePath(codebasePath);
-
-            // Validate path exists
-            if (!fs.existsSync(absolutePath)) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `Error: Path '${absolutePath}' does not exist. Original input: '${codebasePath}'`
-                    }],
-                    isError: true
-                };
-            }
-
-            // Check if it's a directory
-            const stat = fs.statSync(absolutePath);
-            if (!stat.isDirectory()) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `Error: Path '${absolutePath}' is not a directory`
-                    }],
-                    isError: true
-                };
-            }
-
-            trackCodebasePath(absolutePath);
-
-            // Check status with cloud as source of truth and snapshot as progress source
-            const isIndexedInSnapshot = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
-            const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
-            const hasCloudIndex = await this.context.hasIndex(absolutePath);
-
-            // Self-heal snapshot if index exists in cloud but local snapshot is missing
-            if (hasCloudIndex && !isIndexedInSnapshot && !isIndexing) {
-                const restoredStats = await this.restoreIndexedSnapshotEntry(
-                    absolutePath,
-                    'search-reconcile-cloud-present'
-                );
-                console.log(
-                    `[SEARCH] 🛠️ Restored missing snapshot entry from cloud index for: ${absolutePath}` +
-                    (restoredStats ? ' (with recovered stats)' : '')
-                );
-            }
-
-            if (!hasCloudIndex && isIndexedInSnapshot && !isIndexing) {
-                const collectionName = this.context.getCollectionName(absolutePath);
-                const hasCollection = await this.context.getVectorDatabase().hasCollection(collectionName);
-                if (!hasCollection) {
-                    return this.createLostCollectionError(absolutePath);
+                // Force absolute path resolution - warn if relative path provided
+                const accessDecision = this.enforceAccessPolicy(codebasePath);
+                if (accessDecision.response) {
+                    return accessDecision.response;
                 }
-            }
+                const absolutePath = accessDecision.absolutePath;
 
-            if (!hasCloudIndex && !isIndexing && !isIndexedInSnapshot) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `Error: Codebase '${absolutePath}' is not indexed. Please index it first using the index_codebase tool.`
-                    }],
-                    isError: true
-                };
-            }
-
-            // Show indexing status if codebase is being indexed
-            let indexingStatusMessage = '';
-            if (isIndexing) {
-                indexingStatusMessage = `\n⚠️  **Indexing in Progress**: This codebase is currently being indexed in the background. Search results may be incomplete until indexing completes.`;
-            }
-
-            console.log(`[SEARCH] Searching in codebase: ${absolutePath}`);
-            console.log(`[SEARCH] Query: "${query}"`);
-            console.log(`[SEARCH] Indexing status: ${isIndexing ? 'In Progress' : (hasCloudIndex ? 'Completed' : 'No collection yet')}`);
-
-            // Log embedding provider information before search
-            const embeddingProvider = this.context.getEmbedding();
-            console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
-            console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
-
-            // Build filter expression from extensionFilter list
-            let filterExpr: string | undefined = undefined;
-            if (Array.isArray(extensionFilter) && extensionFilter.length > 0) {
-                const cleaned = extensionFilter
-                    .filter((v: any) => typeof v === 'string')
-                    .map((v: string) => v.trim())
-                    .filter((v: string) => v.length > 0);
-                const invalid = cleaned.filter((e: string) => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
-                if (invalid.length > 0) {
+                // Validate path exists
+                if (!fs.existsSync(absolutePath)) {
                     return {
-                        content: [{ type: 'text', text: `Error: Invalid file extensions in extensionFilter: ${JSON.stringify(invalid)}. Use proper extensions like '.ts', '.py'.` }],
+                        content: [{
+                            type: "text",
+                            text: `Error: Path '${absolutePath}' does not exist. Original input: '${codebasePath}'`
+                        }],
                         isError: true
                     };
                 }
-                const quoted = cleaned.map((e: string) => `'${e}'`).join(', ');
-                filterExpr = `fileExtension in [${quoted}]`;
-            }
 
-            // Search in the specified codebase
-            const searchResults = await this.context.semanticSearch(
-                absolutePath,
-                query,
-                Math.min(resultLimit, 50),
-                0.3,
-                filterExpr
-            );
+                // Check if it's a directory
+                const stat = fs.statSync(absolutePath);
+                if (!stat.isDirectory()) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error: Path '${absolutePath}' is not a directory`
+                        }],
+                        isError: true
+                    };
+                }
 
-            console.log(`[SEARCH] ✅ Search completed! Found ${searchResults.length} results using ${embeddingProvider.getProvider()} embeddings`);
+                trackCodebasePath(absolutePath);
 
-            if (searchResults.length === 0) {
-                // Check if collection was lost (indexed locally but missing in Milvus)
-                if ((isIndexedInSnapshot || hasCloudIndex) && !isIndexing) {
+                // Check status with cloud as source of truth and snapshot as progress source
+                const isIndexedInSnapshot = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
+                const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
+                const hasCloudIndex = await this.context.hasIndex(absolutePath);
+
+                // Self-heal snapshot if index exists in cloud but local snapshot is missing
+                if (hasCloudIndex && !isIndexedInSnapshot && !isIndexing) {
+                    const restoreResult = await this.restoreIndexedSnapshotEntry(
+                        absolutePath,
+                        'search-reconcile-cloud-present'
+                    );
+                    if (restoreResult === 'skipped-live-owner') {
+                        console.log(`[SEARCH] ⏭️ Skipped cloud snapshot restore for '${absolutePath}' because a live owner is indexing.`);
+                    } else {
+                        console.log(
+                            `[SEARCH] 🛠️ Restored missing snapshot entry from cloud index for: ${absolutePath}` +
+                            (restoreResult === 'restored-with-stats' ? ' (with recovered stats)' : '')
+                        );
+                    }
+                }
+
+                if (!hasCloudIndex && isIndexedInSnapshot && !isIndexing) {
                     const collectionName = this.context.getCollectionName(absolutePath);
                     const hasCollection = await this.context.getVectorDatabase().hasCollection(collectionName);
                     if (!hasCollection) {
@@ -811,66 +849,140 @@ export class ToolHandlers {
                     }
                 }
 
-                let noResultsMessage = `No results found for query: "${query}" in codebase '${absolutePath}'`;
-                if (isIndexing) {
-                    noResultsMessage += `\n\nNote: This codebase is still being indexed. Try searching again after indexing completes, or the query may not match any indexed content.`;
+                if (!hasCloudIndex && !isIndexing && !isIndexedInSnapshot) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error: Codebase '${absolutePath}' is not indexed. Please index it first using the index_codebase tool.`
+                        }],
+                        isError: true
+                    };
                 }
+
+                // Show indexing status if codebase is being indexed
+                let indexingStatusMessage = '';
+                if (isIndexing) {
+                    indexingStatusMessage = `\n⚠️  **Indexing in Progress**: This codebase is currently being indexed in the background. Search results may be incomplete until indexing completes.`;
+                }
+
+                console.log(`[SEARCH] Searching in codebase: ${absolutePath}`);
+                console.log(`[SEARCH] Query: "${query}"`);
+                console.log(`[SEARCH] Indexing status: ${isIndexing ? 'In Progress' : (hasCloudIndex ? 'Completed' : 'No collection yet')}`);
+
+                // Log embedding provider information before search
+                const embeddingProvider = this.context.getEmbedding();
+                console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
+                console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
+
+                // Build filter expression from extensionFilter list
+                let filterExpr: string | undefined = undefined;
+                if (Array.isArray(extensionFilter) && extensionFilter.length > 0) {
+                    const cleaned = extensionFilter
+                        .filter((v: any) => typeof v === 'string')
+                        .map((v: string) => v.trim())
+                        .filter((v: string) => v.length > 0);
+                    const invalid = cleaned.filter((e: string) => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
+                    if (invalid.length > 0) {
+                        return {
+                            content: [{ type: 'text', text: `Error: Invalid file extensions in extensionFilter: ${JSON.stringify(invalid)}. Use proper extensions like '.ts', '.py'.` }],
+                            isError: true
+                        };
+                    }
+                    const quoted = cleaned.map((e: string) => `'${e}'`).join(', ');
+                    filterExpr = `fileExtension in [${quoted}]`;
+                }
+
+                // Search in the specified codebase
+                const searchResults = await this.context.semanticSearch(
+                    absolutePath,
+                    query,
+                    Math.min(resultLimit, 50),
+                    0.3,
+                    filterExpr
+                );
+
+                console.log(`[SEARCH] ✅ Search completed! Found ${searchResults.length} results using ${embeddingProvider.getProvider()} embeddings`);
+
+                if (searchResults.length === 0) {
+                    // Check if collection was lost (indexed locally but missing in Milvus)
+                    if ((isIndexedInSnapshot || hasCloudIndex) && !isIndexing) {
+                        const collectionName = this.context.getCollectionName(absolutePath);
+                        const hasCollection = await this.context.getVectorDatabase().hasCollection(collectionName);
+                        if (!hasCollection) {
+                            return this.createLostCollectionError(absolutePath);
+                        }
+                    }
+
+                    let noResultsMessage = `No results found for query: "${query}" in codebase '${absolutePath}'`;
+                    if (isIndexing) {
+                        noResultsMessage += `\n\nNote: This codebase is still being indexed. Try searching again after indexing completes, or the query may not match any indexed content.`;
+                    }
+                    return {
+                        content: [{
+                            type: "text",
+                            text: noResultsMessage
+                        }]
+                    };
+                }
+
+                // Format results
+                const formattedResults = searchResults.map((result: any, index: number) => {
+                    const location = `${result.relativePath}:${result.startLine}-${result.endLine}`;
+                    const context = truncateContent(result.content, 5000);
+                    const codebaseInfo = path.basename(absolutePath);
+
+                    return `${index + 1}. Code snippet (${result.language}) [${codebaseInfo}]\n` +
+                        `   Location: ${location}\n` +
+                        `   Rank: ${index + 1}\n` +
+                        `   Context: \n\`\`\`${result.language}\n${context}\n\`\`\`\n`;
+                }).join('\n');
+
+                let resultMessage = `Found ${searchResults.length} results for query: "${query}" in codebase '${absolutePath}'${indexingStatusMessage}\n\n${formattedResults}`;
+
+                if (isIndexing) {
+                    resultMessage += `\n\n💡 **Tip**: This codebase is still being indexed. More results may become available as indexing progresses.`;
+                }
+
                 return {
                     content: [{
                         type: "text",
-                        text: noResultsMessage
+                        text: resultMessage
                     }]
                 };
-            }
+            } catch (error) {
+                // Check if this is the collection limit error
+                // Handle both direct string throws and Error objects containing the message
+                const errorMessage = typeof error === 'string' ? error : (error instanceof Error ? error.message : String(error));
 
-            // Format results
-            const formattedResults = searchResults.map((result: any, index: number) => {
-                const location = `${result.relativePath}:${result.startLine}-${result.endLine}`;
-                const context = truncateContent(result.content, 5000);
-                const codebaseInfo = path.basename(absolutePath);
+                if (errorMessage === COLLECTION_LIMIT_MESSAGE || errorMessage.includes(COLLECTION_LIMIT_MESSAGE)) {
+                    // Return the collection limit message as a successful response
+                    // This ensures LLM treats it as final answer, not as retryable error
+                    return {
+                        content: [{
+                            type: "text",
+                            text: COLLECTION_LIMIT_MESSAGE
+                        }]
+                    };
+                }
 
-                return `${index + 1}. Code snippet (${result.language}) [${codebaseInfo}]\n` +
-                    `   Location: ${location}\n` +
-                    `   Rank: ${index + 1}\n` +
-                    `   Context: \n\`\`\`${result.language}\n${context}\n\`\`\`\n`;
-            }).join('\n');
-
-            let resultMessage = `Found ${searchResults.length} results for query: "${query}" in codebase '${absolutePath}'${indexingStatusMessage}\n\n${formattedResults}`;
-
-            if (isIndexing) {
-                resultMessage += `\n\n💡 **Tip**: This codebase is still being indexed. More results may become available as indexing progresses.`;
-            }
-
-            return {
-                content: [{
-                    type: "text",
-                    text: resultMessage
-                }]
-            };
-        } catch (error) {
-            // Check if this is the collection limit error
-            // Handle both direct string throws and Error objects containing the message
-            const errorMessage = typeof error === 'string' ? error : (error instanceof Error ? error.message : String(error));
-
-            if (errorMessage === COLLECTION_LIMIT_MESSAGE || errorMessage.includes(COLLECTION_LIMIT_MESSAGE)) {
-                // Return the collection limit message as a successful response
-                // This ensures LLM treats it as final answer, not as retryable error
                 return {
                     content: [{
                         type: "text",
-                        text: COLLECTION_LIMIT_MESSAGE
-                    }]
+                        text: `Error searching code: ${errorMessage} Please check if the codebase has been indexed first.`
+                    }],
+                    isError: true
                 };
             }
+        };
 
-            return {
-                content: [{
-                    type: "text",
-                    text: `Error searching code: ${errorMessage} Please check if the codebase has been indexed first.`
-                }],
-                isError: true
-            };
+        if (!this.workloadManager) {
+            return executeSearch();
         }
+
+        const searchCodebasePath = typeof codebasePath === 'string' && codebasePath.length > 0
+            ? codebasePath
+            : this.currentWorkspace;
+        return this.workloadManager.runSearch(searchCodebasePath, executeSearch);
     }
 
     public async handleClearIndex(args: any) {
@@ -878,7 +990,11 @@ export class ToolHandlers {
 
         try {
             // Force absolute path resolution - warn if relative path provided
-            const absolutePath = ensureAbsolutePath(codebasePath);
+            const accessDecision = this.enforceAccessPolicy(codebasePath);
+            if (accessDecision.response) {
+                return accessDecision.response;
+            }
+            const absolutePath = accessDecision.absolutePath;
 
             // Validate path exists
             if (!fs.existsSync(absolutePath)) {
@@ -903,13 +1019,15 @@ export class ToolHandlers {
                 };
             }
 
-            // Check if this codebase is indexed or being indexed
-            const isIndexed = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
-            const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
+            // Check if this codebase is indexed, indexing, or otherwise tracked in the snapshot.
+            const snapshotStatus = this.snapshotManager.getCodebaseStatus(absolutePath);
+            const isIndexed = snapshotStatus === 'indexed';
+            const isIndexing = snapshotStatus === 'indexing';
+            const hasTrackedSnapshotState = snapshotStatus !== 'not_found';
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
             const ownershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
 
-            if (!isIndexed && !isIndexing && !hasCloudIndex) {
+            if (!hasTrackedSnapshotState && !hasCloudIndex) {
                 return {
                     content: [{
                         type: "text",
@@ -1021,7 +1139,11 @@ export class ToolHandlers {
 
         try {
             // Force absolute path resolution
-            const absolutePath = ensureAbsolutePath(codebasePath);
+            const accessDecision = this.enforceAccessPolicy(codebasePath);
+            if (accessDecision.response) {
+                return accessDecision.response;
+            }
+            const absolutePath = accessDecision.absolutePath;
 
             // Validate path exists
             if (!fs.existsSync(absolutePath)) {
@@ -1055,17 +1177,23 @@ export class ToolHandlers {
 
             // Self-heal snapshot if cloud has index but local status is missing
             if (status === 'not_found' && hasCloudIndex) {
-                const restoredStats = await this.restoreIndexedSnapshotEntry(
+                const restoreResult = await this.restoreIndexedSnapshotEntry(
                     absolutePath,
                     'status-reconcile-cloud-present'
                 );
-                status = 'indexed';
-                info = this.snapshotManager.getCodebaseInfo(absolutePath);
-                recoveredFromCloud = true;
-                console.log(
-                    `[STATUS] 🛠️ Restored missing snapshot entry from cloud index for: ${absolutePath}` +
-                    (restoredStats ? ' (with recovered stats)' : '')
-                );
+                if (restoreResult === 'skipped-live-owner') {
+                    status = this.snapshotManager.getCodebaseStatus(absolutePath);
+                    info = this.snapshotManager.getCodebaseInfo(absolutePath);
+                    console.log(`[STATUS] ⏭️ Skipped cloud snapshot restore for '${absolutePath}' because a live owner is indexing.`);
+                } else {
+                    status = 'indexed';
+                    info = this.snapshotManager.getCodebaseInfo(absolutePath);
+                    recoveredFromCloud = true;
+                    console.log(
+                        `[STATUS] 🛠️ Restored missing snapshot entry from cloud index for: ${absolutePath}` +
+                        (restoreResult === 'restored-with-stats' ? ' (with recovered stats)' : '')
+                    );
+                }
             }
 
             // Cleanup stale snapshot entries if cloud index no longer exists

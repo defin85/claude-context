@@ -20,12 +20,16 @@ import type {
     VectorSearchResult
 } from '../packages/core/src/vectordb/types.ts';
 import { CodebaseConfigManager } from '../packages/mcp/src/codebase-config.ts';
+import { CodebaseAccessPolicy } from '../packages/mcp/src/access-policy.ts';
 import type { CodebaseSnapshotV2 } from '../packages/mcp/src/config.ts';
+import { createMcpRuntimeConfig } from '../packages/mcp/src/config.ts';
+import { DaemonRegistryManager } from '../packages/mcp/src/daemon-registry.ts';
 import { ToolHandlers } from '../packages/mcp/src/handlers.ts';
 import { RuntimeStatusManager } from '../packages/mcp/src/runtime-status.ts';
 import { SnapshotManager } from '../packages/mcp/src/snapshot.ts';
 import type { IndexingOwnershipClaimResult } from '../packages/mcp/src/snapshot.ts';
 import { SyncManager } from '../packages/mcp/src/sync.ts';
+import { WorkloadManager } from '../packages/mcp/src/workload-manager.ts';
 
 type Sandbox = {
     rootDir: string;
@@ -54,6 +58,10 @@ function getRuntimeStatusPath(homeDir: string): string {
 
 function createCodebaseConfigManager(workspaceDir: string): CodebaseConfigManager {
     return new CodebaseConfigManager({ workspacePath: workspaceDir });
+}
+
+function createDaemonCodebaseConfigManager(workspaceDir: string): CodebaseConfigManager {
+    return new CodebaseConfigManager({ workspacePath: workspaceDir, scope: 'daemon' });
 }
 
 function createWorkspaceFolder(fsPath: string, name: string = path.basename(fsPath)) {
@@ -758,6 +766,9 @@ async function main(): Promise<void> {
             snapshot.codebases[codebaseDir].lastUpdated = '2020-01-01T00:00:00.000Z';
             await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 
+            const restartedManager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-stale-seed' });
+            restartedManager.loadCodebaseSnapshot();
+
             const vectorDb = {
                 listCollections: async () => [],
                 checkCollectionLimit: async () => true,
@@ -771,14 +782,50 @@ async function main(): Promise<void> {
                 configureCodebaseSession: () => undefined
             };
 
-            const handlers = new ToolHandlers(context as any, manager, createCodebaseConfigManager(workspaceDir));
+            const handlers = new ToolHandlers(context as any, restartedManager, createCodebaseConfigManager(workspaceDir));
             (handlers as any).startBackgroundIndexing = () => undefined;
 
             const response = await handlers.handleIndexCodebase({ path: codebaseDir, force: true });
 
             assert.notEqual(response.isError, true);
             assert.match(getResponseText(response), /Started background indexing/);
-            assert.equal(manager.getCodebaseStatus(codebaseDir), 'indexing');
+            assert.equal(restartedManager.getCodebaseStatus(codebaseDir), 'indexing');
+        });
+    });
+
+    await runCheck('handleIndexCodebase refuses force reindex while another runtime owns live indexing even when cloud index exists', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir }) => {
+            const ownerManager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-owner' });
+            const contenderManager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-contender' });
+
+            const ownerClaim = await ownerManager.acquireIndexingOwnership(codebaseDir, 12);
+            assert.equal(ownerClaim.acquired, true);
+
+            const vectorDb = {
+                listCollections: async () => [],
+                checkCollectionLimit: async () => true,
+                query: async () => [],
+                getCollectionDescription: async () => ''
+            };
+            const context = {
+                getVectorDatabase: () => vectorDb,
+                hasIndex: async () => true,
+                clearIndex: async () => undefined,
+                configureCodebaseSession: () => undefined,
+                getCollectionName: () => 'stub_collection'
+            };
+
+            const handlers = new ToolHandlers(context as any, contenderManager, createCodebaseConfigManager(workspaceDir));
+            (handlers as any).startBackgroundIndexing = () => undefined;
+
+            const response = await handlers.handleIndexCodebase({ path: codebaseDir, force: true });
+
+            assert.equal(response.isError, true);
+            assert.match(getResponseText(response), /already being indexed by another MCP runtime/);
+
+            const inspection = await ownerManager.inspectIndexingOwnership(codebaseDir);
+            assert.equal(inspection.state, 'owned-by-current-runtime');
+            assert.equal(inspection.currentOwner?.runtimeId, 'runtime-owner');
         });
     });
 
@@ -895,6 +942,35 @@ async function main(): Promise<void> {
         });
     });
 
+    await runCheck('clear_index removes snapshot-only failed codebase state when no cloud index exists', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir }) => {
+            const manager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-clear-failed' });
+            manager.setCodebaseIndexFailed(codebaseDir, 'simulated failure', 0);
+            await manager.saveCodebaseSnapshot('seed-clear-failed');
+
+            const configManager = createCodebaseConfigManager(workspaceDir);
+            await configManager.saveConfig(codebaseDir, {
+                customExtensions: ['.bsl'],
+                customIgnorePatterns: ['tmp/**']
+            });
+
+            const handlers = new ToolHandlers(
+                {
+                    hasIndex: async () => false
+                } as any,
+                manager,
+                configManager
+            );
+
+            const response = await handlers.handleClearIndex({ path: codebaseDir });
+
+            assert.notEqual(response.isError, true);
+            assert.match(getResponseText(response), /Successfully cleared codebase/);
+            assert.equal(manager.getCodebaseStatus(codebaseDir), 'not_found');
+            assert.equal(await configManager.hasConfig(codebaseDir), false);
+        });
+    });
+
     await runCheck('runtime status file records process metadata and known codebases', async () => {
         await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
             const manager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-status' });
@@ -916,6 +992,317 @@ async function main(): Promise<void> {
             assert.equal(payload.knownCodebases.length, 1);
             assert.equal(payload.knownCodebases[0].path, codebaseDir);
             assert.equal(payload.knownCodebases[0].info.status, 'indexed');
+        });
+    });
+
+    await runCheck('runtime status refresh uses collision-safe temp files under concurrent writes', async () => {
+        await withSandbox(async ({ homeDir, workspaceDir }) => {
+            const manager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-status-race' });
+            const runtimeStatus = new RuntimeStatusManager({
+                runtimeId: manager.getRuntimeId(),
+                workspacePath: workspaceDir,
+                snapshotManager: manager
+            });
+
+            await Promise.all([
+                runtimeStatus.refresh('concurrent-a'),
+                runtimeStatus.refresh('concurrent-b'),
+                runtimeStatus.refresh('concurrent-c')
+            ]);
+
+            const payload = JSON.parse(await fs.readFile(getRuntimeStatusPath(homeDir), 'utf8'));
+            assert.equal(payload.runtimeId, 'runtime-status-race');
+            assert.match(payload.reason, /^concurrent-/);
+        });
+    });
+
+    await runCheck('daemon runtime config requires explicit allow roots and normalizes daemon options', async () => {
+        await withSandbox(async ({ codebaseDir }) => {
+            const previousMode = process.env.MCP_RUNTIME_MODE;
+            const previousRoots = process.env.MCP_DAEMON_ALLOW_ROOTS;
+            const previousToken = process.env.MCP_DAEMON_TOKEN;
+
+            try {
+                delete process.env.MCP_RUNTIME_MODE;
+                delete process.env.MCP_DAEMON_ALLOW_ROOTS;
+                delete process.env.MCP_DAEMON_TOKEN;
+
+                assert.throws(
+                    () => createMcpRuntimeConfig(['--mode', 'daemon']),
+                    /requires at least one allowed root/
+                );
+
+                const runtimeConfig = createMcpRuntimeConfig([
+                    '--mode', 'daemon',
+                    '--allow-root', `${codebaseDir}/../repo`,
+                    '--daemon-token', 'daemon-secret'
+                ]);
+
+                assert.equal(runtimeConfig.mode, 'daemon');
+                assert.equal(runtimeConfig.daemon?.host, '127.0.0.1');
+                assert.equal(runtimeConfig.daemon?.endpointPath, '/mcp');
+                assert.deepEqual(runtimeConfig.daemon?.allowRoots, [codebaseDir]);
+                assert.equal(runtimeConfig.daemon?.bearerToken, 'daemon-secret');
+                assert.equal(runtimeConfig.daemon?.generatedBearerToken, false);
+            } finally {
+                if (previousMode === undefined) {
+                    delete process.env.MCP_RUNTIME_MODE;
+                } else {
+                    process.env.MCP_RUNTIME_MODE = previousMode;
+                }
+
+                if (previousRoots === undefined) {
+                    delete process.env.MCP_DAEMON_ALLOW_ROOTS;
+                } else {
+                    process.env.MCP_DAEMON_ALLOW_ROOTS = previousRoots;
+                }
+
+                if (previousToken === undefined) {
+                    delete process.env.MCP_DAEMON_TOKEN;
+                } else {
+                    process.env.MCP_DAEMON_TOKEN = previousToken;
+                }
+            }
+        });
+    });
+
+    await runCheck('daemon registry writes endpoint metadata without exposing bearer token', async () => {
+        await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
+            const snapshotManager = new SnapshotManager({
+                workspacePath: workspaceDir,
+                scope: 'daemon',
+                saveDebounceMs: 0,
+                runtimeId: 'daemon-runtime'
+            });
+            const runtimeStatusManager = new RuntimeStatusManager({
+                runtimeId: 'daemon-runtime',
+                workspacePath: workspaceDir,
+                snapshotManager,
+                mode: 'daemon',
+                daemon: {
+                    host: '127.0.0.1',
+                    port: 39393,
+                    endpointPath: '/mcp',
+                    allowedRoots: [codebaseDir],
+                    tokenSha256: 'sha256-value'
+                }
+            });
+
+            await runtimeStatusManager.refresh('daemon-registry-test');
+
+            const registryManager = new DaemonRegistryManager({
+                runtimeId: 'daemon-runtime',
+                host: '127.0.0.1',
+                port: 39393,
+                endpointPath: '/mcp',
+                allowedRoots: [codebaseDir],
+                tokenSha256: 'sha256-value',
+                runtimeStatusFilePath: runtimeStatusManager.getRuntimeStatusFilePath(),
+                snapshotFilePath: snapshotManager.getSnapshotFilePath()
+            });
+
+            await registryManager.refresh();
+
+            const registryPayload = await readJsonFile<any>(registryManager.getRegistryFilePath());
+            assert.equal(registryPayload.transport, 'streamable-http');
+            assert.equal(registryPayload.endpointUrl, 'http://127.0.0.1:39393/mcp');
+            assert.equal(registryPayload.auth.tokenSha256, 'sha256-value');
+            assert.deepEqual(registryPayload.allowedRoots, [codebaseDir]);
+            assert.equal(JSON.stringify(registryPayload).includes('daemon-secret'), false);
+
+            await registryManager.remove();
+            await assert.rejects(fs.access(registryManager.getRegistryFilePath()));
+            assert.equal(path.dirname(registryManager.getRegistryFilePath()), path.join(homeDir, '.context', 'mcp', 'daemon', 'registry'));
+        });
+    });
+
+    await runCheck('daemon storage scope uses dedicated snapshot and per-codebase config paths', async () => {
+        await withSandbox(async ({ homeDir, workspaceDir, codebaseDir }) => {
+            const snapshotManager = new SnapshotManager({
+                workspacePath: workspaceDir,
+                scope: 'daemon',
+                saveDebounceMs: 0
+            });
+            snapshotManager.setCodebaseIndexedWithoutStats(codebaseDir);
+            await snapshotManager.saveCodebaseSnapshot('daemon-scope-seed');
+
+            const configManager = createDaemonCodebaseConfigManager(workspaceDir);
+            await configManager.saveConfig(codebaseDir, {
+                customExtensions: ['.vue'],
+                customIgnorePatterns: ['docs/**']
+            });
+
+            assert.equal(
+                snapshotManager.getSnapshotFilePath(),
+                path.join(homeDir, '.context', 'mcp', 'daemon', 'mcp-codebase-snapshot.json')
+            );
+
+            const daemonConfigDir = path.join(homeDir, '.context', 'mcp', 'daemon', 'codebase-session-config');
+            const configEntries = await fs.readdir(daemonConfigDir);
+            assert.equal(configEntries.length, 1);
+        });
+    });
+
+    await runCheck('daemon path allowlist rejects out-of-scope tool requests fail-closed', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir, outsideCodebaseDir }) => {
+            const manager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0 });
+            const handlers = new ToolHandlers(
+                {
+                    hasIndex: async () => false
+                } as any,
+                manager,
+                createCodebaseConfigManager(workspaceDir),
+                undefined,
+                new CodebaseAccessPolicy({
+                    mode: 'daemon',
+                    allowedRoots: [codebaseDir]
+                })
+            );
+
+            const response = await handlers.handleGetIndexingStatus({ path: outsideCodebaseDir });
+
+            assert.equal(response.isError, true);
+            assert.match(getResponseText(response), /outside the configured daemon allowlist/);
+            assert.match(getResponseText(response), new RegExp(codebaseDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        });
+    });
+
+    await runCheck('WorkloadManager queues indexing jobs with interactive priority ahead of background sync', async () => {
+        const workloadManager = new WorkloadManager({
+            mode: 'daemon',
+            maxIndexingConcurrency: 1,
+            maxSearchConcurrency: 2
+        });
+
+        let releaseFirst!: () => void;
+        const firstCompletion = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+
+        const executionOrder: string[] = [];
+        const firstTask = workloadManager.enqueueInteractiveIndexing('/repo/first', async () => {
+            executionOrder.push('first-start');
+            await firstCompletion;
+            executionOrder.push('first-finish');
+        });
+
+        const backgroundSync = workloadManager.runBackgroundSync('/repo/sync', async () => {
+            executionOrder.push('sync-run');
+        });
+        const interactiveQueued = workloadManager.enqueueInteractiveIndexing('/repo/interactive', async () => {
+            executionOrder.push('interactive-run');
+        });
+
+        assert.equal(firstTask.startedImmediately, true);
+        assert.equal(interactiveQueued.startedImmediately, false);
+        assert.equal(interactiveQueued.queuePosition, 1);
+
+        const queuedBeforeRelease = workloadManager.getSnapshot().indexing.queuedJobs.map((job) => job.type);
+        assert.deepEqual(queuedBeforeRelease, ['interactive-index', 'background-sync']);
+
+        releaseFirst();
+        await firstTask.completion;
+        await interactiveQueued.completion;
+        await backgroundSync;
+
+        assert.deepEqual(executionOrder, ['first-start', 'first-finish', 'interactive-run', 'sync-run']);
+    });
+
+    await runCheck('WorkloadManager enforces bounded search concurrency', async () => {
+        const workloadManager = new WorkloadManager({
+            mode: 'daemon',
+            maxIndexingConcurrency: 1,
+            maxSearchConcurrency: 1
+        });
+
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+
+        let concurrentSearches = 0;
+        let maxConcurrentSearches = 0;
+        const searchEvents: string[] = [];
+
+        const firstSearch = workloadManager.runSearch('/repo/a', async () => {
+            concurrentSearches += 1;
+            maxConcurrentSearches = Math.max(maxConcurrentSearches, concurrentSearches);
+            searchEvents.push('search-1-start');
+            await firstGate;
+            searchEvents.push('search-1-finish');
+            concurrentSearches -= 1;
+        });
+
+        const secondSearch = workloadManager.runSearch('/repo/b', async () => {
+            concurrentSearches += 1;
+            maxConcurrentSearches = Math.max(maxConcurrentSearches, concurrentSearches);
+            searchEvents.push('search-2-start');
+            concurrentSearches -= 1;
+        });
+
+        await flushAsyncWork();
+        assert.equal(workloadManager.getSnapshot().search.activeCount, 1);
+        assert.equal(workloadManager.getSnapshot().search.queuedCount, 1);
+
+        releaseFirst();
+        await firstSearch;
+        await secondSearch;
+
+        assert.equal(maxConcurrentSearches, 1);
+        assert.deepEqual(searchEvents, ['search-1-start', 'search-1-finish', 'search-2-start']);
+    });
+
+    await runCheck('daemon index_codebase returns queued response when indexing lane is busy', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir, outsideCodebaseDir }) => {
+            const snapshotManager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0, runtimeId: 'runtime-daemon-queue' });
+            const workloadManager = new WorkloadManager({
+                mode: 'daemon',
+                maxIndexingConcurrency: 1,
+                maxSearchConcurrency: 2
+            });
+
+            let releaseExisting!: () => void;
+            const existingGate = new Promise<void>((resolve) => {
+                releaseExisting = resolve;
+            });
+            const existingTask = workloadManager.enqueueInteractiveIndexing(codebaseDir, async () => {
+                await existingGate;
+            });
+
+            const vectorDb = {
+                listCollections: async () => [],
+                checkCollectionLimit: async () => true,
+                query: async () => [],
+                getCollectionDescription: async () => ''
+            };
+            const context = {
+                getVectorDatabase: () => vectorDb,
+                hasIndex: async () => false,
+                clearIndex: async () => undefined,
+                configureCodebaseSession: () => undefined
+            };
+
+            const handlers = new ToolHandlers(
+                context as any,
+                snapshotManager,
+                createCodebaseConfigManager(workspaceDir),
+                undefined,
+                new CodebaseAccessPolicy({
+                    mode: 'daemon',
+                    allowedRoots: [codebaseDir, outsideCodebaseDir]
+                }),
+                workloadManager
+            );
+            (handlers as any).startBackgroundIndexing = async () => undefined;
+
+            const response = await handlers.handleIndexCodebase({ path: outsideCodebaseDir, force: true });
+
+            assert.notEqual(response.isError, true);
+            assert.match(getResponseText(response), /queued at position 1/);
+            assert.equal(snapshotManager.getCodebaseStatus(outsideCodebaseDir), 'indexing');
+
+            releaseExisting();
+            await existingTask.completion;
         });
     });
 
@@ -1078,6 +1465,43 @@ async function main(): Promise<void> {
             assert.equal(snapshotManager.getCodebaseStatus(codebaseDir), 'indexed');
             assert.equal(configureCalls, 1);
             assert.equal(reindexCalls, 1);
+        });
+    });
+
+    await runCheck('SyncManager does not self-heal over active local indexing state', async () => {
+        await withSandbox(async ({ workspaceDir, codebaseDir }) => {
+            const snapshotManager = new SnapshotManager({ workspacePath: workspaceDir, saveDebounceMs: 0 });
+            const configManager = createCodebaseConfigManager(workspaceDir);
+            await configManager.saveConfig(codebaseDir, {
+                customExtensions: ['.vue'],
+                customIgnorePatterns: ['alpha/**']
+            });
+
+            const ownership = await snapshotManager.acquireIndexingOwnership(codebaseDir, 12);
+            assert.equal(ownership.acquired, true);
+            await snapshotManager.saveCodebaseSnapshot('seed-active-indexing-self-heal-guard');
+
+            let configureCalls = 0;
+            let reindexCalls = 0;
+            const context = {
+                hasIndex: async (candidatePath: string) => candidatePath === codebaseDir,
+                configureCodebaseSession: () => {
+                    configureCalls += 1;
+                },
+                getLoadedIgnorePatterns: async () => undefined,
+                reindexByChange: async () => {
+                    reindexCalls += 1;
+                    return { added: 0, removed: 0, modified: 0 };
+                }
+            };
+
+            const syncManager = new SyncManager(context as any, snapshotManager, configManager);
+            await syncManager.handleSyncIndex();
+
+            assert.equal(snapshotManager.getCodebaseStatus(codebaseDir), 'indexing');
+            assert.equal(snapshotManager.getIndexedCodebases().length, 0);
+            assert.equal(configureCalls, 0);
+            assert.equal(reindexCalls, 0);
         });
     });
 

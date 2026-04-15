@@ -3,24 +3,28 @@ import { Context, FileSynchronizer } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager, RuntimeSyncCodebaseResult } from "./runtime-status.js";
+import { WorkloadManager } from "./workload-manager.js";
 
 export class SyncManager {
     private context: Context;
     private snapshotManager: SnapshotManager;
     private codebaseConfigManager: CodebaseConfigManager;
     private runtimeStatusManager?: RuntimeStatusManager;
+    private workloadManager?: WorkloadManager;
     private isSyncing: boolean = false;
 
     constructor(
         context: Context,
         snapshotManager: SnapshotManager,
         codebaseConfigManager: CodebaseConfigManager,
-        runtimeStatusManager?: RuntimeStatusManager
+        runtimeStatusManager?: RuntimeStatusManager,
+        workloadManager?: WorkloadManager
     ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
         this.codebaseConfigManager = codebaseConfigManager;
         this.runtimeStatusManager = runtimeStatusManager;
+        this.workloadManager = workloadManager;
     }
 
     private async recoverIndexedCodebasesFromPersistedConfig(): Promise<string[]> {
@@ -70,6 +74,13 @@ export class SyncManager {
         const codebaseResults: RuntimeSyncCodebaseResult[] = [];
 
         if (indexedCodebases.length === 0) {
+            if (this.snapshotManager.hasTrackedCodebases()) {
+                const skipReason = 'no indexed codebases present, but snapshot already tracks local state; refusing self-heal';
+                console.log(`[SYNC-DEBUG] Skipping sync: ${skipReason}`);
+                await this.runtimeStatusManager?.markSyncSkipped(skipReason);
+                return;
+            }
+
             indexedCodebases = await this.recoverIndexedCodebasesFromPersistedConfig();
             if (indexedCodebases.length === 0) {
                 const skipReason = 'no indexed codebases present in snapshot and snapshot self-heal found no cloud-backed candidates';
@@ -143,7 +154,9 @@ export class SyncManager {
                     await this.context.getLoadedIgnorePatterns(codebasePath);
 
                     console.log(`[SYNC-DEBUG] Calling context.reindexByChange() for '${codebasePath}'`);
-                    const stats = await this.context.reindexByChange(codebasePath);
+                    const stats = this.workloadManager
+                        ? await this.workloadManager.runBackgroundSync(codebasePath, () => this.context.reindexByChange(codebasePath))
+                        : await this.context.reindexByChange(codebasePath);
                     const codebaseElapsed = Date.now() - codebaseStartTime;
 
                     console.log(`[SYNC-DEBUG] Reindex stats for '${codebasePath}':`, stats);

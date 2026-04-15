@@ -2,9 +2,6 @@
 
 // CRITICAL: Redirect console outputs to stderr IMMEDIATELY to avoid interfering with MCP JSON protocol
 // Only MCP protocol messages should go to stdout
-const originalConsoleLog = console.log;
-const originalConsoleWarn = console.warn;
-
 console.log = (...args: any[]) => {
     process.stderr.write('[LOG] ' + args.join(' ') + '\n');
 };
@@ -13,42 +10,159 @@ console.warn = (...args: any[]) => {
     process.stderr.write('[WARN] ' + args.join(' ') + '\n');
 };
 
-// console.error already goes to stderr by default
-
-import * as crypto from "crypto";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as crypto from 'node:crypto';
+import * as http from 'node:http';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
     ListToolsRequestSchema,
     CallToolRequestSchema
-} from "@modelcontextprotocol/sdk/types.js";
-import { Context } from "@zilliz/claude-context-core";
-import { MilvusVectorDatabase } from "@zilliz/claude-context-core";
+} from '@modelcontextprotocol/sdk/types.js';
+import { Context, MilvusVectorDatabase } from '@zilliz/claude-context-core';
 
-// Import our modular components
-import { createMcpConfig, logConfigurationSummary, showHelpMessage, ContextMcpConfig } from "./config.js";
-import { createEmbeddingInstance, logEmbeddingProviderInfo } from "./embedding.js";
-import { CodebaseConfigManager } from "./codebase-config.js";
-import { SnapshotManager } from "./snapshot.js";
-import { SyncManager } from "./sync.js";
-import { ToolHandlers } from "./handlers.js";
-import { RuntimeStatusManager } from "./runtime-status.js";
+import { CodebaseAccessPolicy } from './access-policy.js';
+import { CodebaseConfigManager } from './codebase-config.js';
+import {
+    createMcpConfig,
+    createMcpRuntimeConfig,
+    ContextMcpConfig,
+    logConfigurationSummary,
+    logRuntimeConfigurationSummary,
+    McpRuntimeConfig,
+    showHelpMessage
+} from './config.js';
+import { DaemonRegistryManager } from './daemon-registry.js';
+import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
+import { ToolHandlers } from './handlers.js';
+import { RuntimeStatusManager } from './runtime-status.js';
+import { SnapshotManager } from './snapshot.js';
+import { SyncManager } from './sync.js';
+import { WorkloadManager } from './workload-manager.js';
 
 class ContextMcpServer {
-    private server: Server;
-    private context: Context;
-    private codebaseConfigManager: CodebaseConfigManager;
-    private snapshotManager: SnapshotManager;
-    private syncManager: SyncManager;
-    private toolHandlers: ToolHandlers;
-    private runtimeStatusManager: RuntimeStatusManager;
+    private readonly config: ContextMcpConfig;
+    private readonly runtimeConfig: McpRuntimeConfig;
+    private readonly context: Context;
+    private readonly codebaseConfigManager: CodebaseConfigManager;
+    private readonly snapshotManager: SnapshotManager;
+    private readonly syncManager: SyncManager;
+    private readonly toolHandlers: ToolHandlers;
+    private readonly runtimeStatusManager: RuntimeStatusManager;
+    private readonly accessPolicy: CodebaseAccessPolicy;
+    private readonly workloadManager?: WorkloadManager;
+    private readonly daemonRegistryManager?: DaemonRegistryManager;
+    private stdioServer?: Server;
+    private stdioTransport?: StdioServerTransport;
+    private daemonHttpServer?: http.Server;
+    private isClosed = false;
 
-    constructor(config: ContextMcpConfig) {
-        // Initialize MCP server
-        this.server = new Server(
+    constructor(config: ContextMcpConfig, runtimeConfig: McpRuntimeConfig) {
+        this.config = config;
+        this.runtimeConfig = runtimeConfig;
+
+        console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
+        console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
+
+        const embedding = createEmbeddingInstance(config);
+        logEmbeddingProviderInfo(config, embedding);
+
+        const vectorDatabase = new MilvusVectorDatabase({
+            address: config.milvusAddress,
+            ...(config.milvusToken && { token: config.milvusToken })
+        });
+
+        this.context = new Context({
+            embedding,
+            vectorDatabase
+        });
+
+        const runtimeId = crypto.randomUUID();
+        const runtimeWorkspacePath = runtimeConfig.mode === 'daemon'
+            ? runtimeConfig.daemon!.stateWorkspacePath
+            : process.cwd();
+        const snapshotScope = runtimeConfig.mode === 'daemon' ? 'daemon' : 'workspace';
+
+        this.accessPolicy = new CodebaseAccessPolicy({
+            mode: runtimeConfig.mode,
+            allowedRoots: runtimeConfig.daemon?.allowRoots
+        });
+        this.codebaseConfigManager = new CodebaseConfigManager({
+            workspacePath: runtimeWorkspacePath,
+            scope: runtimeConfig.mode === 'daemon' ? 'daemon' : 'workspace'
+        });
+        this.snapshotManager = new SnapshotManager({
+            runtimeId,
+            workspacePath: runtimeWorkspacePath,
+            scope: snapshotScope
+        });
+        this.runtimeStatusManager = new RuntimeStatusManager({
+            runtimeId,
+            workspacePath: runtimeWorkspacePath,
+            snapshotManager: this.snapshotManager,
+            mode: runtimeConfig.mode,
+            ...(runtimeConfig.mode === 'daemon' && runtimeConfig.daemon ? {
+                daemon: {
+                    host: runtimeConfig.daemon.host,
+                    port: runtimeConfig.daemon.port,
+                    endpointPath: runtimeConfig.daemon.endpointPath,
+                    allowedRoots: runtimeConfig.daemon.allowRoots,
+                    tokenSha256: runtimeConfig.daemon.tokenSha256
+                }
+            } : {})
+        });
+        this.workloadManager = runtimeConfig.mode === 'daemon' && runtimeConfig.daemon
+            ? new WorkloadManager({
+                mode: runtimeConfig.mode,
+                maxIndexingConcurrency: runtimeConfig.daemon.maxIndexingConcurrency,
+                maxSearchConcurrency: runtimeConfig.daemon.maxSearchConcurrency,
+                onStateChanged: async (snapshot, reason) => {
+                    await this.runtimeStatusManager.updateWorkloadState(snapshot, `workload-${reason}`);
+                }
+            })
+            : undefined;
+        this.syncManager = new SyncManager(
+            this.context,
+            this.snapshotManager,
+            this.codebaseConfigManager,
+            this.runtimeStatusManager,
+            this.workloadManager
+        );
+        this.toolHandlers = new ToolHandlers(
+            this.context,
+            this.snapshotManager,
+            this.codebaseConfigManager,
+            this.runtimeStatusManager,
+            this.accessPolicy,
+            this.workloadManager
+        );
+
+        this.snapshotManager.loadCodebaseSnapshot();
+        void this.runtimeStatusManager.refresh('startup');
+
+        if (runtimeConfig.mode === 'daemon' && runtimeConfig.daemon) {
+            this.daemonRegistryManager = new DaemonRegistryManager({
+                runtimeId,
+                host: runtimeConfig.daemon.host,
+                port: runtimeConfig.daemon.port,
+                endpointPath: runtimeConfig.daemon.endpointPath,
+                allowedRoots: runtimeConfig.daemon.allowRoots,
+                tokenSha256: runtimeConfig.daemon.tokenSha256,
+                runtimeStatusFilePath: this.runtimeStatusManager.getRuntimeStatusFilePath(),
+                snapshotFilePath: this.snapshotManager.getSnapshotFilePath()
+            });
+        }
+
+        if (this.workloadManager) {
+            void this.runtimeStatusManager.updateWorkloadState(this.workloadManager.getSnapshot(), 'workload-startup');
+        }
+    }
+
+    private createProtocolServer(): Server {
+        const server = new Server(
             {
-                name: config.name,
-                version: config.version
+                name: this.config.name,
+                version: this.config.version
             },
             {
                 capabilities: {
@@ -57,57 +171,12 @@ class ContextMcpServer {
             }
         );
 
-        // Initialize embedding provider
-        console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
-        console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
-
-        const embedding = createEmbeddingInstance(config);
-        logEmbeddingProviderInfo(config, embedding);
-
-        // Initialize vector database
-        const vectorDatabase = new MilvusVectorDatabase({
-            address: config.milvusAddress,
-            ...(config.milvusToken && { token: config.milvusToken })
-        });
-
-        // Initialize Claude Context
-        this.context = new Context({
-            embedding,
-            vectorDatabase
-        });
-
-        const runtimeId = crypto.randomUUID();
-
-        // Initialize managers
-        this.codebaseConfigManager = new CodebaseConfigManager();
-        this.snapshotManager = new SnapshotManager({ runtimeId });
-        this.runtimeStatusManager = new RuntimeStatusManager({
-            runtimeId,
-            workspacePath: process.cwd(),
-            snapshotManager: this.snapshotManager
-        });
-        this.syncManager = new SyncManager(
-            this.context,
-            this.snapshotManager,
-            this.codebaseConfigManager,
-            this.runtimeStatusManager
-        );
-        this.toolHandlers = new ToolHandlers(
-            this.context,
-            this.snapshotManager,
-            this.codebaseConfigManager,
-            this.runtimeStatusManager
-        );
-
-        // Load existing codebase snapshot on startup
-        this.snapshotManager.loadCodebaseSnapshot();
-        void this.runtimeStatusManager.refresh('startup');
-
-        this.setupTools();
+        this.setupTools(server);
+        return server;
     }
 
-    private setupTools() {
-        const index_description = `
+    private setupTools(server: Server) {
+        const indexDescription = `
 Index a codebase directory to enable semantic search using a configurable code splitter.
 
 ⚠️ **IMPORTANT**:
@@ -118,8 +187,7 @@ Index a codebase directory to enable semantic search using a configurable code s
 - If indexing is attempted on an already indexed path, and a conflict is detected, you MUST prompt the user to confirm whether to proceed with a force index (i.e., re-indexing and overwriting the previous index).
 `;
 
-
-        const search_description = `
+        const searchDescription = `
 Search the indexed codebase using natural language queries within a specified absolute path.
 
 ⚠️ **IMPORTANT**:
@@ -140,185 +208,413 @@ This tool is versatile and can be used before completing various tasks to retrie
 - You can then use the index_codebase tool to index the codebase before searching again.
 `;
 
-        // Define available tools
-        this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+        server.setRequestHandler(ListToolsRequestSchema, async () => {
             return {
                 tools: [
                     {
-                        name: "index_codebase",
-                        description: index_description,
+                        name: 'index_codebase',
+                        description: indexDescription,
                         inputSchema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
                                 path: {
-                                    type: "string",
-                                    description: `ABSOLUTE path to the codebase directory to index.`
+                                    type: 'string',
+                                    description: 'ABSOLUTE path to the codebase directory to index.'
                                 },
                                 force: {
-                                    type: "boolean",
-                                    description: "Force re-indexing even if already indexed",
+                                    type: 'boolean',
+                                    description: 'Force re-indexing even if already indexed',
                                     default: false
                                 },
                                 splitter: {
-                                    type: "string",
+                                    type: 'string',
                                     description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting",
-                                    enum: ["ast", "langchain"],
-                                    default: "ast"
+                                    enum: ['ast', 'langchain'],
+                                    default: 'ast'
                                 },
                                 customExtensions: {
-                                    type: "array",
+                                    type: 'array',
                                     items: {
-                                        type: "string"
+                                        type: 'string'
                                     },
                                     description: "Optional: Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added",
                                     default: []
                                 },
                                 ignorePatterns: {
-                                    type: "array",
+                                    type: 'array',
                                     items: {
-                                        type: "string"
+                                        type: 'string'
                                     },
                                     description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
                                     default: []
                                 }
                             },
-                            required: ["path"]
+                            required: ['path']
                         }
                     },
                     {
-                        name: "search_code",
-                        description: search_description,
+                        name: 'search_code',
+                        description: searchDescription,
                         inputSchema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
                                 path: {
-                                    type: "string",
-                                    description: `ABSOLUTE path to the codebase directory to search in.`
+                                    type: 'string',
+                                    description: 'ABSOLUTE path to the codebase directory to search in.'
                                 },
                                 query: {
-                                    type: "string",
-                                    description: "Natural language query to search for in the codebase"
+                                    type: 'string',
+                                    description: 'Natural language query to search for in the codebase'
                                 },
                                 limit: {
-                                    type: "number",
-                                    description: "Maximum number of results to return",
+                                    type: 'number',
+                                    description: 'Maximum number of results to return',
                                     default: 10,
                                     maximum: 50
                                 },
                                 extensionFilter: {
-                                    type: "array",
+                                    type: 'array',
                                     items: {
-                                        type: "string"
+                                        type: 'string'
                                     },
                                     description: "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
                                     default: []
                                 }
                             },
-                            required: ["path", "query"]
+                            required: ['path', 'query']
                         }
                     },
                     {
-                        name: "clear_index",
-                        description: `Clear the search index. IMPORTANT: You MUST provide an absolute path.`,
+                        name: 'clear_index',
+                        description: 'Clear the search index. IMPORTANT: You MUST provide an absolute path.',
                         inputSchema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
                                 path: {
-                                    type: "string",
-                                    description: `ABSOLUTE path to the codebase directory to clear.`
+                                    type: 'string',
+                                    description: 'ABSOLUTE path to the codebase directory to clear.'
                                 }
                             },
-                            required: ["path"]
+                            required: ['path']
                         }
                     },
                     {
-                        name: "get_indexing_status",
-                        description: `Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.`,
+                        name: 'get_indexing_status',
+                        description: 'Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.',
                         inputSchema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
                                 path: {
-                                    type: "string",
-                                    description: `ABSOLUTE path to the codebase directory to check status for.`
+                                    type: 'string',
+                                    description: 'ABSOLUTE path to the codebase directory to check status for.'
                                 }
                             },
-                            required: ["path"]
+                            required: ['path']
                         }
-                    },
+                    }
                 ]
             };
         });
 
-        // Handle tool execution
-        this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
 
             switch (name) {
-                case "index_codebase":
+                case 'index_codebase':
                     return await this.toolHandlers.handleIndexCodebase(args);
-                case "search_code":
+                case 'search_code':
                     return await this.toolHandlers.handleSearchCode(args);
-                case "clear_index":
+                case 'clear_index':
                     return await this.toolHandlers.handleClearIndex(args);
-                case "get_indexing_status":
+                case 'get_indexing_status':
                     return await this.toolHandlers.handleGetIndexingStatus(args);
-
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
         });
     }
 
-    async start() {
-        console.log('[SYNC-DEBUG] MCP server start() method called');
-        console.log('Starting Context MCP server...');
+    private async startStdio(): Promise<void> {
+        this.stdioServer = this.createProtocolServer();
+        this.stdioTransport = new StdioServerTransport();
 
-        const transport = new StdioServerTransport();
         console.log('[SYNC-DEBUG] StdioServerTransport created, attempting server connection...');
-
-        await this.server.connect(transport);
-        console.log("MCP server started and listening on stdio.");
+        await this.stdioServer.connect(this.stdioTransport);
+        console.log('MCP server started and listening on stdio.');
         console.log('[SYNC-DEBUG] Server connection established successfully');
 
-        // Start background sync after server is connected
         console.log('[SYNC-DEBUG] Initializing background sync...');
         this.syncManager.startBackgroundSync();
         console.log('[SYNC-DEBUG] MCP server initialization complete');
     }
+
+    private async startDaemon(): Promise<void> {
+        const daemonConfig = this.runtimeConfig.daemon;
+        if (!daemonConfig) {
+            throw new Error('Daemon runtime configuration is missing.');
+        }
+
+        this.daemonHttpServer = http.createServer((request, response) => {
+            void this.handleDaemonRequest(request, response);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const onError = (error: Error) => {
+                this.daemonHttpServer?.off('listening', onListening);
+                reject(error);
+            };
+            const onListening = () => {
+                this.daemonHttpServer?.off('error', onError);
+                resolve();
+            };
+
+            this.daemonHttpServer?.once('error', onError);
+            this.daemonHttpServer?.once('listening', onListening);
+            this.daemonHttpServer?.listen(daemonConfig.port, daemonConfig.host);
+        });
+
+        await this.runtimeStatusManager.refresh('daemon-started');
+        await this.daemonRegistryManager?.refresh();
+        this.daemonRegistryManager?.startHeartbeat();
+
+        console.log(`MCP daemon started and listening on http://${daemonConfig.host}:${daemonConfig.port}${daemonConfig.endpointPath}.`);
+
+        console.log('[SYNC-DEBUG] Initializing background sync...');
+        this.syncManager.startBackgroundSync();
+        console.log('[SYNC-DEBUG] MCP daemon initialization complete');
+    }
+
+    private async handleDaemonRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+        const daemonConfig = this.runtimeConfig.daemon;
+        if (!daemonConfig) {
+            this.writeDaemonError(response, 500, 'Daemon runtime is not configured.');
+            return;
+        }
+
+        const requestUrl = new URL(request.url || '/', `http://${daemonConfig.host}:${daemonConfig.port}`);
+        if (requestUrl.pathname !== daemonConfig.endpointPath) {
+            this.writeDaemonError(response, 404, 'Not found.');
+            return;
+        }
+
+        if (!this.isLoopbackRequest(request)) {
+            this.writeDaemonError(response, 403, 'Daemon only accepts loopback connections.');
+            return;
+        }
+
+        const rejectedOrigin = this.getRejectedOrigin(request.headers.origin, request.headers.referer);
+        if (rejectedOrigin) {
+            this.writeDaemonError(response, 403, `Rejected non-local web origin '${rejectedOrigin}'.`);
+            return;
+        }
+
+        const providedToken = this.extractBearerToken(request.headers.authorization);
+        if (!providedToken || !this.tokensMatch(providedToken, daemonConfig.bearerToken)) {
+            this.writeDaemonError(
+                response,
+                401,
+                'Missing or invalid daemon bearer token.',
+                { 'WWW-Authenticate': 'Bearer realm="claude-context-mcp-daemon"' }
+            );
+            return;
+        }
+
+        const sessionIdHeader = request.headers['mcp-session-id'];
+        if (typeof sessionIdHeader === 'string' && sessionIdHeader.trim().length > 0) {
+            this.writeDaemonError(response, 400, 'Stateless daemon mode does not accept mcp-session-id.');
+            return;
+        }
+
+        if (request.method !== 'POST') {
+            this.writeDaemonError(response, 405, 'Method not allowed.', { Allow: 'POST' });
+            return;
+        }
+
+        const server = this.createProtocolServer();
+        const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined,
+            enableJsonResponse: true
+        });
+
+        const cleanup = () => {
+            void transport.close().catch(() => undefined);
+            void server.close().catch(() => undefined);
+        };
+        response.once('close', cleanup);
+
+        try {
+            await server.connect(transport);
+            await transport.handleRequest(request, response);
+        } catch (error: any) {
+            cleanup();
+            console.error('[DAEMON] Error handling MCP request:', error);
+
+            if (!response.headersSent) {
+                this.writeDaemonError(response, 500, 'Internal server error.');
+            }
+        }
+    }
+
+    private isLoopbackRequest(request: http.IncomingMessage): boolean {
+        const remoteAddress = request.socket.remoteAddress;
+        return remoteAddress === '127.0.0.1'
+            || remoteAddress === '::1'
+            || remoteAddress === '::ffff:127.0.0.1';
+    }
+
+    private getRejectedOrigin(originHeader: string | string[] | undefined, refererHeader: string | string[] | undefined): string | null {
+        const headersToCheck = [originHeader, refererHeader];
+
+        for (const headerValue of headersToCheck) {
+            const candidate = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+            if (!candidate) {
+                continue;
+            }
+
+            try {
+                const parsed = new URL(candidate);
+                if (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '::1') {
+                    continue;
+                }
+                return candidate;
+            } catch {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private extractBearerToken(authorizationHeader: string | string[] | undefined): string | null {
+        const candidate = Array.isArray(authorizationHeader) ? authorizationHeader[0] : authorizationHeader;
+        if (!candidate) {
+            return null;
+        }
+
+        const match = candidate.match(/^Bearer\s+(.+)$/i);
+        return match?.[1] || null;
+    }
+
+    private tokensMatch(left: string, right: string): boolean {
+        const leftBuffer = Buffer.from(left);
+        const rightBuffer = Buffer.from(right);
+        if (leftBuffer.length !== rightBuffer.length) {
+            return false;
+        }
+
+        return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+    }
+
+    private writeDaemonError(
+        response: http.ServerResponse,
+        statusCode: number,
+        message: string,
+        headers: Record<string, string> = {}
+    ): void {
+        if (response.writableEnded) {
+            return;
+        }
+
+        response.writeHead(statusCode, {
+            'Content-Type': 'application/json',
+            ...headers
+        });
+        response.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: {
+                code: -32000,
+                message
+            },
+            id: null
+        }));
+    }
+
+    public async start(): Promise<void> {
+        console.log('[SYNC-DEBUG] MCP server start() method called');
+        console.log('Starting Context MCP server...');
+
+        if (this.runtimeConfig.mode === 'daemon') {
+            await this.startDaemon();
+            return;
+        }
+
+        await this.startStdio();
+    }
+
+    public async close(): Promise<void> {
+        if (this.isClosed) {
+            return;
+        }
+        this.isClosed = true;
+
+        this.daemonRegistryManager?.stopHeartbeat();
+
+        if (this.daemonHttpServer) {
+            await new Promise<void>((resolve, reject) => {
+                this.daemonHttpServer?.close((error) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        if (this.stdioServer) {
+            await this.stdioServer.close().catch(() => undefined);
+        }
+
+        if (this.stdioTransport) {
+            await this.stdioTransport.close().catch(() => undefined);
+        }
+
+        await this.daemonRegistryManager?.remove();
+    }
 }
 
-// Main execution
+let activeServer: ContextMcpServer | null = null;
+let shutdownPromise: Promise<void> | null = null;
+
+async function shutdown(signal: string): Promise<void> {
+    if (shutdownPromise) {
+        return shutdownPromise;
+    }
+
+    shutdownPromise = (async () => {
+        console.error(`Received ${signal}, shutting down gracefully...`);
+        await activeServer?.close();
+    })();
+
+    await shutdownPromise;
+}
+
 async function main() {
-    // Parse command line arguments
     const args = process.argv.slice(2);
 
-    // Show help if requested
     if (args.includes('--help') || args.includes('-h')) {
         showHelpMessage();
         process.exit(0);
     }
 
-    // Create configuration
     const config = createMcpConfig();
+    const runtimeConfig = createMcpRuntimeConfig(args);
     logConfigurationSummary(config);
+    logRuntimeConfigurationSummary(runtimeConfig);
 
-    const server = new ContextMcpServer(config);
-    await server.start();
+    activeServer = new ContextMcpServer(config, runtimeConfig);
+    await activeServer.start();
 }
 
-// Handle graceful shutdown
 process.on('SIGINT', () => {
-    console.error("Received SIGINT, shutting down gracefully...");
-    process.exit(0);
+    void shutdown('SIGINT').finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
-    console.error("Received SIGTERM, shutting down gracefully...");
-    process.exit(0);
+    void shutdown('SIGTERM').finally(() => process.exit(0));
 });
 
-// Always start the server - this is designed to be the main entry point
 main().catch((error) => {
-    console.error("Fatal error:", error);
-    process.exit(1);
+    console.error('Fatal error:', error);
+    void activeServer?.close().catch(() => undefined).finally(() => process.exit(1));
 });

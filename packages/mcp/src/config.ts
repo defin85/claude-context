@@ -1,4 +1,9 @@
+import * as crypto from 'node:crypto';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { envManager } from "@zilliz/claude-context-core";
+import { McpRuntimeMode } from './access-policy.js';
+import { normalizeCodebasePath } from './utils.js';
 
 export interface ContextMcpConfig {
     name: string;
@@ -18,6 +23,35 @@ export interface ContextMcpConfig {
     // Vector database configuration
     milvusAddress?: string; // Optional, can be auto-resolved from token
     milvusToken?: string;
+}
+
+export interface McpDaemonConfig {
+    host: string;
+    port: number;
+    endpointPath: string;
+    allowRoots: string[];
+    maxIndexingConcurrency: number;
+    maxSearchConcurrency: number;
+    bearerToken: string;
+    tokenSha256: string;
+    generatedBearerToken: boolean;
+    stateWorkspacePath: string;
+}
+
+export interface McpRuntimeConfig {
+    mode: McpRuntimeMode;
+    daemon?: McpDaemonConfig;
+}
+
+interface ParsedCliOptions {
+    runtimeMode?: McpRuntimeMode;
+    daemonHost?: string;
+    daemonPort?: number;
+    daemonPath?: string;
+    daemonToken?: string;
+    daemonMaxIndexingConcurrency?: number;
+    daemonMaxSearchConcurrency?: number;
+    daemonAllowRoots: string[];
 }
 
 // Legacy format (v1) - for backward compatibility
@@ -147,6 +181,173 @@ export function createMcpConfig(): ContextMcpConfig {
     return config;
 }
 
+function parsePositivePort(rawValue: string | undefined, fallback: number): number {
+    if (!rawValue) {
+        return fallback;
+    }
+
+    const parsedValue = Number(rawValue);
+    if (Number.isInteger(parsedValue) && parsedValue > 0 && parsedValue <= 65535) {
+        return parsedValue;
+    }
+
+    throw new Error(`Invalid daemon port '${rawValue}'. Expected an integer between 1 and 65535.`);
+}
+
+function parsePositiveInteger(rawValue: string | undefined, fallback: number, label: string): number {
+    if (!rawValue) {
+        return fallback;
+    }
+
+    const parsedValue = Number(rawValue);
+    if (Number.isInteger(parsedValue) && parsedValue > 0) {
+        return parsedValue;
+    }
+
+    throw new Error(`Invalid ${label} '${rawValue}'. Expected a positive integer.`);
+}
+
+function parseRuntimeMode(rawValue: string | undefined): McpRuntimeMode | undefined {
+    if (!rawValue) {
+        return undefined;
+    }
+
+    if (rawValue === 'stdio' || rawValue === 'daemon') {
+        return rawValue;
+    }
+
+    throw new Error(`Invalid MCP runtime mode '${rawValue}'. Expected 'stdio' or 'daemon'.`);
+}
+
+function parseCliOptions(args: string[]): ParsedCliOptions {
+    const parsed: ParsedCliOptions = {
+        daemonAllowRoots: []
+    };
+
+    for (let index = 0; index < args.length; index += 1) {
+        const current = args[index];
+        const next = () => {
+            const value = args[index + 1];
+            if (!value) {
+                throw new Error(`Missing value for CLI option '${current}'.`);
+            }
+            index += 1;
+            return value;
+        };
+
+        switch (current) {
+            case '--mode':
+                parsed.runtimeMode = parseRuntimeMode(next());
+                break;
+            case '--daemon-host':
+                parsed.daemonHost = next();
+                break;
+            case '--daemon-port':
+                parsed.daemonPort = parsePositivePort(next(), 39393);
+                break;
+            case '--daemon-path':
+                parsed.daemonPath = next();
+                break;
+            case '--daemon-token':
+                parsed.daemonToken = next();
+                break;
+            case '--daemon-max-indexing':
+                parsed.daemonMaxIndexingConcurrency = parsePositiveInteger(next(), 1, 'daemon max indexing concurrency');
+                break;
+            case '--daemon-max-search':
+                parsed.daemonMaxSearchConcurrency = parsePositiveInteger(next(), 4, 'daemon max search concurrency');
+                break;
+            case '--allow-root':
+                parsed.daemonAllowRoots.push(next());
+                break;
+            case '--help':
+            case '-h':
+                break;
+            default:
+                if (current.startsWith('--')) {
+                    throw new Error(`Unknown CLI option '${current}'.`);
+                }
+                break;
+        }
+    }
+
+    return parsed;
+}
+
+function normalizeDaemonPath(rawPath: string | undefined): string {
+    const candidate = (rawPath || '/mcp').trim();
+    if (!candidate.startsWith('/')) {
+        throw new Error(`Invalid daemon endpoint path '${candidate}'. Expected an absolute path like '/mcp'.`);
+    }
+    return candidate;
+}
+
+function normalizeDaemonHost(rawHost: string | undefined): string {
+    if (!rawHost || rawHost === 'localhost') {
+        return '127.0.0.1';
+    }
+
+    if (rawHost === '127.0.0.1') {
+        return rawHost;
+    }
+
+    throw new Error(`Invalid daemon host '${rawHost}'. Only 127.0.0.1 is supported in this phase.`);
+}
+
+function normalizeAllowRoots(rawRoots: string[]): string[] {
+    return [...new Set(rawRoots
+        .map((root) => root.trim())
+        .filter(Boolean)
+        .map((root) => normalizeCodebasePath(root)))];
+}
+
+export function createMcpRuntimeConfig(args: string[] = []): McpRuntimeConfig {
+    const cliOptions = parseCliOptions(args);
+    const runtimeMode = cliOptions.runtimeMode
+        || parseRuntimeMode(envManager.get('MCP_RUNTIME_MODE'))
+        || 'stdio';
+
+    if (runtimeMode === 'stdio') {
+        return { mode: 'stdio' };
+    }
+
+    const envAllowRoots = (envManager.get('MCP_DAEMON_ALLOW_ROOTS') || '')
+        .split(path.delimiter)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const allowRoots = normalizeAllowRoots([
+        ...envAllowRoots,
+        ...cliOptions.daemonAllowRoots
+    ]);
+
+    if (allowRoots.length === 0) {
+        throw new Error(
+            'Daemon mode requires at least one allowed root. Set MCP_DAEMON_ALLOW_ROOTS or pass --allow-root.'
+        );
+    }
+
+    const bearerToken = cliOptions.daemonToken
+        || envManager.get('MCP_DAEMON_TOKEN')
+        || crypto.randomBytes(24).toString('hex');
+    const generatedBearerToken = !cliOptions.daemonToken && !envManager.get('MCP_DAEMON_TOKEN');
+
+    return {
+        mode: 'daemon',
+        daemon: {
+            host: normalizeDaemonHost(cliOptions.daemonHost || envManager.get('MCP_DAEMON_HOST')),
+            port: cliOptions.daemonPort || parsePositivePort(envManager.get('MCP_DAEMON_PORT'), 39393),
+            endpointPath: normalizeDaemonPath(cliOptions.daemonPath || envManager.get('MCP_DAEMON_PATH')),
+            allowRoots,
+            maxIndexingConcurrency: cliOptions.daemonMaxIndexingConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_INDEXING_CONCURRENCY'), 1, 'daemon max indexing concurrency'),
+            maxSearchConcurrency: cliOptions.daemonMaxSearchConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_SEARCH_CONCURRENCY'), 4, 'daemon max search concurrency'),
+            bearerToken,
+            tokenSha256: crypto.createHash('sha256').update(bearerToken).digest('hex'),
+            generatedBearerToken,
+            stateWorkspacePath: path.join(os.homedir(), '.context', 'mcp', 'daemon')
+        }
+    };
+}
+
 export function logConfigurationSummary(config: ContextMcpConfig): void {
     // Log configuration summary before starting server
     console.log(`[MCP] 🚀 Starting Context MCP Server`);
@@ -182,6 +383,27 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
     console.log(`[MCP] 🔧 Initializing server components...`);
 }
 
+export function logRuntimeConfigurationSummary(runtimeConfig: McpRuntimeConfig): void {
+    console.log(`[MCP]   Runtime Mode: ${runtimeConfig.mode}`);
+
+    if (runtimeConfig.mode !== 'daemon' || !runtimeConfig.daemon) {
+        return;
+    }
+
+    const daemon = runtimeConfig.daemon;
+    console.log(`[MCP]   Daemon Transport: Streamable HTTP`);
+    console.log(`[MCP]   Daemon Endpoint: http://${daemon.host}:${daemon.port}${daemon.endpointPath}`);
+    console.log(`[MCP]   Daemon Allowed Roots: ${daemon.allowRoots.join(', ')}`);
+    console.log(`[MCP]   Daemon Max Indexing Concurrency: ${daemon.maxIndexingConcurrency}`);
+    console.log(`[MCP]   Daemon Max Search Concurrency: ${daemon.maxSearchConcurrency}`);
+    console.log(`[MCP]   Daemon Token SHA256: ${daemon.tokenSha256}`);
+    console.log(`[MCP]   Daemon State Root: ${daemon.stateWorkspacePath}`);
+
+    if (daemon.generatedBearerToken) {
+        console.log(`[MCP]   Generated Daemon Bearer Token: ${daemon.bearerToken}`);
+    }
+}
+
 export function showHelpMessage(): void {
     console.log(`
 Context MCP Server
@@ -190,10 +412,26 @@ Usage: npx @zilliz/claude-context-mcp@latest [options]
 
 Options:
   --help, -h                          Show this help message
+  --mode <stdio|daemon>               Runtime mode (default: stdio)
+  --daemon-host <host>                Daemon host (daemon mode only, default: 127.0.0.1)
+  --daemon-port <port>                Daemon port (daemon mode only, default: 39393)
+  --daemon-path <path>                Daemon MCP endpoint path (default: /mcp)
+  --daemon-token <token>              Bearer token for daemon authentication
+  --daemon-max-indexing <count>       Max concurrent indexing/sync jobs in daemon mode
+  --daemon-max-search <count>         Max concurrent search requests in daemon mode
+  --allow-root <absolute-path>        Allowed codebase root for daemon mode; repeatable
 
 Environment Variables:
   MCP_SERVER_NAME         Server name
   MCP_SERVER_VERSION      Server version
+  MCP_RUNTIME_MODE        Runtime mode: stdio or daemon
+  MCP_DAEMON_HOST         Daemon host (phase-3 currently only supports 127.0.0.1)
+  MCP_DAEMON_PORT         Daemon port
+  MCP_DAEMON_PATH         Daemon MCP endpoint path
+  MCP_DAEMON_TOKEN        Bearer token for daemon authentication
+  MCP_DAEMON_MAX_INDEXING_CONCURRENCY Max concurrent indexing/sync jobs in daemon mode
+  MCP_DAEMON_MAX_SEARCH_CONCURRENCY   Max concurrent search requests in daemon mode
+  MCP_DAEMON_ALLOW_ROOTS  Allowed codebase roots for daemon mode, separated by '${path.delimiter}'
   
   Embedding Provider Configuration:
   EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama (default: OpenAI)
@@ -232,5 +470,8 @@ Examples:
   
   # Start MCP server with Ollama and specific model (using EMBEDDING_MODEL)
   EMBEDDING_PROVIDER=Ollama EMBEDDING_MODEL=nomic-embed-text MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+
+  # Start shared daemon mode for two repositories
+  MCP_RUNTIME_MODE=daemon MCP_DAEMON_TOKEN=local-secret MCP_DAEMON_ALLOW_ROOTS=/repo/a${path.delimiter}/repo/b npx @zilliz/claude-context-mcp@latest
         `);
 } 

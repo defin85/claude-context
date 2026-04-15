@@ -13,14 +13,29 @@ interface PersistedCodebaseSessionConfig extends CodebaseSessionConfig {
 
 interface CodebaseConfigManagerOptions {
     workspacePath?: string;
+    scope?: 'workspace' | 'daemon';
 }
 
 export class CodebaseConfigManager {
     private readonly workspacePath: string;
     private readonly configDirectoryPath: string;
+    private readonly scope: 'workspace' | 'daemon';
 
     constructor(options: CodebaseConfigManagerOptions = {}) {
         this.workspacePath = path.resolve(options.workspacePath || process.cwd());
+        this.scope = options.scope || 'workspace';
+
+        if (this.scope === 'daemon') {
+            this.configDirectoryPath = path.join(
+                os.homedir(),
+                '.context',
+                'mcp',
+                'daemon',
+                'codebase-session-config'
+            );
+            return;
+        }
+
         const workspaceHash = crypto
             .createHash('sha256')
             .update(this.workspacePath)

@@ -14,7 +14,7 @@ import {
 } from "./config.js";
 import { normalizeCodebasePath as normalizeTrackedCodebasePath } from "./utils.js";
 
-type SnapshotScope = 'workspace' | 'global';
+type SnapshotScope = 'workspace' | 'global' | 'daemon';
 
 interface SnapshotManagerOptions {
     workspacePath?: string;
@@ -116,12 +116,19 @@ export class SnapshotManager {
 
     private resolveSnapshotScope(): SnapshotScope {
         const rawScope = (process.env.MCP_SNAPSHOT_SCOPE || 'workspace').toLowerCase();
+        if (rawScope === 'daemon') {
+            return 'daemon';
+        }
         return rawScope === 'global' ? 'global' : 'workspace';
     }
 
     private resolveSnapshotPath(): string {
         if (this.scope === 'global') {
             return this.legacySnapshotFilePath;
+        }
+
+        if (this.scope === 'daemon') {
+            return path.join(os.homedir(), '.context', 'mcp', 'daemon', 'mcp-codebase-snapshot.json');
         }
 
         const workspaceHash = crypto
@@ -1039,6 +1046,20 @@ export class SnapshotManager {
         }
     }
 
+    public hasTrackedCodebases(): boolean {
+        try {
+            const snapshot = this.readSnapshotFromDiskUnsafe();
+            if (!snapshot) {
+                return false;
+            }
+
+            return Object.keys(snapshot.codebases).length > 0;
+        } catch (error) {
+            console.warn('[SNAPSHOT-DEBUG] Error checking tracked codebases from file:', error);
+            return this.codebaseInfoMap.size > 0;
+        }
+    }
+
     /**
      * @deprecated Use getCodebaseInfo() for individual codebases or iterate through codebases for v2 format support
      */
@@ -1276,6 +1297,52 @@ export class SnapshotManager {
         }
 
         this.codebaseInfoMap.set(codebasePath, nextInfo);
+    }
+
+    public async restoreIndexedCodebaseFromCloud(
+        codebasePath: string,
+        stats?: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' },
+        indexStatus: 'completed' | 'limit_reached' = 'completed'
+    ): Promise<'restored-with-stats' | 'restored-without-stats' | 'skipped-live-owner'> {
+        const normalizedPath = this.normalizeCodebasePath(codebasePath);
+
+        return this.mutateSnapshotWithLock('cloud-index-restore', async (snapshot) => {
+            const existingInfo = snapshot.codebases[normalizedPath];
+            if (existingInfo?.status === 'indexing' && this.isLiveIndexingOwner(existingInfo)) {
+                console.warn(
+                    `[SNAPSHOT-OWNERSHIP] Refusing to reconcile '${normalizedPath}' from cloud because a live owner is still indexing.`
+                );
+                return {
+                    changed: false,
+                    result: 'skipped-live-owner' as const
+                };
+            }
+
+            snapshot.codebases[normalizedPath] = stats
+                ? {
+                    status: 'indexed',
+                    indexedFiles: stats.indexedFiles,
+                    totalChunks: stats.totalChunks,
+                    indexStatus: stats.status,
+                    statsState: 'known',
+                    lastUpdated: new Date().toISOString()
+                }
+                : {
+                    status: 'indexed',
+                    indexStatus,
+                    statsState: 'unknown',
+                    lastUpdated: new Date().toISOString()
+                };
+
+            if (snapshot.deletedCodebases) {
+                delete snapshot.deletedCodebases[normalizedPath];
+            }
+
+            return {
+                changed: true,
+                result: stats ? 'restored-with-stats' as const : 'restored-without-stats' as const
+            };
+        });
     }
 
     /**

@@ -34,7 +34,11 @@ Implemented on 2026-04-15:
   - startup recovery that preserves live owners and converts stale owners to `indexfailed`;
   - legacy global snapshot migration now preserves valid absolute codebase paths and canonicalizes aliased paths instead of filtering by `process.cwd()`;
   - delete protection is now durable across processes via persisted snapshot tombstones instead of process-local memory only;
-  - regression smoke now covers real separate-process delete/save race and live-owner blocking, not only multiple `SnapshotManager` instances in one PID.
+  - regression smoke now covers real separate-process delete/save race and live-owner blocking, not only multiple `SnapshotManager` instances in one PID;
+  - manual acceptance is complete:
+    - `pnpm --filter @zilliz/claude-context-mcp typecheck` passes;
+    - `pnpm --filter @zilliz/claude-context-mcp build` passes;
+    - manual multi-process repros for delete/save race, concurrent index start, and startup migration were re-run successfully against the current implementation.
 - Phase 2 is now partially landed:
   - `Context` now keeps per-codebase session state instead of reusing one mutable ignore/extensions bag across repositories;
   - custom extensions and custom ignore patterns are persisted per codebase under the workspace-scoped MCP state directory;
@@ -44,15 +48,36 @@ Implemented on 2026-04-15:
   - VS Code now persists the indexed codebase identity in extension state and routes search, sync, clear-index, status checks, and search-result open-file actions through that identity instead of inferring the target from `workspaceFolders[0]`;
   - regression smoke now covers an actual add/modify/delete incremental sync lifecycle on a temporary repository, not only handler-level or `SyncManager`-level stubs;
   - restart-safe sync semantics are now covered end-to-end for persisted custom extensions and ignore patterns, including new `.vue` files and ignored paths after a fresh `Context` + `SyncManager` startup;
-  - corrupted local snapshot recovery is now covered end-to-end: `SyncManager` can self-heal from persisted config plus existing index state and still preserve per-codebase sync semantics.
+  - corrupted local snapshot recovery is now covered end-to-end: `SyncManager` can self-heal from persisted config plus existing index state and still preserve per-codebase sync semantics;
+  - manual acceptance is complete:
+    - on a real indexed repository, file add/modify/delete all propagated to search without `force reindex`;
+    - after MCP restart, automatic incremental sync resumed and removed stale chunks as expected;
+    - the fresh-index race between live indexing ownership and startup self-heal was fixed and re-verified on a live MCP runtime.
+- Phase 3 is now partially landed:
+  - the MCP entrypoint now supports both `stdio` mode and a daemon mode instead of being hard-wired to one subprocess-per-client;
+  - daemon mode binds `Streamable HTTP` on `127.0.0.1` and keeps the first transport iteration stateless for ordinary tool calls;
+  - daemon access is fail-closed with explicit bearer-token authentication, local web-origin/session guards, and per-request rejection of unexpected `mcp-session-id` headers;
+  - daemon-managed codebase operations are restricted to an explicit local allowlist and the handlers now reject out-of-scope paths before touching filesystem or cloud state;
+  - daemon-managed snapshot/config state now lives under dedicated `~/.context/mcp/daemon/...` paths instead of reusing workspace-scoped state implicitly;
+  - a daemon registry file now publishes endpoint/auth fingerprint/allowed-root metadata without storing the bearer token in plaintext;
+  - daemon workload controls are now partially wired:
+    - bounded indexing/sync concurrency with a queue keyed by codebase identity;
+    - separate bounded search concurrency;
+    - interactive indexing requests are prioritized ahead of background sync work when both are queued;
+    - queued indexing now keeps ownership heartbeat alive while waiting for an execution slot;
+    - runtime status now records daemon workload state for active and queued jobs;
+  - regression smoke now covers daemon runtime config parsing, daemon registry metadata, collision-safe runtime status writes, dedicated daemon state paths, allowlist rejection, queue ordering, queued indexing responses, and bounded search concurrency.
+  - manual multi-repo daemon acceptance is now partially complete:
+    - one live daemon runtime served `vk-turn-proxy`, `bsl-gradual-types`, and `codex-cli-profiles` concurrently;
+    - while `bsl-gradual-types` held the single indexing lane, `vk-turn-proxy` remained searchable and a second `force` index request for `codex-cli-profiles` was queued instead of starting uncontrolled parallel indexing;
+    - out-of-scope `/tmp` requests were rejected by the daemon allowlist, and runtime status published the expected active/queued job state.
 
 Still open after this slice:
 
-- finish the remaining Phase 1 acceptance coverage:
-  - complete the remaining manual migration/startup repros and final acceptance checks;
-- finish the rest of Phase 2:
-  - broader incremental sync regressions on real repositories and manual repo-scale validation;
-- do not start Phase 3 daemon work before those two blocks are closed.
+- queue backoff and richer repository-priority policy are not implemented yet;
+- daemon restart semantics and explicit stale-runtime recovery are not manually verified yet;
+- idle resource usage has not been compared yet against the one-subprocess-per-repo model;
+- daemon discovery, compatibility bridge, restart/admin workflows, and snapshot migration between workspace and daemon scopes remain deferred to later phases.
 
 ## Executive Summary
 
