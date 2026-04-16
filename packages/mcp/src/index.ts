@@ -235,7 +235,8 @@ class ContextMcpServer {
 Index a codebase directory to enable semantic search using a configurable code splitter.
 
 ⚠️ **IMPORTANT**:
-- You MUST provide an absolute path to the target codebase.
+- You MUST provide a canonical absolute path to the target codebase.
+- Prefer POSIX form (for example, /home/egor/code/repo). WSL UNC paths are normalized automatically, but POSIX form is recommended.
 
 ✨ **Usage Guidance**:
 - This tool is typically used when search fails due to an unindexed codebase.
@@ -246,7 +247,8 @@ Index a codebase directory to enable semantic search using a configurable code s
 Search the indexed codebase using natural language queries within a specified absolute path.
 
 ⚠️ **IMPORTANT**:
-- You MUST provide an absolute path.
+- You MUST provide a canonical absolute path.
+- Prefer POSIX form (for example, /home/egor/code/repo). WSL UNC paths are normalized automatically, but POSIX form is recommended.
 
 🎯 **When to Use**:
 This tool is versatile and can be used before completing various tasks to retrieve relevant context:
@@ -273,7 +275,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                         properties: {
                             path: {
                                 type: 'string',
-                                description: 'ABSOLUTE path to the codebase directory to index.'
+                                description: 'Canonical ABSOLUTE path to the codebase directory to index. Prefer POSIX form (e.g. /home/egor/code/repo). WSL UNC paths are normalized automatically.'
                             },
                             force: {
                                 type: 'boolean',
@@ -314,7 +316,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                         properties: {
                             path: {
                                 type: 'string',
-                                description: 'ABSOLUTE path to the codebase directory to search in.'
+                                description: 'Canonical ABSOLUTE path to the codebase directory to search in. Prefer POSIX form (e.g. /home/egor/code/repo). WSL UNC paths are normalized automatically.'
                             },
                             query: {
                                 type: 'string',
@@ -340,13 +342,13 @@ This tool is versatile and can be used before completing various tasks to retrie
                 },
                 {
                     name: 'clear_index',
-                    description: 'Clear the search index. IMPORTANT: You MUST provide an absolute path.',
+                    description: 'Clear the search index. IMPORTANT: You MUST provide a canonical absolute path. Prefer POSIX form; WSL UNC paths are normalized automatically.',
                     inputSchema: {
                         type: 'object',
                         properties: {
                             path: {
                                 type: 'string',
-                                description: 'ABSOLUTE path to the codebase directory to clear.'
+                                description: 'Canonical ABSOLUTE path to the codebase directory to clear. Prefer POSIX form (e.g. /home/egor/code/repo). WSL UNC paths are normalized automatically.'
                             }
                         },
                         required: ['path']
@@ -360,7 +362,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                         properties: {
                             path: {
                                 type: 'string',
-                                description: 'ABSOLUTE path to the codebase directory to check status for.'
+                                description: 'Canonical ABSOLUTE path to the codebase directory to check status for. Prefer POSIX form (e.g. /home/egor/code/repo). WSL UNC paths are normalized automatically.'
                             }
                         },
                         required: ['path']
@@ -387,7 +389,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                             properties: {
                                 path: {
                                     type: 'string',
-                                    description: 'ABSOLUTE path to the codebase whose daemon workload should be cancelled.'
+                                    description: 'Canonical ABSOLUTE path to the codebase whose daemon workload should be cancelled. Prefer POSIX form (e.g. /home/egor/code/repo). WSL UNC paths are normalized automatically.'
                                 },
                                 reason: {
                                     type: 'string',

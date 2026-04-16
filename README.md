@@ -508,6 +508,8 @@ Clear the search index for a specific codebase.
 
 Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.
 
+> Path guidance: for all codebase tools, use a canonical absolute POSIX path such as `/home/egor/code/repo`. WSL UNC paths like `\\wsl.localhost\\archlinux\\home\\egor\\code\\repo` are normalized automatically, but POSIX form is recommended to avoid path-identity confusion across indexing, search, clear, and status operations.
+
 ---
 
 ## 📊 Evaluation

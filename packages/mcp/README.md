@@ -279,7 +279,7 @@ MCP_DAEMON_ALLOW_ROOTS=/repo/a:/repo/b:/repo/c \
 npx @zilliz/claude-context-mcp@latest
 ```
 
-One Codex CLI session can then serve all allowlisted repositories by passing different absolute `path` values to `index_codebase`, `search_code`, and `get_indexing_status`.
+One Codex CLI session can then serve all allowlisted repositories by passing different canonical absolute `path` values to `index_codebase`, `search_code`, and `get_indexing_status`. Prefer POSIX paths such as `/home/egor/code/repo`; WSL UNC paths are normalized automatically, but POSIX form is recommended.
 
 If a repository was only recovered from cloud state and reports missing persisted sync config, run one daemon-side `index_codebase` with `force=true` for that repository to restore restart-safe sync semantics.
 
@@ -693,13 +693,15 @@ npx @zilliz/claude-context-mcp@latest
 
 ## Available Tools
 
+> Path guidance: for all codebase tools, use a canonical absolute POSIX path such as `/home/egor/code/repo`. WSL UNC paths like `\\wsl.localhost\\archlinux\\home\\egor\\code\\repo` are normalized automatically, but POSIX form is recommended.
+
 ### 1. `index_codebase`
 
 Index a codebase directory for hybrid search (BM25 + dense vector).
 
 **Parameters:**
 
-- `path` (required): Absolute path to the codebase directory to index
+- `path` (required): Canonical absolute path to the codebase directory to index; prefer POSIX form such as `/home/egor/code/repo`
 - `force` (optional): Force re-indexing even if already indexed (default: false)
 - `splitter` (optional): Code splitter to use - 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting (default: "ast")
 - `customExtensions` (optional): Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added (default: [])
@@ -711,7 +713,7 @@ Search the indexed codebase using natural language queries with hybrid search (B
 
 **Parameters:**
 
-- `path` (required): Absolute path to the codebase directory to search in
+- `path` (required): Canonical absolute path to the codebase directory to search in; prefer POSIX form such as `/home/egor/code/repo`
 - `query` (required): Natural language query to search for in the codebase
 - `limit` (optional): Maximum number of results to return (default: 10, max: 50)
 - `extensionFilter` (optional): List of file extensions to filter results (e.g., ['.ts', '.py']) (default: [])
@@ -722,7 +724,7 @@ Clear the search index for a specific codebase.
 
 **Parameters:**
 
-- `path` (required): Absolute path to the codebase directory to clear index for
+- `path` (required): Canonical absolute path to the codebase directory to clear index for; prefer POSIX form such as `/home/egor/code/repo`
 
 ### 4. `get_indexing_status`
 
@@ -730,7 +732,7 @@ Get the current indexing status of a codebase. Shows progress percentage for act
 
 **Parameters:**
 
-- `path` (required): Absolute path to the codebase directory to check status for
+- `path` (required): Canonical absolute path to the codebase directory to check status for; prefer POSIX form such as `/home/egor/code/repo`
 
 ## Contributing
 
