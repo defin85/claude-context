@@ -169,6 +169,9 @@ importers:
       tree-sitter:
         specifier: ^0.21.1
         version: 0.21.1
+      tree-sitter-bsl:
+        specifier: ^0.1.5
+        version: 0.1.6(tree-sitter@0.21.1)
       tree-sitter-c-sharp:
         specifier: ^0.21.0
         version: 0.21.3(tree-sitter@0.21.1)
@@ -3949,6 +3952,14 @@ packages:
 
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
+
+  tree-sitter-bsl@0.1.6:
+    resolution: {integrity: sha512-MpkCn3R/lh5UFVZz1NWCC4rztvB3dONIApEuZQeIgqDYcUb9w7onXVSY+iaSKdA8TWwut9gNF0R8/mfEITSRug==}
+    peerDependencies:
+      tree-sitter: ^0.25.0
+    peerDependenciesMeta:
+      tree-sitter:
+        optional: true
 
   tree-sitter-c-sharp@0.21.3:
     resolution: {integrity: sha512-TVsl5EhmqetO/mhzDPVnMK6TPFnpNMKP0OTNuAQIprshk5Hx672ODRxoIoG5WqvUUlsnBu8J0zmn35hmJqelsA==}
@@ -8613,6 +8624,13 @@ snapshots:
   toidentifier@1.0.1: {}
 
   tr46@0.0.3: {}
+
+  tree-sitter-bsl@0.1.6(tree-sitter@0.21.1):
+    dependencies:
+      node-addon-api: 8.4.0
+      node-gyp-build: 4.8.4
+    optionalDependencies:
+      tree-sitter: 0.21.1
 
   tree-sitter-c-sharp@0.21.3(tree-sitter@0.21.1):
     dependencies:

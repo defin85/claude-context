@@ -1,46 +1,47 @@
-import {
-    Splitter,
-    CodeChunk,
-    AstCodeSplitter
-} from './splitter';
+import { Splitter, CodeChunk, AstCodeSplitter } from "./splitter";
 import {
     Embedding,
     EmbeddingVector,
     EmbeddingContextLimitError,
-    OpenAIEmbedding
-} from './embedding';
+    OpenAIEmbedding,
+} from "./embedding";
 import {
     VectorDatabase,
     VectorDocument,
     VectorSearchResult,
     HybridSearchRequest,
     HybridSearchOptions,
-    HybridSearchResult
-} from './vectordb';
-import { SemanticSearchResult } from './types';
-import { envManager } from './utils/env-manager';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
-import { FileSynchronizer } from './sync/synchronizer';
+    HybridSearchResult,
+} from "./vectordb";
+import { SemanticSearchResult } from "./types";
+import { envManager } from "./utils/env-manager";
+import * as fs from "fs";
+import * as path from "path";
+import * as crypto from "crypto";
+import { FileSynchronizer } from "./sync/synchronizer";
 
 function normalizeCodebasePath(codebasePath: string): string {
     const trimmedPath = codebasePath.trim();
 
-    if (process.platform === 'linux') {
-        const match = trimmedPath.match(/^\\\\wsl(?:\.localhost)?\\([^\\]+)\\(.*)$/i);
+    if (process.platform === "linux") {
+        const match = trimmedPath.match(
+            /^\\\\wsl(?:\.localhost)?\\([^\\]+)\\(.*)$/i,
+        );
         if (match) {
             const [, distroName, rawPath] = match;
             const currentDistro = process.env.WSL_DISTRO_NAME;
 
-            if (currentDistro && distroName.toLowerCase() !== currentDistro.toLowerCase()) {
+            if (
+                currentDistro &&
+                distroName.toLowerCase() !== currentDistro.toLowerCase()
+            ) {
                 console.warn(
                     `[Context] Received WSL UNC path for distro '${distroName}', ` +
-                    `but current runtime is '${currentDistro}'. Attempting best-effort normalization.`
+                        `but current runtime is '${currentDistro}'. Attempting best-effort normalization.`,
                 );
             }
 
-            const posixPath = `/${rawPath.split('\\').filter(Boolean).join('/')}`;
+            const posixPath = `/${rawPath.split("\\").filter(Boolean).join("/")}`;
             return path.resolve(posixPath);
         }
     }
@@ -53,10 +54,13 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
         return true;
     }
 
-    return typeof error === 'object'
-        && error !== null
-        && 'code' in error
-        && (error as { code?: unknown }).code === 'EMBEDDING_CONTEXT_LIMIT_EXCEEDED';
+    return (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code ===
+            "EMBEDDING_CONTEXT_LIMIT_EXCEEDED"
+    );
 }
 
 function throwIfOperationAborted(abortSignal?: AbortSignal): void {
@@ -69,74 +73,111 @@ function throwIfOperationAborted(abortSignal?: AbortSignal): void {
         throw reason;
     }
 
-    if (typeof reason === 'string' && reason.trim().length > 0) {
+    if (typeof reason === "string" && reason.trim().length > 0) {
         throw new Error(reason);
     }
 
-    throw new Error('Operation cancelled.');
+    throw new Error("Operation cancelled.");
 }
 
 const DEFAULT_SUPPORTED_EXTENSIONS = [
     // Programming languages
-    '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cpp', '.c', '.h', '.hpp',
-    '.cs', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.scala', '.m', '.mm',
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".py",
+    ".java",
+    ".cpp",
+    ".c",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".php",
+    ".rb",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".m",
+    ".mm",
+    // 1C:Enterprise
+    ".bsl",
+    ".os",
     // Text and markup files
-    '.md', '.markdown', '.ipynb',
+    ".md",
+    ".markdown",
+    ".ipynb",
     // '.txt',  '.json', '.yaml', '.yml', '.xml', '.html', '.htm',
     // '.css', '.scss', '.less', '.sql', '.sh', '.bash', '.env'
 ];
 
 const DEFAULT_IGNORE_PATTERNS = [
     // Common build output and dependency directories
-    'node_modules/**',
-    'dist/**',
-    'build/**',
-    'out/**',
-    'target/**',
-    'coverage/**',
-    '.nyc_output/**',
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "out/**",
+    "target/**",
+    "coverage/**",
+    ".nyc_output/**",
 
     // IDE and editor files
-    '.vscode/**',
-    '.idea/**',
-    '*.swp',
-    '*.swo',
+    ".vscode/**",
+    ".idea/**",
+    "*.swp",
+    "*.swo",
 
     // Version control
-    '.git/**',
-    '.svn/**',
-    '.hg/**',
+    ".git/**",
+    ".svn/**",
+    ".hg/**",
 
     // Cache directories
-    '.cache/**',
-    '__pycache__/**',
-    '.pytest_cache/**',
+    ".cache/**",
+    "__pycache__/**",
+    ".pytest_cache/**",
 
     // Logs and temporary files
-    'logs/**',
-    'tmp/**',
-    'temp/**',
-    '*.log',
+    "logs/**",
+    "tmp/**",
+    "temp/**",
+    "*.log",
 
     // Environment and config files
-    '.env',
-    '.env.*',
-    '*.local',
+    ".env",
+    ".env.*",
+    "*.local",
 
     // Minified and bundled files
-    '*.min.js',
-    '*.min.css',
-    '*.min.map',
-    '*.bundle.js',
-    '*.bundle.css',
-    '*.chunk.js',
-    '*.vendor.js',
-    '*.polyfills.js',
-    '*.runtime.js',
-    '*.map', // source map files
-    'node_modules', '.git', '.svn', '.hg', 'build', 'dist', 'out',
-    'target', '.vscode', '.idea', '__pycache__', '.pytest_cache',
-    'coverage', '.nyc_output', 'logs', 'tmp', 'temp'
+    "*.min.js",
+    "*.min.css",
+    "*.min.map",
+    "*.bundle.js",
+    "*.bundle.css",
+    "*.chunk.js",
+    "*.vendor.js",
+    "*.polyfills.js",
+    "*.runtime.js",
+    "*.map", // source map files
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "build",
+    "dist",
+    "out",
+    "target",
+    ".vscode",
+    ".idea",
+    "__pycache__",
+    ".pytest_cache",
+    "coverage",
+    ".nyc_output",
+    "logs",
+    "tmp",
+    "temp",
 ];
 
 export interface ContextConfig {
@@ -175,18 +216,26 @@ export class Context {
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
-        this.embedding = config.embedding || new OpenAIEmbedding({
-            apiKey: envManager.get('OPENAI_API_KEY') || 'your-openai-api-key',
-            model: 'text-embedding-3-small',
-            ...(envManager.get('OPENAI_BASE_URL') && { baseURL: envManager.get('OPENAI_BASE_URL') })
-        });
+        this.embedding =
+            config.embedding ||
+            new OpenAIEmbedding({
+                apiKey:
+                    envManager.get("OPENAI_API_KEY") || "your-openai-api-key",
+                model: "text-embedding-3-small",
+                ...(envManager.get("OPENAI_BASE_URL") && {
+                    baseURL: envManager.get("OPENAI_BASE_URL"),
+                }),
+            });
 
         if (!config.vectorDatabase) {
-            throw new Error('VectorDatabase is required. Please provide a vectorDatabase instance in the config.');
+            throw new Error(
+                "VectorDatabase is required. Please provide a vectorDatabase instance in the config.",
+            );
         }
         this.vectorDatabase = config.vectorDatabase;
 
-        this.codeSplitter = config.codeSplitter || new AstCodeSplitter(2500, 300);
+        this.codeSplitter =
+            config.codeSplitter || new AstCodeSplitter(2500, 300);
 
         // Load custom extensions from environment variables
         const envCustomExtensions = this.getCustomExtensionsFromEnv();
@@ -196,12 +245,12 @@ export class Context {
             ...DEFAULT_SUPPORTED_EXTENSIONS,
             ...(config.supportedExtensions || []),
             ...(config.customExtensions || []),
-            ...envCustomExtensions
+            ...envCustomExtensions,
         ];
         // Remove duplicates
         this.defaultSupportedExtensions = [...new Set(allSupportedExtensions)];
 
-        // Load custom ignore patterns from environment variables  
+        // Load custom ignore patterns from environment variables
         const envCustomIgnorePatterns = this.getCustomIgnorePatternsFromEnv();
 
         // Start with default ignore patterns
@@ -209,50 +258,80 @@ export class Context {
             ...DEFAULT_IGNORE_PATTERNS,
             ...(config.ignorePatterns || []),
             ...(config.customIgnorePatterns || []),
-            ...envCustomIgnorePatterns
+            ...envCustomIgnorePatterns,
         ];
         // Remove duplicates
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
 
-        console.log(`[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`);
+        console.log(
+            `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
+        );
         if (envCustomExtensions.length > 0) {
-            console.log(`[Context] 📎 Loaded ${envCustomExtensions.length} custom extensions from environment: ${envCustomExtensions.join(', ')}`);
+            console.log(
+                `[Context] 📎 Loaded ${envCustomExtensions.length} custom extensions from environment: ${envCustomExtensions.join(", ")}`,
+            );
         }
         if (envCustomIgnorePatterns.length > 0) {
-            console.log(`[Context] 🚫 Loaded ${envCustomIgnorePatterns.length} custom ignore patterns from environment: ${envCustomIgnorePatterns.join(', ')}`);
+            console.log(
+                `[Context] 🚫 Loaded ${envCustomIgnorePatterns.length} custom ignore patterns from environment: ${envCustomIgnorePatterns.join(", ")}`,
+            );
         }
     }
 
     private normalizeExtensionsList(extensions: string[] = []): string[] {
-        return [...new Set(
-            extensions
-                .map(ext => ext.trim())
-                .filter(ext => ext.length > 0)
-                .map(ext => ext.startsWith('.') ? ext : `.${ext}`)
-        )];
+        return [
+            ...new Set(
+                extensions
+                    .map((ext) => ext.trim())
+                    .filter((ext) => ext.length > 0)
+                    .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`)),
+            ),
+        ];
     }
 
     private normalizeIgnorePatternsList(patterns: string[] = []): string[] {
-        return [...new Set(
-            patterns
-                .map(pattern => pattern.trim())
-                .filter(pattern => pattern.length > 0)
-        )];
+        return [
+            ...new Set(
+                patterns
+                    .map((pattern) => pattern.trim())
+                    .filter((pattern) => pattern.length > 0),
+            ),
+        ];
     }
 
-    private buildEffectiveExtensions(customExtensions: string[] = []): string[] {
-        return [...new Set([...this.defaultSupportedExtensions, ...customExtensions])];
+    private buildEffectiveExtensions(
+        customExtensions: string[] = [],
+    ): string[] {
+        return [
+            ...new Set([
+                ...this.defaultSupportedExtensions,
+                ...customExtensions,
+            ]),
+        ];
     }
 
-    private buildEffectiveIgnorePatterns(customIgnorePatterns: string[] = [], fileIgnorePatterns: string[] = []): string[] {
-        return [...new Set([...this.defaultIgnorePatterns, ...customIgnorePatterns, ...fileIgnorePatterns])];
+    private buildEffectiveIgnorePatterns(
+        customIgnorePatterns: string[] = [],
+        fileIgnorePatterns: string[] = [],
+    ): string[] {
+        return [
+            ...new Set([
+                ...this.defaultIgnorePatterns,
+                ...customIgnorePatterns,
+                ...fileIgnorePatterns,
+            ]),
+        ];
     }
 
-    private getCodebaseSession(codebasePath: string): CodebaseSessionState | undefined {
+    private getCodebaseSession(
+        codebasePath: string,
+    ): CodebaseSessionState | undefined {
         return this.codebaseSessions.get(normalizeCodebasePath(codebasePath));
     }
 
-    private getOrCreateCodebaseSession(codebasePath: string): CodebaseSessionState {
+    private getOrCreateCodebaseSession(
+        codebasePath: string,
+    ): CodebaseSessionState {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const existingSession = this.codebaseSessions.get(normalizedPath);
         if (existingSession) {
@@ -265,36 +344,49 @@ export class Context {
             customIgnorePatterns: [],
             fileIgnorePatterns: [],
             effectiveExtensions: [...this.defaultSupportedExtensions],
-            effectiveIgnorePatterns: [...this.defaultIgnorePatterns]
+            effectiveIgnorePatterns: [...this.defaultIgnorePatterns],
         };
         this.codebaseSessions.set(normalizedPath, nextSession);
         return nextSession;
     }
 
     private updateSessionEffectiveState(session: CodebaseSessionState): void {
-        session.effectiveExtensions = this.buildEffectiveExtensions(session.customExtensions);
+        session.effectiveExtensions = this.buildEffectiveExtensions(
+            session.customExtensions,
+        );
         session.effectiveIgnorePatterns = this.buildEffectiveIgnorePatterns(
             session.customIgnorePatterns,
-            session.fileIgnorePatterns
+            session.fileIgnorePatterns,
         );
-        session.synchronizer?.updateIgnorePatterns(session.effectiveIgnorePatterns);
+        session.synchronizer?.updateIgnorePatterns(
+            session.effectiveIgnorePatterns,
+        );
     }
 
-    configureCodebaseSession(codebasePath: string, config: CodebaseSessionConfig = {}): CodebaseSessionConfig {
+    configureCodebaseSession(
+        codebasePath: string,
+        config: CodebaseSessionConfig = {},
+    ): CodebaseSessionConfig {
         const session = this.getOrCreateCodebaseSession(codebasePath);
-        session.customExtensions = this.normalizeExtensionsList(config.customExtensions || []);
-        session.customIgnorePatterns = this.normalizeIgnorePatternsList(config.customIgnorePatterns || []);
+        session.customExtensions = this.normalizeExtensionsList(
+            config.customExtensions || [],
+        );
+        session.customIgnorePatterns = this.normalizeIgnorePatternsList(
+            config.customIgnorePatterns || [],
+        );
         this.updateSessionEffectiveState(session);
 
         console.log(
             `[Context] 🧩 Configured codebase session for ${session.codebasePath}: ` +
-            `${session.customExtensions.length} custom extensions, ${session.customIgnorePatterns.length} custom ignore patterns`
+                `${session.customExtensions.length} custom extensions, ${session.customIgnorePatterns.length} custom ignore patterns`,
         );
 
         return this.getCodebaseSessionConfig(session.codebasePath) || {};
     }
 
-    getCodebaseSessionConfig(codebasePath: string): CodebaseSessionConfig | undefined {
+    getCodebaseSessionConfig(
+        codebasePath: string,
+    ): CodebaseSessionConfig | undefined {
         const session = this.getCodebaseSession(codebasePath);
         if (!session) {
             return undefined;
@@ -302,7 +394,7 @@ export class Context {
 
         return {
             customExtensions: [...session.customExtensions],
-            customIgnorePatterns: [...session.customIgnorePatterns]
+            customIgnorePatterns: [...session.customIgnorePatterns],
         };
     }
 
@@ -317,11 +409,17 @@ export class Context {
         this.synchronizers.delete(collectionName);
     }
 
-    setSynchronizerForCodebase(codebasePath: string, synchronizer: FileSynchronizer): void {
+    setSynchronizerForCodebase(
+        codebasePath: string,
+        synchronizer: FileSynchronizer,
+    ): void {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(normalizedPath);
         session.synchronizer = synchronizer;
-        this.synchronizers.set(this.getCollectionName(normalizedPath), synchronizer);
+        this.synchronizers.set(
+            this.getCollectionName(normalizedPath),
+            synchronizer,
+        );
     }
 
     /**
@@ -353,7 +451,10 @@ export class Context {
             return [...this.defaultSupportedExtensions];
         }
 
-        return [...this.getOrCreateCodebaseSession(codebasePath).effectiveExtensions];
+        return [
+            ...this.getOrCreateCodebaseSession(codebasePath)
+                .effectiveExtensions,
+        ];
     }
 
     /**
@@ -364,7 +465,10 @@ export class Context {
             return [...this.defaultIgnorePatterns];
         }
 
-        return [...this.getOrCreateCodebaseSession(codebasePath).effectiveIgnorePatterns];
+        return [
+            ...this.getOrCreateCodebaseSession(codebasePath)
+                .effectiveIgnorePatterns,
+        ];
     }
 
     /**
@@ -377,7 +481,10 @@ export class Context {
     /**
      * Set synchronizer for a collection
      */
-    setSynchronizer(collectionName: string, synchronizer: FileSynchronizer): void {
+    setSynchronizer(
+        collectionName: string,
+        synchronizer: FileSynchronizer,
+    ): void {
         this.synchronizers.set(collectionName, synchronizer);
     }
 
@@ -403,11 +510,11 @@ export class Context {
      * Get isHybrid setting from environment variable with default true
      */
     private getIsHybrid(): boolean {
-        const isHybridEnv = envManager.get('HYBRID_MODE');
+        const isHybridEnv = envManager.get("HYBRID_MODE");
         if (isHybridEnv === undefined || isHybridEnv === null) {
             return true; // Default to true
         }
-        return isHybridEnv.toLowerCase() === 'true';
+        return isHybridEnv.toLowerCase() === "true";
     }
 
     /**
@@ -416,8 +523,11 @@ export class Context {
     public getCollectionName(codebasePath: string): string {
         const isHybrid = this.getIsHybrid();
         const normalizedPath = normalizeCodebasePath(codebasePath);
-        const hash = crypto.createHash('md5').update(normalizedPath).digest('hex');
-        const prefix = isHybrid === true ? 'hybrid_code_chunks' : 'code_chunks';
+        const hash = crypto
+            .createHash("md5")
+            .update(normalizedPath)
+            .digest("hex");
+        const prefix = isHybrid === true ? "hybrid_code_chunks" : "code_chunks";
         return `${prefix}_${hash.substring(0, 8)}`;
     }
 
@@ -430,15 +540,27 @@ export class Context {
      */
     async indexCodebase(
         codebasePath: string,
-        progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
+        progressCallback?: (progress: {
+            phase: string;
+            current: number;
+            total: number;
+            percentage: number;
+        }) => void,
         forceReindex: boolean = false,
-        abortSignal?: AbortSignal
-    ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
+        abortSignal?: AbortSignal,
+    ): Promise<{
+        indexedFiles: number;
+        totalChunks: number;
+        status: "completed" | "limit_reached";
+    }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
         const isHybrid = this.getIsHybrid();
-        const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
-        console.log(`[Context] 🚀 Starting to index codebase with ${searchType}: ${codebasePath}`);
+        const searchType =
+            isHybrid === true ? "hybrid search" : "semantic search";
+        console.log(
+            `[Context] 🚀 Starting to index codebase with ${searchType}: ${codebasePath}`,
+        );
         throwIfOperationAborted(abortSignal);
 
         // 1. Load ignore patterns from various ignore files
@@ -446,19 +568,40 @@ export class Context {
         throwIfOperationAborted(abortSignal);
 
         // 2. Check and prepare vector collection
-        progressCallback?.({ phase: 'Preparing collection...', current: 0, total: 100, percentage: 0 });
-        console.log(`Debug2: Preparing vector collection for codebase${forceReindex ? ' (FORCE REINDEX)' : ''}`);
+        progressCallback?.({
+            phase: "Preparing collection...",
+            current: 0,
+            total: 100,
+            percentage: 0,
+        });
+        console.log(
+            `Debug2: Preparing vector collection for codebase${forceReindex ? " (FORCE REINDEX)" : ""}`,
+        );
         await this.prepareCollection(codebasePath, forceReindex);
         throwIfOperationAborted(abortSignal);
 
         // 3. Recursively traverse codebase to get all supported files
-        progressCallback?.({ phase: 'Scanning files...', current: 5, total: 100, percentage: 5 });
-        const codeFiles = await this.getCodeFiles(codebasePath, session, abortSignal);
+        progressCallback?.({
+            phase: "Scanning files...",
+            current: 5,
+            total: 100,
+            percentage: 5,
+        });
+        const codeFiles = await this.getCodeFiles(
+            codebasePath,
+            session,
+            abortSignal,
+        );
         console.log(`[Context] 📁 Found ${codeFiles.length} code files`);
 
         if (codeFiles.length === 0) {
-            progressCallback?.({ phase: 'No files to index', current: 100, total: 100, percentage: 100 });
-            return { indexedFiles: 0, totalChunks: 0, status: 'completed' };
+            progressCallback?.({
+                phase: "No files to index",
+                current: 100,
+                total: 100,
+                percentage: 100,
+            });
+            return { indexedFiles: 0, totalChunks: 0, status: "completed" };
         }
 
         // 3. Process each file with streaming chunk processing
@@ -472,45 +615,57 @@ export class Context {
             codebasePath,
             (filePath, fileIndex, totalFiles) => {
                 // Calculate progress percentage
-                const progressPercentage = indexingStartPercentage + (fileIndex / totalFiles) * indexingRange;
+                const progressPercentage =
+                    indexingStartPercentage +
+                    (fileIndex / totalFiles) * indexingRange;
 
-                console.log(`[Context] 📊 Processed ${fileIndex}/${totalFiles} files`);
+                console.log(
+                    `[Context] 📊 Processed ${fileIndex}/${totalFiles} files`,
+                );
                 progressCallback?.({
                     phase: `Processing files (${fileIndex}/${totalFiles})...`,
                     current: fileIndex,
                     total: totalFiles,
-                    percentage: Math.round(progressPercentage)
+                    percentage: Math.round(progressPercentage),
                 });
             },
-            abortSignal
+            abortSignal,
         );
 
-        console.log(`[Context] ✅ Codebase indexing completed! Processed ${result.processedFiles} files in total, generated ${result.totalChunks} code chunks`);
+        console.log(
+            `[Context] ✅ Codebase indexing completed! Processed ${result.processedFiles} files in total, generated ${result.totalChunks} code chunks`,
+        );
 
         progressCallback?.({
-            phase: 'Indexing complete!',
+            phase: "Indexing complete!",
             current: result.processedFiles,
             total: codeFiles.length,
-            percentage: 100
+            percentage: 100,
         });
 
         return {
             indexedFiles: result.processedFiles,
             totalChunks: result.totalChunks,
-            status: result.status
+            status: result.status,
         };
     }
 
     async reindexByChange(
         codebasePath: string,
-        progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
-        abortSignal?: AbortSignal
-    ): Promise<{ added: number, removed: number, modified: number }> {
+        progressCallback?: (progress: {
+            phase: string;
+            current: number;
+            total: number;
+            percentage: number;
+        }) => void,
+        abortSignal?: AbortSignal,
+    ): Promise<{ added: number; removed: number; modified: number }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
         const collectionName = this.getCollectionName(codebasePath);
         throwIfOperationAborted(abortSignal);
-        const synchronizer = session.synchronizer || this.synchronizers.get(collectionName);
+        const synchronizer =
+            session.synchronizer || this.synchronizers.get(collectionName);
 
         if (synchronizer && !session.synchronizer) {
             session.synchronizer = synchronizer;
@@ -522,32 +677,58 @@ export class Context {
             throwIfOperationAborted(abortSignal);
 
             // To be safe, let's initialize if it's not there.
-            const newSynchronizer = new FileSynchronizer(codebasePath, session.effectiveIgnorePatterns);
+            const newSynchronizer = new FileSynchronizer(
+                codebasePath,
+                session.effectiveIgnorePatterns,
+            );
             await newSynchronizer.initialize();
             session.synchronizer = newSynchronizer;
             this.synchronizers.set(collectionName, newSynchronizer);
         }
 
-        const currentSynchronizer = session.synchronizer || this.synchronizers.get(collectionName)!;
+        const currentSynchronizer =
+            session.synchronizer || this.synchronizers.get(collectionName)!;
 
-        progressCallback?.({ phase: 'Checking for file changes...', current: 0, total: 100, percentage: 0 });
-        const { added, removed, modified } = await currentSynchronizer.checkForChanges();
+        progressCallback?.({
+            phase: "Checking for file changes...",
+            current: 0,
+            total: 100,
+            percentage: 0,
+        });
+        const { added, removed, modified } =
+            await currentSynchronizer.checkForChanges();
         throwIfOperationAborted(abortSignal);
         const totalChanges = added.length + removed.length + modified.length;
 
         if (totalChanges === 0) {
-            progressCallback?.({ phase: 'No changes detected', current: 100, total: 100, percentage: 100 });
-            console.log('[Context] ✅ No file changes detected.');
+            progressCallback?.({
+                phase: "No changes detected",
+                current: 100,
+                total: 100,
+                percentage: 100,
+            });
+            console.log("[Context] ✅ No file changes detected.");
             return { added: 0, removed: 0, modified: 0 };
         }
 
-        console.log(`[Context] 🔄 Found changes: ${added.length} added, ${removed.length} removed, ${modified.length} modified.`);
+        console.log(
+            `[Context] 🔄 Found changes: ${added.length} added, ${removed.length} removed, ${modified.length} modified.`,
+        );
 
         let processedChanges = 0;
         const updateProgress = (phase: string) => {
             processedChanges++;
-            const percentage = Math.round((processedChanges / (removed.length + modified.length + added.length)) * 100);
-            progressCallback?.({ phase, current: processedChanges, total: totalChanges, percentage });
+            const percentage = Math.round(
+                (processedChanges /
+                    (removed.length + modified.length + added.length)) *
+                    100,
+            );
+            progressCallback?.({
+                phase,
+                current: processedChanges,
+                total: totalChanges,
+                percentage,
+            });
         };
 
         // Handle removed files
@@ -565,39 +746,59 @@ export class Context {
         }
 
         // Handle added and modified files
-        const filesToIndex = [...added, ...modified].map(f => path.join(codebasePath, f));
+        const filesToIndex = [...added, ...modified].map((f) =>
+            path.join(codebasePath, f),
+        );
 
         if (filesToIndex.length > 0) {
             await this.processFileList(
                 filesToIndex,
                 codebasePath,
                 (filePath, fileIndex, totalFiles) => {
-                    updateProgress(`Indexed ${filePath} (${fileIndex}/${totalFiles})`);
+                    updateProgress(
+                        `Indexed ${filePath} (${fileIndex}/${totalFiles})`,
+                    );
                 },
-                abortSignal
+                abortSignal,
             );
         }
 
-        console.log(`[Context] ✅ Re-indexing complete. Added: ${added.length}, Removed: ${removed.length}, Modified: ${modified.length}`);
-        progressCallback?.({ phase: 'Re-indexing complete!', current: totalChanges, total: totalChanges, percentage: 100 });
+        console.log(
+            `[Context] ✅ Re-indexing complete. Added: ${added.length}, Removed: ${removed.length}, Modified: ${modified.length}`,
+        );
+        progressCallback?.({
+            phase: "Re-indexing complete!",
+            current: totalChanges,
+            total: totalChanges,
+            percentage: 100,
+        });
 
-        return { added: added.length, removed: removed.length, modified: modified.length };
+        return {
+            added: added.length,
+            removed: removed.length,
+            modified: modified.length,
+        };
     }
 
-    private async deleteFileChunks(collectionName: string, relativePath: string): Promise<void> {
+    private async deleteFileChunks(
+        collectionName: string,
+        relativePath: string,
+    ): Promise<void> {
         // Escape backslashes for Milvus query expression (Windows path compatibility)
-        const escapedPath = relativePath.replace(/\\/g, '\\\\');
+        const escapedPath = relativePath.replace(/\\/g, "\\\\");
         const results = await this.vectorDatabase.query(
             collectionName,
             `relativePath == "${escapedPath}"`,
-            ['id']
+            ["id"],
         );
 
         if (results.length > 0) {
-            const ids = results.map(r => r.id as string).filter(id => id);
+            const ids = results.map((r) => r.id as string).filter((id) => id);
             if (ids.length > 0) {
                 await this.vectorDatabase.delete(collectionName, ids);
-                console.log(`[Context] Deleted ${ids.length} chunks for file ${relativePath}`);
+                console.log(
+                    `[Context] Deleted ${ids.length} chunks for file ${relativePath}`,
+                );
             }
         }
     }
@@ -609,112 +810,162 @@ export class Context {
      * @param topK Number of results to return
      * @param threshold Similarity threshold
      */
-    async semanticSearch(codebasePath: string, query: string, topK: number = 5, threshold: number = 0.5, filterExpr?: string): Promise<SemanticSearchResult[]> {
+    async semanticSearch(
+        codebasePath: string,
+        query: string,
+        topK: number = 5,
+        threshold: number = 0.5,
+        filterExpr?: string,
+    ): Promise<SemanticSearchResult[]> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const isHybrid = this.getIsHybrid();
-        const searchType = isHybrid === true ? 'hybrid search' : 'semantic search';
-        console.log(`[Context] 🔍 Executing ${searchType}: "${query}" in ${codebasePath}`);
+        const searchType =
+            isHybrid === true ? "hybrid search" : "semantic search";
+        console.log(
+            `[Context] 🔍 Executing ${searchType}: "${query}" in ${codebasePath}`,
+        );
 
         const collectionName = this.getCollectionName(codebasePath);
         console.log(`[Context] 🔍 Using collection: ${collectionName}`);
 
         // Check if collection exists and has data
-        const hasCollection = await this.vectorDatabase.hasCollection(collectionName);
+        const hasCollection =
+            await this.vectorDatabase.hasCollection(collectionName);
         if (!hasCollection) {
-            console.log(`[Context] ⚠️  Collection '${collectionName}' does not exist. Please index the codebase first.`);
+            console.log(
+                `[Context] ⚠️  Collection '${collectionName}' does not exist. Please index the codebase first.`,
+            );
             return [];
         }
 
         if (isHybrid === true) {
             try {
                 // Check collection stats to see if it has data
-                const stats = await this.vectorDatabase.query(collectionName, undefined, ['id'], 1);
-                console.log(`[Context] 🔍 Collection '${collectionName}' exists and appears to have data`);
+                const stats = await this.vectorDatabase.query(
+                    collectionName,
+                    undefined,
+                    ["id"],
+                    1,
+                );
+                console.log(
+                    `[Context] 🔍 Collection '${collectionName}' exists and appears to have data`,
+                );
             } catch (error) {
-                console.log(`[Context] ⚠️  Collection '${collectionName}' exists but may be empty or not properly indexed:`, error);
+                console.log(
+                    `[Context] ⚠️  Collection '${collectionName}' exists but may be empty or not properly indexed:`,
+                    error,
+                );
             }
 
             // 1. Generate query vector
-            console.log(`[Context] 🔍 Generating embeddings for query: "${query}"`);
-            const queryEmbedding: EmbeddingVector = await this.embedding.embed(query);
-            console.log(`[Context] ✅ Generated embedding vector with dimension: ${queryEmbedding.vector.length}`);
-            console.log(`[Context] 🔍 First 5 embedding values: [${queryEmbedding.vector.slice(0, 5).join(', ')}]`);
+            console.log(
+                `[Context] 🔍 Generating embeddings for query: "${query}"`,
+            );
+            const queryEmbedding: EmbeddingVector =
+                await this.embedding.embed(query);
+            console.log(
+                `[Context] ✅ Generated embedding vector with dimension: ${queryEmbedding.vector.length}`,
+            );
+            console.log(
+                `[Context] 🔍 First 5 embedding values: [${queryEmbedding.vector.slice(0, 5).join(", ")}]`,
+            );
 
             // 2. Prepare hybrid search requests
             const searchRequests: HybridSearchRequest[] = [
                 {
                     data: queryEmbedding.vector,
                     anns_field: "vector",
-                    param: { "nprobe": 10 },
-                    limit: topK
+                    param: { nprobe: 10 },
+                    limit: topK,
                 },
                 {
                     data: query,
                     anns_field: "sparse_vector",
-                    param: { "drop_ratio_search": 0.2 },
-                    limit: topK
-                }
+                    param: { drop_ratio_search: 0.2 },
+                    limit: topK,
+                },
             ];
 
-            console.log(`[Context] 🔍 Search request 1 (dense): anns_field="${searchRequests[0].anns_field}", vector_dim=${queryEmbedding.vector.length}, limit=${searchRequests[0].limit}`);
-            console.log(`[Context] 🔍 Search request 2 (sparse): anns_field="${searchRequests[1].anns_field}", query_text="${query}", limit=${searchRequests[1].limit}`);
-
-            // 3. Execute hybrid search
-            console.log(`[Context] 🔍 Executing hybrid search with RRF reranking...`);
-            const searchResults: HybridSearchResult[] = await this.vectorDatabase.hybridSearch(
-                collectionName,
-                searchRequests,
-                {
-                    rerank: {
-                        strategy: 'rrf',
-                        params: { k: 100 }
-                    },
-                    limit: topK,
-                    filterExpr
-                }
+            console.log(
+                `[Context] 🔍 Search request 1 (dense): anns_field="${searchRequests[0].anns_field}", vector_dim=${queryEmbedding.vector.length}, limit=${searchRequests[0].limit}`,
+            );
+            console.log(
+                `[Context] 🔍 Search request 2 (sparse): anns_field="${searchRequests[1].anns_field}", query_text="${query}", limit=${searchRequests[1].limit}`,
             );
 
-            console.log(`[Context] 🔍 Raw search results count: ${searchResults.length}`);
+            // 3. Execute hybrid search
+            console.log(
+                `[Context] 🔍 Executing hybrid search with RRF reranking...`,
+            );
+            const searchResults: HybridSearchResult[] =
+                await this.vectorDatabase.hybridSearch(
+                    collectionName,
+                    searchRequests,
+                    {
+                        rerank: {
+                            strategy: "rrf",
+                            params: { k: 100 },
+                        },
+                        limit: topK,
+                        filterExpr,
+                    },
+                );
+
+            console.log(
+                `[Context] 🔍 Raw search results count: ${searchResults.length}`,
+            );
 
             // 4. Convert to semantic search result format
-            const results: SemanticSearchResult[] = searchResults.map(result => ({
-                content: result.document.content,
-                relativePath: result.document.relativePath,
-                startLine: result.document.startLine,
-                endLine: result.document.endLine,
-                language: result.document.metadata.language || 'unknown',
-                score: result.score
-            }));
+            const results: SemanticSearchResult[] = searchResults.map(
+                (result) => ({
+                    content: result.document.content,
+                    relativePath: result.document.relativePath,
+                    startLine: result.document.startLine,
+                    endLine: result.document.endLine,
+                    language: result.document.metadata.language || "unknown",
+                    score: result.score,
+                }),
+            );
 
-            console.log(`[Context] ✅ Found ${results.length} relevant hybrid results`);
+            console.log(
+                `[Context] ✅ Found ${results.length} relevant hybrid results`,
+            );
             if (results.length > 0) {
-                console.log(`[Context] 🔍 Top result score: ${results[0].score}, path: ${results[0].relativePath}`);
+                console.log(
+                    `[Context] 🔍 Top result score: ${results[0].score}, path: ${results[0].relativePath}`,
+                );
             }
 
             return results;
         } else {
             // Regular semantic search
             // 1. Generate query vector
-            const queryEmbedding: EmbeddingVector = await this.embedding.embed(query);
+            const queryEmbedding: EmbeddingVector =
+                await this.embedding.embed(query);
 
             // 2. Search in vector database
-            const searchResults: VectorSearchResult[] = await this.vectorDatabase.search(
-                collectionName,
-                queryEmbedding.vector,
-                { topK, threshold, filterExpr }
-            );
+            const searchResults: VectorSearchResult[] =
+                await this.vectorDatabase.search(
+                    collectionName,
+                    queryEmbedding.vector,
+                    { topK, threshold, filterExpr },
+                );
 
             // 3. Convert to semantic search result format
-            const results: SemanticSearchResult[] = searchResults.map(result => ({
-                content: result.document.content,
-                relativePath: result.document.relativePath,
-                startLine: result.document.startLine,
-                endLine: result.document.endLine,
-                language: result.document.metadata.language || 'unknown',
-                score: result.score
-            }));
+            const results: SemanticSearchResult[] = searchResults.map(
+                (result) => ({
+                    content: result.document.content,
+                    relativePath: result.document.relativePath,
+                    startLine: result.document.startLine,
+                    endLine: result.document.endLine,
+                    language: result.document.metadata.language || "unknown",
+                    score: result.score,
+                }),
+            );
 
-            console.log(`[Context] ✅ Found ${results.length} relevant results`);
+            console.log(
+                `[Context] ✅ Found ${results.length} relevant results`,
+            );
             return results;
         }
     }
@@ -737,17 +988,33 @@ export class Context {
      */
     async clearIndex(
         codebasePath: string,
-        progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void
+        progressCallback?: (progress: {
+            phase: string;
+            current: number;
+            total: number;
+            percentage: number;
+        }) => void,
     ): Promise<void> {
         codebasePath = normalizeCodebasePath(codebasePath);
         console.log(`[Context] 🧹 Cleaning index data for ${codebasePath}...`);
 
-        progressCallback?.({ phase: 'Checking existing index...', current: 0, total: 100, percentage: 0 });
+        progressCallback?.({
+            phase: "Checking existing index...",
+            current: 0,
+            total: 100,
+            percentage: 0,
+        });
 
         const collectionName = this.getCollectionName(codebasePath);
-        const collectionExists = await this.vectorDatabase.hasCollection(collectionName);
+        const collectionExists =
+            await this.vectorDatabase.hasCollection(collectionName);
 
-        progressCallback?.({ phase: 'Removing index data...', current: 50, total: 100, percentage: 50 });
+        progressCallback?.({
+            phase: "Removing index data...",
+            current: 50,
+            total: 100,
+            percentage: 50,
+        });
 
         if (collectionExists) {
             await this.vectorDatabase.dropCollection(collectionName);
@@ -757,16 +1024,25 @@ export class Context {
         await FileSynchronizer.deleteSnapshot(codebasePath);
         this.clearCodebaseSession(codebasePath);
 
-        progressCallback?.({ phase: 'Index cleared', current: 100, total: 100, percentage: 100 });
-        console.log('[Context] ✅ Index data cleaned');
+        progressCallback?.({
+            phase: "Index cleared",
+            current: 100,
+            total: 100,
+            percentage: 100,
+        });
+        console.log("[Context] ✅ Index data cleaned");
     }
 
     /**
      * Update ignore patterns (merges with default patterns and existing patterns)
      * @param ignorePatterns Array of ignore patterns to add to defaults
      */
-    updateIgnorePatterns(ignorePatterns: string[], codebasePath?: string): void {
-        const normalizedPatterns = this.normalizeIgnorePatternsList(ignorePatterns);
+    updateIgnorePatterns(
+        ignorePatterns: string[],
+        codebasePath?: string,
+    ): void {
+        const normalizedPatterns =
+            this.normalizeIgnorePatternsList(ignorePatterns);
 
         if (codebasePath) {
             const session = this.getOrCreateCodebaseSession(codebasePath);
@@ -774,15 +1050,16 @@ export class Context {
             this.updateSessionEffectiveState(session);
             console.log(
                 `[Context] 🚫 Updated codebase-specific ignore patterns for ${session.codebasePath}: ` +
-                `${session.customIgnorePatterns.length} custom, ${session.effectiveIgnorePatterns.length} effective`
+                    `${session.customIgnorePatterns.length} custom, ${session.effectiveIgnorePatterns.length} effective`,
             );
             return;
         }
 
-        this.defaultIgnorePatterns = this.buildEffectiveIgnorePatterns(normalizedPatterns);
+        this.defaultIgnorePatterns =
+            this.buildEffectiveIgnorePatterns(normalizedPatterns);
         console.log(
             `[Context] 🚫 Updated default ignore patterns: ${normalizedPatterns.length} custom + ` +
-            `${DEFAULT_IGNORE_PATTERNS.length} built-in = ${this.defaultIgnorePatterns.length} total`
+                `${DEFAULT_IGNORE_PATTERNS.length} built-in = ${this.defaultIgnorePatterns.length} total`,
         );
     }
 
@@ -790,30 +1067,38 @@ export class Context {
      * Add custom ignore patterns (from MCP or other sources) without replacing existing ones
      * @param customPatterns Array of custom ignore patterns to add
      */
-    addCustomIgnorePatterns(customPatterns: string[], codebasePath?: string): void {
+    addCustomIgnorePatterns(
+        customPatterns: string[],
+        codebasePath?: string,
+    ): void {
         if (customPatterns.length === 0) return;
 
-        const normalizedPatterns = this.normalizeIgnorePatternsList(customPatterns);
+        const normalizedPatterns =
+            this.normalizeIgnorePatternsList(customPatterns);
 
         if (codebasePath) {
             const session = this.getOrCreateCodebaseSession(codebasePath);
             session.customIgnorePatterns = this.normalizeIgnorePatternsList([
                 ...session.customIgnorePatterns,
-                ...normalizedPatterns
+                ...normalizedPatterns,
             ]);
             this.updateSessionEffectiveState(session);
             console.log(
                 `[Context] 🚫 Added ${normalizedPatterns.length} codebase-specific ignore patterns for ${session.codebasePath}. ` +
-                `Total effective patterns: ${session.effectiveIgnorePatterns.length}`
+                    `Total effective patterns: ${session.effectiveIgnorePatterns.length}`,
             );
             return;
         }
 
         this.defaultIgnorePatterns = this.buildEffectiveIgnorePatterns([
-            ...this.defaultIgnorePatterns.filter(pattern => !DEFAULT_IGNORE_PATTERNS.includes(pattern)),
-            ...normalizedPatterns
+            ...this.defaultIgnorePatterns.filter(
+                (pattern) => !DEFAULT_IGNORE_PATTERNS.includes(pattern),
+            ),
+            ...normalizedPatterns,
         ]);
-        console.log(`[Context] 🚫 Added ${normalizedPatterns.length} custom ignore patterns. Total default patterns: ${this.defaultIgnorePatterns.length}`);
+        console.log(
+            `[Context] 🚫 Added ${normalizedPatterns.length} custom ignore patterns. Total default patterns: ${this.defaultIgnorePatterns.length}`,
+        );
     }
 
     /**
@@ -825,12 +1110,16 @@ export class Context {
             session.customIgnorePatterns = [];
             session.fileIgnorePatterns = [];
             this.updateSessionEffectiveState(session);
-            console.log(`[Context] 🔄 Reset ignore patterns to defaults for ${session.codebasePath}: ${session.effectiveIgnorePatterns.length} patterns`);
+            console.log(
+                `[Context] 🔄 Reset ignore patterns to defaults for ${session.codebasePath}: ${session.effectiveIgnorePatterns.length} patterns`,
+            );
             return;
         }
 
         this.defaultIgnorePatterns = [...DEFAULT_IGNORE_PATTERNS];
-        console.log(`[Context] 🔄 Reset default ignore patterns: ${this.defaultIgnorePatterns.length} patterns`);
+        console.log(
+            `[Context] 🔄 Reset default ignore patterns: ${this.defaultIgnorePatterns.length} patterns`,
+        );
     }
 
     /**
@@ -839,7 +1128,9 @@ export class Context {
      */
     updateEmbedding(embedding: Embedding): void {
         this.embedding = embedding;
-        console.log(`[Context] 🔄 Updated embedding provider: ${embedding.getProvider()}`);
+        console.log(
+            `[Context] 🔄 Updated embedding provider: ${embedding.getProvider()}`,
+        );
     }
 
     /**
@@ -863,38 +1154,64 @@ export class Context {
     /**
      * Prepare vector collection
      */
-    private async prepareCollection(codebasePath: string, forceReindex: boolean = false): Promise<void> {
+    private async prepareCollection(
+        codebasePath: string,
+        forceReindex: boolean = false,
+    ): Promise<void> {
         const isHybrid = this.getIsHybrid();
-        const collectionType = isHybrid === true ? 'hybrid vector' : 'vector';
-        console.log(`[Context] 🔧 Preparing ${collectionType} collection for codebase: ${codebasePath}${forceReindex ? ' (FORCE REINDEX)' : ''}`);
+        const collectionType = isHybrid === true ? "hybrid vector" : "vector";
+        console.log(
+            `[Context] 🔧 Preparing ${collectionType} collection for codebase: ${codebasePath}${forceReindex ? " (FORCE REINDEX)" : ""}`,
+        );
         const collectionName = this.getCollectionName(codebasePath);
 
         // Check if collection already exists
-        const collectionExists = await this.vectorDatabase.hasCollection(collectionName);
+        const collectionExists =
+            await this.vectorDatabase.hasCollection(collectionName);
 
         if (collectionExists && !forceReindex) {
-            console.log(`📋 Collection ${collectionName} already exists, skipping creation`);
+            console.log(
+                `📋 Collection ${collectionName} already exists, skipping creation`,
+            );
             return;
         }
 
         if (collectionExists && forceReindex) {
-            console.log(`[Context] 🗑️  Dropping existing collection ${collectionName} for force reindex...`);
+            console.log(
+                `[Context] 🗑️  Dropping existing collection ${collectionName} for force reindex...`,
+            );
             await this.vectorDatabase.dropCollection(collectionName);
-            console.log(`[Context] ✅ Collection ${collectionName} dropped successfully`);
+            console.log(
+                `[Context] ✅ Collection ${collectionName} dropped successfully`,
+            );
         }
 
-        console.log(`[Context] 🔍 Detecting embedding dimension for ${this.embedding.getProvider()} provider...`);
+        console.log(
+            `[Context] 🔍 Detecting embedding dimension for ${this.embedding.getProvider()} provider...`,
+        );
         const dimension = await this.embedding.detectDimension();
-        console.log(`[Context] 📏 Detected dimension: ${dimension} for ${this.embedding.getProvider()}`);
+        console.log(
+            `[Context] 📏 Detected dimension: ${dimension} for ${this.embedding.getProvider()}`,
+        );
         const dirName = path.basename(codebasePath);
 
         if (isHybrid === true) {
-            await this.vectorDatabase.createHybridCollection(collectionName, dimension, `codebasePath:${codebasePath}`);
+            await this.vectorDatabase.createHybridCollection(
+                collectionName,
+                dimension,
+                `codebasePath:${codebasePath}`,
+            );
         } else {
-            await this.vectorDatabase.createCollection(collectionName, dimension, `codebasePath:${codebasePath}`);
+            await this.vectorDatabase.createCollection(
+                collectionName,
+                dimension,
+                `codebasePath:${codebasePath}`,
+            );
         }
 
-        console.log(`[Context] ✅ Collection ${collectionName} created successfully (dimension: ${dimension})`);
+        console.log(
+            `[Context] ✅ Collection ${collectionName} created successfully (dimension: ${dimension})`,
+        );
     }
 
     /**
@@ -903,20 +1220,28 @@ export class Context {
     private async getCodeFiles(
         codebasePath: string,
         session: CodebaseSessionState,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
     ): Promise<string[]> {
         const files: string[] = [];
 
         const traverseDirectory = async (currentPath: string) => {
             throwIfOperationAborted(abortSignal);
-            const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+            const entries = await fs.promises.readdir(currentPath, {
+                withFileTypes: true,
+            });
 
             for (const entry of entries) {
                 throwIfOperationAborted(abortSignal);
                 const fullPath = path.join(currentPath, entry.name);
 
                 // Check if path matches ignore patterns
-                if (this.matchesIgnorePattern(fullPath, codebasePath, session.effectiveIgnorePatterns)) {
+                if (
+                    this.matchesIgnorePattern(
+                        fullPath,
+                        codebasePath,
+                        session.effectiveIgnorePatterns,
+                    )
+                ) {
                     continue;
                 }
 
@@ -936,22 +1261,35 @@ export class Context {
     }
 
     /**
- * Process a list of files with streaming chunk processing
- * @param filePaths Array of file paths to process
- * @param codebasePath Base path for the codebase
- * @param onFileProcessed Callback called when each file is processed
- * @returns Object with processed file count and total chunk count
- */
+     * Process a list of files with streaming chunk processing
+     * @param filePaths Array of file paths to process
+     * @param codebasePath Base path for the codebase
+     * @param onFileProcessed Callback called when each file is processed
+     * @returns Object with processed file count and total chunk count
+     */
     private async processFileList(
         filePaths: string[],
         codebasePath: string,
-        onFileProcessed?: (filePath: string, fileIndex: number, totalFiles: number) => void,
-        abortSignal?: AbortSignal
-    ): Promise<{ processedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
+        onFileProcessed?: (
+            filePath: string,
+            fileIndex: number,
+            totalFiles: number,
+        ) => void,
+        abortSignal?: AbortSignal,
+    ): Promise<{
+        processedFiles: number;
+        totalChunks: number;
+        status: "completed" | "limit_reached";
+    }> {
         const isHybrid = this.getIsHybrid();
-        const EMBEDDING_BATCH_SIZE = Math.max(1, parseInt(envManager.get('EMBEDDING_BATCH_SIZE') || '100', 10));
+        const EMBEDDING_BATCH_SIZE = Math.max(
+            1,
+            parseInt(envManager.get("EMBEDDING_BATCH_SIZE") || "100", 10),
+        );
         const CHUNK_LIMIT = 450000;
-        console.log(`[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`);
+        console.log(
+            `[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`,
+        );
 
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
         let processedFiles = 0;
@@ -963,17 +1301,27 @@ export class Context {
             const filePath = filePaths[i];
 
             try {
-                const content = await fs.promises.readFile(filePath, 'utf-8');
+                const content = await fs.promises.readFile(filePath, "utf-8");
                 throwIfOperationAborted(abortSignal);
-                const language = this.getLanguageFromExtension(path.extname(filePath));
-                const chunks = await this.codeSplitter.split(content, language, filePath);
+                const language = this.getLanguageFromExtension(
+                    path.extname(filePath),
+                );
+                const chunks = await this.codeSplitter.split(
+                    content,
+                    language,
+                    filePath,
+                );
                 throwIfOperationAborted(abortSignal);
 
                 // Log files with many chunks or large content
                 if (chunks.length > 50) {
-                    console.warn(`[Context] ⚠️  File ${filePath} generated ${chunks.length} chunks (${Math.round(content.length / 1024)}KB)`);
+                    console.warn(
+                        `[Context] ⚠️  File ${filePath} generated ${chunks.length} chunks (${Math.round(content.length / 1024)}KB)`,
+                    );
                 } else if (content.length > 100000) {
-                    console.log(`📄 Large file ${filePath}: ${Math.round(content.length / 1024)}KB -> ${chunks.length} chunks`);
+                    console.log(
+                        `📄 Large file ${filePath}: ${Math.round(content.length / 1024)}KB -> ${chunks.length} chunks`,
+                    );
                 }
 
                 // Add chunks to buffer
@@ -990,10 +1338,17 @@ export class Context {
                             if (isFatalEmbeddingBatchError(error)) {
                                 throw error;
                             }
-                            const searchType = isHybrid === true ? 'hybrid' : 'regular';
-                            console.error(`[Context] ❌ Failed to process chunk batch for ${searchType}:`, error);
+                            const searchType =
+                                isHybrid === true ? "hybrid" : "regular";
+                            console.error(
+                                `[Context] ❌ Failed to process chunk batch for ${searchType}:`,
+                                error,
+                            );
                             if (error instanceof Error) {
-                                console.error('[Context] Stack trace:', error.stack);
+                                console.error(
+                                    "[Context] Stack trace:",
+                                    error.stack,
+                                );
                             }
                         } finally {
                             chunkBuffer = []; // Always clear buffer, even on failure
@@ -1002,7 +1357,9 @@ export class Context {
 
                     // Check if chunk limit is reached
                     if (totalChunks >= CHUNK_LIMIT) {
-                        console.warn(`[Context] ⚠️  Chunk limit of ${CHUNK_LIMIT} reached. Stopping indexing.`);
+                        console.warn(
+                            `[Context] ⚠️  Chunk limit of ${CHUNK_LIMIT} reached. Stopping indexing.`,
+                        );
                         limitReached = true;
                         break; // Exit the inner loop (over chunks)
                     }
@@ -1014,29 +1371,35 @@ export class Context {
                 if (limitReached) {
                     break; // Exit the outer loop (over files)
                 }
-
             } catch (error) {
                 if (isFatalEmbeddingBatchError(error)) {
                     throw error;
                 }
-                console.warn(`[Context] ⚠️  Skipping file ${filePath}: ${error}`);
+                console.warn(
+                    `[Context] ⚠️  Skipping file ${filePath}: ${error}`,
+                );
             }
         }
 
         // Process any remaining chunks in the buffer
         if (chunkBuffer.length > 0) {
             throwIfOperationAborted(abortSignal);
-            const searchType = isHybrid === true ? 'hybrid' : 'regular';
-            console.log(`📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`);
+            const searchType = isHybrid === true ? "hybrid" : "regular";
+            console.log(
+                `📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`,
+            );
             try {
                 await this.processChunkBuffer(chunkBuffer);
             } catch (error) {
                 if (isFatalEmbeddingBatchError(error)) {
                     throw error;
                 }
-                console.error(`[Context] ❌ Failed to process final chunk batch for ${searchType}:`, error);
+                console.error(
+                    `[Context] ❌ Failed to process final chunk batch for ${searchType}:`,
+                    error,
+                );
                 if (error instanceof Error) {
-                    console.error('[Context] Stack trace:', error.stack);
+                    console.error("[Context] Stack trace:", error.stack);
                 }
             }
         }
@@ -1044,52 +1407,73 @@ export class Context {
         return {
             processedFiles,
             totalChunks,
-            status: limitReached ? 'limit_reached' : 'completed'
+            status: limitReached ? "limit_reached" : "completed",
         };
     }
 
     /**
- * Process accumulated chunk buffer
- */
-    private async processChunkBuffer(chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>): Promise<void> {
+     * Process accumulated chunk buffer
+     */
+    private async processChunkBuffer(
+        chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>,
+    ): Promise<void> {
         if (chunkBuffer.length === 0) return;
 
         // Extract chunks and ensure they all have the same codebasePath
-        const chunks = chunkBuffer.map(item => item.chunk);
+        const chunks = chunkBuffer.map((item) => item.chunk);
         const codebasePath = chunkBuffer[0].codebasePath;
 
         // Estimate tokens (rough estimation: 1 token ≈ 4 characters)
-        const estimatedTokens = chunks.reduce((sum, chunk) => sum + Math.ceil(chunk.content.length / 4), 0);
+        const estimatedTokens = chunks.reduce(
+            (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
+            0,
+        );
 
         const isHybrid = this.getIsHybrid();
-        const searchType = isHybrid === true ? 'hybrid' : 'regular';
-        console.log(`[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`);
+        const searchType = isHybrid === true ? "hybrid" : "regular";
+        console.log(
+            `[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`,
+        );
         await this.processChunkBatch(chunks, codebasePath);
     }
 
     /**
      * Process a batch of chunks
      */
-    private async processChunkBatch(chunks: CodeChunk[], codebasePath: string): Promise<void> {
+    private async processChunkBatch(
+        chunks: CodeChunk[],
+        codebasePath: string,
+    ): Promise<void> {
         const isHybrid = this.getIsHybrid();
 
         // Generate embedding vectors
-        const chunkContents = chunks.map(chunk => chunk.content);
+        const chunkContents = chunks.map((chunk) => chunk.content);
         const embeddings = await this.embedding.embedBatch(chunkContents);
 
         if (isHybrid === true) {
             // Create hybrid vector documents
             const documents: VectorDocument[] = chunks.map((chunk, index) => {
                 if (!chunk.metadata.filePath) {
-                    throw new Error(`Missing filePath in chunk metadata at index ${index}`);
+                    throw new Error(
+                        `Missing filePath in chunk metadata at index ${index}`,
+                    );
                 }
 
-                const relativePath = path.relative(codebasePath, chunk.metadata.filePath);
+                const relativePath = path.relative(
+                    codebasePath,
+                    chunk.metadata.filePath,
+                );
                 const fileExtension = path.extname(chunk.metadata.filePath);
-                const { filePath, startLine, endLine, ...restMetadata } = chunk.metadata;
+                const { filePath, startLine, endLine, ...restMetadata } =
+                    chunk.metadata;
 
                 return {
-                    id: this.generateId(relativePath, chunk.metadata.startLine || 0, chunk.metadata.endLine || 0, chunk.content),
+                    id: this.generateId(
+                        relativePath,
+                        chunk.metadata.startLine || 0,
+                        chunk.metadata.endLine || 0,
+                        chunk.content,
+                    ),
                     content: chunk.content, // Full text content for BM25 and storage
                     vector: embeddings[index].vector, // Dense vector
                     relativePath,
@@ -1099,27 +1483,41 @@ export class Context {
                     metadata: {
                         ...restMetadata,
                         codebasePath,
-                        language: chunk.metadata.language || 'unknown',
-                        chunkIndex: index
-                    }
+                        language: chunk.metadata.language || "unknown",
+                        chunkIndex: index,
+                    },
                 };
             });
 
             // Store to vector database
-            await this.vectorDatabase.insertHybrid(this.getCollectionName(codebasePath), documents);
+            await this.vectorDatabase.insertHybrid(
+                this.getCollectionName(codebasePath),
+                documents,
+            );
         } else {
             // Create regular vector documents
             const documents: VectorDocument[] = chunks.map((chunk, index) => {
                 if (!chunk.metadata.filePath) {
-                    throw new Error(`Missing filePath in chunk metadata at index ${index}`);
+                    throw new Error(
+                        `Missing filePath in chunk metadata at index ${index}`,
+                    );
                 }
 
-                const relativePath = path.relative(codebasePath, chunk.metadata.filePath);
+                const relativePath = path.relative(
+                    codebasePath,
+                    chunk.metadata.filePath,
+                );
                 const fileExtension = path.extname(chunk.metadata.filePath);
-                const { filePath, startLine, endLine, ...restMetadata } = chunk.metadata;
+                const { filePath, startLine, endLine, ...restMetadata } =
+                    chunk.metadata;
 
                 return {
-                    id: this.generateId(relativePath, chunk.metadata.startLine || 0, chunk.metadata.endLine || 0, chunk.content),
+                    id: this.generateId(
+                        relativePath,
+                        chunk.metadata.startLine || 0,
+                        chunk.metadata.endLine || 0,
+                        chunk.content,
+                    ),
                     vector: embeddings[index].vector,
                     content: chunk.content,
                     relativePath,
@@ -1129,14 +1527,17 @@ export class Context {
                     metadata: {
                         ...restMetadata,
                         codebasePath,
-                        language: chunk.metadata.language || 'unknown',
-                        chunkIndex: index
-                    }
+                        language: chunk.metadata.language || "unknown",
+                        chunkIndex: index,
+                    },
                 };
             });
 
             // Store to vector database
-            await this.vectorDatabase.insert(this.getCollectionName(codebasePath), documents);
+            await this.vectorDatabase.insert(
+                this.getCollectionName(codebasePath),
+                documents,
+            );
         }
     }
 
@@ -1145,29 +1546,31 @@ export class Context {
      */
     private getLanguageFromExtension(ext: string): string {
         const languageMap: Record<string, string> = {
-            '.ts': 'typescript',
-            '.tsx': 'typescript',
-            '.js': 'javascript',
-            '.jsx': 'javascript',
-            '.py': 'python',
-            '.java': 'java',
-            '.cpp': 'cpp',
-            '.c': 'c',
-            '.h': 'c',
-            '.hpp': 'cpp',
-            '.cs': 'csharp',
-            '.go': 'go',
-            '.rs': 'rust',
-            '.php': 'php',
-            '.rb': 'ruby',
-            '.swift': 'swift',
-            '.kt': 'kotlin',
-            '.scala': 'scala',
-            '.m': 'objective-c',
-            '.mm': 'objective-c',
-            '.ipynb': 'jupyter'
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".py": "python",
+            ".java": "java",
+            ".cpp": "cpp",
+            ".c": "c",
+            ".h": "c",
+            ".hpp": "cpp",
+            ".cs": "csharp",
+            ".go": "go",
+            ".rs": "rust",
+            ".php": "php",
+            ".rb": "ruby",
+            ".swift": "swift",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".m": "objective-c",
+            ".mm": "objective-c",
+            ".ipynb": "jupyter",
+            ".bsl": "bsl",
+            ".os": "bsl",
         };
-        return languageMap[ext] || 'text';
+        return languageMap[ext] || "text";
     }
 
     /**
@@ -1178,9 +1581,17 @@ export class Context {
      * @param content Chunk content
      * @returns Hash-based unique ID
      */
-    private generateId(relativePath: string, startLine: number, endLine: number, content: string): string {
+    private generateId(
+        relativePath: string,
+        startLine: number,
+        endLine: number,
+        content: string,
+    ): string {
         const combinedString = `${relativePath}:${startLine}:${endLine}:${content}`;
-        const hash = crypto.createHash('sha256').update(combinedString, 'utf-8').digest('hex');
+        const hash = crypto
+            .createHash("sha256")
+            .update(combinedString, "utf-8")
+            .digest("hex");
         return `chunk_${hash.substring(0, 16)}`;
     }
 
@@ -1189,15 +1600,19 @@ export class Context {
      * @param filePath Path to the ignore file
      * @returns Array of ignore patterns
      */
-    static async getIgnorePatternsFromFile(filePath: string): Promise<string[]> {
+    static async getIgnorePatternsFromFile(
+        filePath: string,
+    ): Promise<string[]> {
         try {
-            const content = await fs.promises.readFile(filePath, 'utf-8');
+            const content = await fs.promises.readFile(filePath, "utf-8");
             return content
-                .split('\n')
-                .map(line => line.trim())
-                .filter(line => line && !line.startsWith('#')); // Filter out empty lines and comments
+                .split("\n")
+                .map((line) => line.trim())
+                .filter((line) => line && !line.startsWith("#")); // Filter out empty lines and comments
         } catch (error) {
-            console.warn(`[Context] ⚠️  Could not read ignore file ${filePath}: ${error}`);
+            console.warn(
+                `[Context] ⚠️  Could not read ignore file ${filePath}: ${error}`,
+            );
             return [];
         }
     }
@@ -1215,7 +1630,10 @@ export class Context {
             // Load all .xxxignore files in codebase directory
             const ignoreFiles = await this.findIgnoreFiles(codebasePath);
             for (const ignoreFile of ignoreFiles) {
-                const patterns = await this.loadIgnoreFile(ignoreFile, path.basename(ignoreFile));
+                const patterns = await this.loadIgnoreFile(
+                    ignoreFile,
+                    path.basename(ignoreFile),
+                );
                 fileBasedPatterns.push(...patterns);
             }
 
@@ -1223,19 +1641,24 @@ export class Context {
             const globalIgnorePatterns = await this.loadGlobalIgnoreFile();
             fileBasedPatterns.push(...globalIgnorePatterns);
 
-            session.fileIgnorePatterns = this.normalizeIgnorePatternsList(fileBasedPatterns);
+            session.fileIgnorePatterns =
+                this.normalizeIgnorePatternsList(fileBasedPatterns);
             this.updateSessionEffectiveState(session);
 
             if (session.fileIgnorePatterns.length > 0) {
                 console.log(
                     `[Context] 🚫 Loaded total ${session.fileIgnorePatterns.length} file-based ignore patterns for ${session.codebasePath}. ` +
-                    `Effective ignore count: ${session.effectiveIgnorePatterns.length}`
+                        `Effective ignore count: ${session.effectiveIgnorePatterns.length}`,
                 );
             } else {
-                console.log(`[Context] 📄 No ignore files found for ${session.codebasePath}. Using ${session.effectiveIgnorePatterns.length} effective ignore patterns`);
+                console.log(
+                    `[Context] 📄 No ignore files found for ${session.codebasePath}. Using ${session.effectiveIgnorePatterns.length} effective ignore patterns`,
+                );
             }
         } catch (error) {
-            console.warn(`[Context] ⚠️ Failed to load ignore patterns: ${error}`);
+            console.warn(
+                `[Context] ⚠️ Failed to load ignore patterns: ${error}`,
+            );
             // Continue with existing session patterns on error.
         }
     }
@@ -1247,24 +1670,32 @@ export class Context {
      */
     private async findIgnoreFiles(codebasePath: string): Promise<string[]> {
         try {
-            const entries = await fs.promises.readdir(codebasePath, { withFileTypes: true });
+            const entries = await fs.promises.readdir(codebasePath, {
+                withFileTypes: true,
+            });
             const ignoreFiles: string[] = [];
 
             for (const entry of entries) {
-                if (entry.isFile() &&
-                    entry.name.startsWith('.') &&
-                    entry.name.endsWith('ignore')) {
+                if (
+                    entry.isFile() &&
+                    entry.name.startsWith(".") &&
+                    entry.name.endsWith("ignore")
+                ) {
                     ignoreFiles.push(path.join(codebasePath, entry.name));
                 }
             }
 
             if (ignoreFiles.length > 0) {
-                console.log(`📄 Found ignore files: ${ignoreFiles.map(f => path.basename(f)).join(', ')}`);
+                console.log(
+                    `📄 Found ignore files: ${ignoreFiles.map((f) => path.basename(f)).join(", ")}`,
+                );
             }
 
             return ignoreFiles;
         } catch (error) {
-            console.warn(`[Context] ⚠️ Failed to scan for ignore files: ${error}`);
+            console.warn(
+                `[Context] ⚠️ Failed to scan for ignore files: ${error}`,
+            );
             return [];
         }
     }
@@ -1275,9 +1706,16 @@ export class Context {
      */
     private async loadGlobalIgnoreFile(): Promise<string[]> {
         try {
-            const homeDir = require('os').homedir();
-            const globalIgnorePath = path.join(homeDir, '.context', '.contextignore');
-            return await this.loadIgnoreFile(globalIgnorePath, 'global .contextignore');
+            const homeDir = require("os").homedir();
+            const globalIgnorePath = path.join(
+                homeDir,
+                ".context",
+                ".contextignore",
+            );
+            return await this.loadIgnoreFile(
+                globalIgnorePath,
+                "global .contextignore",
+            );
         } catch (error) {
             // Global ignore file is optional, don't log warnings
             return [];
@@ -1290,22 +1728,30 @@ export class Context {
      * @param fileName Display name for logging
      * @returns Array of ignore patterns
      */
-    private async loadIgnoreFile(filePath: string, fileName: string): Promise<string[]> {
+    private async loadIgnoreFile(
+        filePath: string,
+        fileName: string,
+    ): Promise<string[]> {
         try {
             await fs.promises.access(filePath);
             console.log(`📄 Found ${fileName} file at: ${filePath}`);
 
-            const ignorePatterns = await Context.getIgnorePatternsFromFile(filePath);
+            const ignorePatterns =
+                await Context.getIgnorePatternsFromFile(filePath);
 
             if (ignorePatterns.length > 0) {
-                console.log(`[Context] 🚫 Loaded ${ignorePatterns.length} ignore patterns from ${fileName}`);
+                console.log(
+                    `[Context] 🚫 Loaded ${ignorePatterns.length} ignore patterns from ${fileName}`,
+                );
                 return ignorePatterns;
             } else {
-                console.log(`📄 ${fileName} file found but no valid patterns detected`);
+                console.log(
+                    `📄 ${fileName} file found but no valid patterns detected`,
+                );
                 return [];
             }
         } catch (error) {
-            if (fileName.includes('global')) {
+            if (fileName.includes("global")) {
                 console.log(`📄 No ${fileName} file found`);
             }
             return [];
@@ -1318,13 +1764,17 @@ export class Context {
      * @param basePath Base path for relative pattern matching
      * @returns True if path should be ignored
      */
-    private matchesIgnorePattern(filePath: string, basePath: string, ignorePatterns: string[]): boolean {
+    private matchesIgnorePattern(
+        filePath: string,
+        basePath: string,
+        ignorePatterns: string[],
+    ): boolean {
         if (ignorePatterns.length === 0) {
             return false;
         }
 
         const relativePath = path.relative(basePath, filePath);
-        const normalizedPath = relativePath.replace(/\\/g, '/'); // Normalize path separators
+        const normalizedPath = relativePath.replace(/\\/g, "/"); // Normalize path separators
 
         for (const pattern of ignorePatterns) {
             if (this.isPatternMatch(normalizedPath, pattern)) {
@@ -1343,14 +1793,16 @@ export class Context {
      */
     private isPatternMatch(filePath: string, pattern: string): boolean {
         // Handle directory patterns (ending with /)
-        if (pattern.endsWith('/')) {
+        if (pattern.endsWith("/")) {
             const dirPattern = pattern.slice(0, -1);
-            const pathParts = filePath.split('/');
-            return pathParts.some(part => this.simpleGlobMatch(part, dirPattern));
+            const pathParts = filePath.split("/");
+            return pathParts.some((part) =>
+                this.simpleGlobMatch(part, dirPattern),
+            );
         }
 
         // Handle file patterns
-        if (pattern.includes('/')) {
+        if (pattern.includes("/")) {
             // Pattern with path separator - match exact path
             return this.simpleGlobMatch(filePath, pattern);
         } else {
@@ -1369,8 +1821,8 @@ export class Context {
     private simpleGlobMatch(text: string, pattern: string): boolean {
         // Convert glob pattern to regex
         const regexPattern = pattern
-            .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex special chars except *
-            .replace(/\*/g, '.*'); // Convert * to .*
+            .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex special chars except *
+            .replace(/\*/g, ".*"); // Convert * to .*
 
         const regex = new RegExp(`^${regexPattern}$`);
         return regex.test(text);
@@ -1382,45 +1834,49 @@ export class Context {
      * @returns Array of custom extensions
      */
     private getCustomExtensionsFromEnv(): string[] {
-        const envExtensions = envManager.get('CUSTOM_EXTENSIONS');
+        const envExtensions = envManager.get("CUSTOM_EXTENSIONS");
         if (!envExtensions) {
             return [];
         }
 
         try {
             const extensions = envExtensions
-                .split(',')
-                .map(ext => ext.trim())
-                .filter(ext => ext.length > 0)
-                .map(ext => ext.startsWith('.') ? ext : `.${ext}`); // Ensure extensions start with dot
+                .split(",")
+                .map((ext) => ext.trim())
+                .filter((ext) => ext.length > 0)
+                .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`)); // Ensure extensions start with dot
 
             return extensions;
         } catch (error) {
-            console.warn(`[Context] ⚠️  Failed to parse CUSTOM_EXTENSIONS: ${error}`);
+            console.warn(
+                `[Context] ⚠️  Failed to parse CUSTOM_EXTENSIONS: ${error}`,
+            );
             return [];
         }
     }
 
     /**
-     * Get custom ignore patterns from environment variables  
+     * Get custom ignore patterns from environment variables
      * Supports CUSTOM_IGNORE_PATTERNS as comma-separated list
      * @returns Array of custom ignore patterns
      */
     private getCustomIgnorePatternsFromEnv(): string[] {
-        const envIgnorePatterns = envManager.get('CUSTOM_IGNORE_PATTERNS');
+        const envIgnorePatterns = envManager.get("CUSTOM_IGNORE_PATTERNS");
         if (!envIgnorePatterns) {
             return [];
         }
 
         try {
             const patterns = envIgnorePatterns
-                .split(',')
-                .map(pattern => pattern.trim())
-                .filter(pattern => pattern.length > 0);
+                .split(",")
+                .map((pattern) => pattern.trim())
+                .filter((pattern) => pattern.length > 0);
 
             return patterns;
         } catch (error) {
-            console.warn(`[Context] ⚠️  Failed to parse CUSTOM_IGNORE_PATTERNS: ${error}`);
+            console.warn(
+                `[Context] ⚠️  Failed to parse CUSTOM_IGNORE_PATTERNS: ${error}`,
+            );
             return [];
         }
     }
@@ -1429,46 +1885,57 @@ export class Context {
      * Add custom extensions (from MCP or other sources) without replacing existing ones
      * @param customExtensions Array of custom extensions to add
      */
-    addCustomExtensions(customExtensions: string[], codebasePath?: string): void {
+    addCustomExtensions(
+        customExtensions: string[],
+        codebasePath?: string,
+    ): void {
         if (customExtensions.length === 0) return;
 
-        const normalizedExtensions = this.normalizeExtensionsList(customExtensions);
+        const normalizedExtensions =
+            this.normalizeExtensionsList(customExtensions);
 
         if (codebasePath) {
             const session = this.getOrCreateCodebaseSession(codebasePath);
             session.customExtensions = this.normalizeExtensionsList([
                 ...session.customExtensions,
-                ...normalizedExtensions
+                ...normalizedExtensions,
             ]);
             this.updateSessionEffectiveState(session);
             console.log(
                 `[Context] 📎 Added ${normalizedExtensions.length} codebase-specific extensions for ${session.codebasePath}. ` +
-                `Total effective extensions: ${session.effectiveExtensions.length}`
+                    `Total effective extensions: ${session.effectiveExtensions.length}`,
             );
             return;
         }
 
-        this.defaultSupportedExtensions = this.buildEffectiveExtensions(normalizedExtensions);
-        console.log(`[Context] 📎 Added ${normalizedExtensions.length} custom extensions. Total default extensions: ${this.defaultSupportedExtensions.length}`);
+        this.defaultSupportedExtensions =
+            this.buildEffectiveExtensions(normalizedExtensions);
+        console.log(
+            `[Context] 📎 Added ${normalizedExtensions.length} custom extensions. Total default extensions: ${this.defaultSupportedExtensions.length}`,
+        );
     }
 
     /**
      * Get current splitter information
      */
-    getSplitterInfo(): { type: string; hasBuiltinFallback: boolean; supportedLanguages?: string[] } {
+    getSplitterInfo(): {
+        type: string;
+        hasBuiltinFallback: boolean;
+        supportedLanguages?: string[];
+    } {
         const splitterName = this.codeSplitter.constructor.name;
 
-        if (splitterName === 'AstCodeSplitter') {
-            const { AstCodeSplitter } = require('./splitter/ast-splitter');
+        if (splitterName === "AstCodeSplitter") {
+            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             return {
-                type: 'ast',
+                type: "ast",
                 hasBuiltinFallback: true,
-                supportedLanguages: AstCodeSplitter.getSupportedLanguages()
+                supportedLanguages: AstCodeSplitter.getSupportedLanguages(),
             };
         } else {
             return {
-                type: 'langchain',
-                hasBuiltinFallback: false
+                type: "langchain",
+                hasBuiltinFallback: false,
             };
         }
     }
@@ -1480,8 +1947,8 @@ export class Context {
     isLanguageSupported(language: string): boolean {
         const splitterName = this.codeSplitter.constructor.name;
 
-        if (splitterName === 'AstCodeSplitter') {
-            const { AstCodeSplitter } = require('./splitter/ast-splitter');
+        if (splitterName === "AstCodeSplitter") {
+            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             return AstCodeSplitter.isLanguageSupported(language);
         }
 
@@ -1493,23 +1960,26 @@ export class Context {
      * Get which strategy would be used for a specific language
      * @param language Programming language
      */
-    getSplitterStrategyForLanguage(language: string): { strategy: 'ast' | 'langchain'; reason: string } {
+    getSplitterStrategyForLanguage(language: string): {
+        strategy: "ast" | "langchain";
+        reason: string;
+    } {
         const splitterName = this.codeSplitter.constructor.name;
 
-        if (splitterName === 'AstCodeSplitter') {
-            const { AstCodeSplitter } = require('./splitter/ast-splitter');
+        if (splitterName === "AstCodeSplitter") {
+            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             const isSupported = AstCodeSplitter.isLanguageSupported(language);
 
             return {
-                strategy: isSupported ? 'ast' : 'langchain',
+                strategy: isSupported ? "ast" : "langchain",
                 reason: isSupported
-                    ? 'Language supported by AST parser'
-                    : 'Language not supported by AST, will fallback to LangChain'
+                    ? "Language supported by AST parser"
+                    : "Language not supported by AST, will fallback to LangChain",
             };
         } else {
             return {
-                strategy: 'langchain',
-                reason: 'Using LangChain splitter directly'
+                strategy: "langchain",
+                reason: "Using LangChain splitter directly",
             };
         }
     }

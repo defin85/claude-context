@@ -10,36 +10,86 @@ let wasmLoaded = false;
 // Try to load web-tree-sitter in different environments
 try {
     // In VSCode extension environment, try the CommonJS version
-    TreeSitter = require('web-tree-sitter');
+    TreeSitter = require("web-tree-sitter");
     Parser = TreeSitter.Parser;
 } catch (error) {
-    console.warn('Failed to load web-tree-sitter:', error.message);
+    console.warn("Failed to load web-tree-sitter:", error.message);
     TreeSitter = null;
     Parser = null;
 }
 
 // Language parsers mapping - these correspond to the WASM files in the wasm directory
 const LANGUAGE_PARSERS = {
-    javascript: 'tree-sitter-javascript.wasm',
-    typescript: 'tree-sitter-typescript.wasm',
-    python: 'tree-sitter-python.wasm',
-    java: 'tree-sitter-java.wasm',
-    cpp: 'tree-sitter-cpp.wasm',
-    go: 'tree-sitter-go.wasm',
-    rust: 'tree-sitter-rust.wasm',
-    csharp: 'tree-sitter-c_sharp.wasm'
+    javascript: "tree-sitter-javascript.wasm",
+    typescript: "tree-sitter-typescript.wasm",
+    python: "tree-sitter-python.wasm",
+    java: "tree-sitter-java.wasm",
+    cpp: "tree-sitter-cpp.wasm",
+    go: "tree-sitter-go.wasm",
+    rust: "tree-sitter-rust.wasm",
+    csharp: "tree-sitter-c_sharp.wasm",
+    bsl: "tree-sitter-bsl.wasm",
 };
 
 // Node types that represent logical code units
 const SPLITTABLE_NODE_TYPES = {
-    javascript: ['function_declaration', 'arrow_function', 'class_declaration', 'method_definition', 'export_statement'],
-    typescript: ['function_declaration', 'arrow_function', 'class_declaration', 'method_definition', 'export_statement', 'interface_declaration', 'type_alias_declaration'],
-    python: ['function_definition', 'class_definition', 'decorated_definition', 'async_function_definition'],
-    java: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration'],
-    cpp: ['function_definition', 'class_specifier', 'namespace_definition', 'declaration'],
-    go: ['function_declaration', 'method_declaration', 'type_declaration', 'var_declaration', 'const_declaration'],
-    rust: ['function_item', 'impl_item', 'struct_item', 'enum_item', 'trait_item', 'mod_item'],
-    csharp: ['method_declaration', 'class_declaration', 'interface_declaration', 'struct_declaration', 'enum_declaration']
+    javascript: [
+        "function_declaration",
+        "arrow_function",
+        "class_declaration",
+        "method_definition",
+        "export_statement",
+    ],
+    typescript: [
+        "function_declaration",
+        "arrow_function",
+        "class_declaration",
+        "method_definition",
+        "export_statement",
+        "interface_declaration",
+        "type_alias_declaration",
+    ],
+    python: [
+        "function_definition",
+        "class_definition",
+        "decorated_definition",
+        "async_function_definition",
+    ],
+    java: [
+        "method_declaration",
+        "class_declaration",
+        "interface_declaration",
+        "constructor_declaration",
+    ],
+    cpp: [
+        "function_definition",
+        "class_specifier",
+        "namespace_definition",
+        "declaration",
+    ],
+    go: [
+        "function_declaration",
+        "method_declaration",
+        "type_declaration",
+        "var_declaration",
+        "const_declaration",
+    ],
+    rust: [
+        "function_item",
+        "impl_item",
+        "struct_item",
+        "enum_item",
+        "trait_item",
+        "mod_item",
+    ],
+    csharp: [
+        "method_declaration",
+        "class_declaration",
+        "interface_declaration",
+        "struct_declaration",
+        "enum_declaration",
+    ],
+    bsl: ["procedure_definition", "function_definition", "var_definition"],
 };
 
 class AstCodeSplitterStub {
@@ -50,41 +100,70 @@ class AstCodeSplitterStub {
         this.loadedLanguages = new Map();
         // Import LangChain splitter as fallback
         try {
-            const { LangChainCodeSplitter } = require('@zilliz/claude-context-core');
-            this.fallbackSplitter = new LangChainCodeSplitter(chunkSize, chunkOverlap);
+            const {
+                LangChainCodeSplitter,
+            } = require("@zilliz/claude-context-core");
+            this.fallbackSplitter = new LangChainCodeSplitter(
+                chunkSize,
+                chunkOverlap,
+            );
         } catch (error) {
-            console.error('Failed to initialize LangChain fallback splitter:', error);
-            throw new Error('Both web-tree-sitter and LangChain splitters are unavailable');
+            console.error(
+                "Failed to initialize LangChain fallback splitter:",
+                error,
+            );
+            throw new Error(
+                "Both web-tree-sitter and LangChain splitters are unavailable",
+            );
         }
     }
 
     async initializeParser() {
         if (!Parser || !TreeSitter) {
-            console.warn('⚠️  web-tree-sitter not available, will use fallback');
+            console.warn(
+                "⚠️  web-tree-sitter not available, will use fallback",
+            );
             return false;
         }
 
         if (!wasmLoaded) {
             try {
-                if (typeof Parser.init !== 'function') {
-                    console.warn('⚠️  Parser.init is not a function, Parser object:', Object.keys(Parser));
+                if (typeof Parser.init !== "function") {
+                    console.warn(
+                        "⚠️  Parser.init is not a function, Parser object:",
+                        Object.keys(Parser),
+                    );
                     return false;
                 }
 
                 await Parser.init({
                     locateFile: (filename) => {
-                        const path = require('path');
-                        if (filename === 'tree-sitter.wasm') {
-                            return path.join(__dirname, '..', 'dist', 'tree-sitter.wasm');
+                        const path = require("path");
+                        if (filename === "tree-sitter.wasm") {
+                            return path.join(
+                                __dirname,
+                                "..",
+                                "dist",
+                                "tree-sitter.wasm",
+                            );
                         } else {
-                            return path.join(__dirname, '..', 'dist', 'wasm', filename);
+                            return path.join(
+                                __dirname,
+                                "..",
+                                "dist",
+                                "wasm",
+                                filename,
+                            );
                         }
-                    }
+                    },
                 });
                 wasmLoaded = true;
-                console.log('🌳 web-tree-sitter initialized successfully');
+                console.log("🌳 web-tree-sitter initialized successfully");
             } catch (error) {
-                console.warn('⚠️  Failed to initialize web-tree-sitter, will use fallback:', error);
+                console.warn(
+                    "⚠️  Failed to initialize web-tree-sitter, will use fallback:",
+                    error,
+                );
                 return false;
             }
         }
@@ -110,30 +189,50 @@ class AstCodeSplitterStub {
                 LanguageLoader = TreeSitter.Language;
             } else if (Parser.Language) {
                 LanguageLoader = Parser.Language;
-            } else if (typeof Parser.loadLanguage === 'function') {
+            } else if (typeof Parser.loadLanguage === "function") {
                 LanguageLoader = { load: Parser.loadLanguage };
             } else {
-                console.warn(`⚠️  Cannot find Language loader in TreeSitter object for ${normalizedLang}`);
+                console.warn(
+                    `⚠️  Cannot find Language loader in TreeSitter object for ${normalizedLang}`,
+                );
                 return null;
             }
             try {
-                const path = require('path');
-                const wasmPath = path.join(__dirname, '..', 'dist', 'wasm', wasmFile);
+                const path = require("path");
+                const wasmPath = path.join(
+                    __dirname,
+                    "..",
+                    "dist",
+                    "wasm",
+                    wasmFile,
+                );
                 Language = await LanguageLoader.load(wasmPath);
-                console.log(`📦 Loaded ${normalizedLang} parser from extension dist/wasm directory`);
+                console.log(
+                    `📦 Loaded ${normalizedLang} parser from extension dist/wasm directory`,
+                );
             } catch (localError) {
-                console.warn(`⚠️  Failed to load ${normalizedLang} parser locally:`, localError.message);
+                console.warn(
+                    `⚠️  Failed to load ${normalizedLang} parser locally:`,
+                    localError.message,
+                );
                 try {
                     const wasmPath = `https://cdn.jsdelivr.net/npm/web-tree-sitter@latest/${wasmFile}`;
                     Language = await LanguageLoader.load(wasmPath);
-                    console.log(`📦 Loaded ${normalizedLang} parser from CDN fallback`);
+                    console.log(
+                        `📦 Loaded ${normalizedLang} parser from CDN fallback`,
+                    );
                 } catch (urlError) {
-                    console.warn(`⚠️  Failed to load ${normalizedLang} parser from CDN:`, urlError.message);
+                    console.warn(
+                        `⚠️  Failed to load ${normalizedLang} parser from CDN:`,
+                        urlError.message,
+                    );
                     return null;
                 }
             }
             this.loadedLanguages.set(normalizedLang, Language);
-            console.log(`📦 Successfully loaded ${normalizedLang} parser for AST splitting`);
+            console.log(
+                `📦 Successfully loaded ${normalizedLang} parser for AST splitting`,
+            );
             return Language;
         } catch (error) {
             console.warn(`⚠️  Failed to load ${normalizedLang} parser:`, error);
@@ -143,13 +242,14 @@ class AstCodeSplitterStub {
 
     normalizeLanguage(language) {
         const langMap = {
-            'js': 'javascript',
-            'ts': 'typescript',
-            'py': 'python',
-            'c++': 'cpp',
-            'c': 'cpp',
-            'rs': 'rust',
-            'cs': 'csharp'
+            js: "javascript",
+            ts: "typescript",
+            py: "python",
+            "c++": "cpp",
+            c: "cpp",
+            rs: "rust",
+            cs: "csharp",
+            bsl: "bsl",
         };
         return langMap[language.toLowerCase()] || language.toLowerCase();
     }
@@ -158,66 +258,99 @@ class AstCodeSplitterStub {
         try {
             const parserReady = await this.initializeParser();
             if (!parserReady || !Parser) {
-                console.log('[AST Splitter] web-tree-sitter not available, using LangChain fallback');
+                console.log(
+                    "[AST Splitter] web-tree-sitter not available, using LangChain fallback",
+                );
                 return this.fallbackSplitter.split(code, language, filePath);
             }
 
             const languageParser = await this.loadLanguage(language);
             if (!languageParser) {
-                console.log(`[AST Splitter] Language ${language} not supported by web AST, using LangChain fallback for: ${filePath || 'unknown'}`);
-                return await this.fallbackSplitter.split(code, language, filePath);
+                console.log(
+                    `[AST Splitter] Language ${language} not supported by web AST, using LangChain fallback for: ${filePath || "unknown"}`,
+                );
+                return await this.fallbackSplitter.split(
+                    code,
+                    language,
+                    filePath,
+                );
             }
 
             // Ensure parser is available before setting language
             if (!this.parser) {
-                console.warn(`[AST Splitter] Parser not initialized, falling back to LangChain: ${filePath || 'unknown'}`);
-                return await this.fallbackSplitter.split(code, language, filePath);
+                console.warn(
+                    `[AST Splitter] Parser not initialized, falling back to LangChain: ${filePath || "unknown"}`,
+                );
+                return await this.fallbackSplitter.split(
+                    code,
+                    language,
+                    filePath,
+                );
             }
 
             this.parser.setLanguage(languageParser);
             const tree = this.parser.parse(code);
 
             if (!tree || !tree.rootNode) {
-                console.warn(`[AST Splitter] Failed to parse AST for ${language}, falling back to LangChain: ${filePath || 'unknown'}`);
-                return await this.fallbackSplitter.split(code, language, filePath);
+                console.warn(
+                    `[AST Splitter] Failed to parse AST for ${language}, falling back to LangChain: ${filePath || "unknown"}`,
+                );
+                return await this.fallbackSplitter.split(
+                    code,
+                    language,
+                    filePath,
+                );
             }
 
-            console.log(`🌳 [AST Splitter] Using web-tree-sitter for ${language} file: ${filePath || 'unknown'}`);
+            console.log(
+                `🌳 [AST Splitter] Using web-tree-sitter for ${language} file: ${filePath || "unknown"}`,
+            );
 
             const normalizedLang = this.normalizeLanguage(language);
             const nodeTypes = SPLITTABLE_NODE_TYPES[normalizedLang] || [];
 
             // Extract chunks based on AST nodes
-            const chunks = this.extractChunks(tree.rootNode, code, nodeTypes, language, filePath);
+            const chunks = this.extractChunks(
+                tree.rootNode,
+                code,
+                nodeTypes,
+                language,
+                filePath,
+            );
 
             // If chunks are too large, split them further
             const refinedChunks = await this.refineChunks(chunks, code);
 
             return refinedChunks;
         } catch (error) {
-            console.warn(`[AST Splitter] web-tree-sitter failed for ${language}, falling back to LangChain:`, error);
+            console.warn(
+                `[AST Splitter] web-tree-sitter failed for ${language}, falling back to LangChain:`,
+                error,
+            );
             return await this.fallbackSplitter.split(code, language, filePath);
         }
     }
 
     extractChunks(node, code, nodeTypes, language, filePath) {
         const chunks = [];
-        const lines = code.split('\n');
+        const lines = code.split("\n");
 
         // Find all splittable nodes
         const splittableNodes = this.findSplittableNodes(node, nodeTypes);
 
         if (splittableNodes.length === 0) {
             // No splittable nodes found, treat as single chunk
-            return [{
-                content: code,
-                metadata: {
-                    startLine: 1,
-                    endLine: lines.length,
-                    language,
-                    filePath
-                }
-            }];
+            return [
+                {
+                    content: code,
+                    metadata: {
+                        startLine: 1,
+                        endLine: lines.length,
+                        language,
+                        filePath,
+                    },
+                },
+            ];
         }
 
         let lastEndLine = 0;
@@ -228,7 +361,9 @@ class AstCodeSplitterStub {
 
             // Add any content between previous node and current node
             if (startLine > lastEndLine + 1) {
-                const betweenContent = lines.slice(lastEndLine, startLine - 1).join('\n');
+                const betweenContent = lines
+                    .slice(lastEndLine, startLine - 1)
+                    .join("\n");
                 if (betweenContent.trim()) {
                     chunks.push({
                         content: betweenContent,
@@ -236,14 +371,14 @@ class AstCodeSplitterStub {
                             startLine: lastEndLine + 1,
                             endLine: startLine - 1,
                             language,
-                            filePath
-                        }
+                            filePath,
+                        },
                     });
                 }
             }
 
             // Add the current node as a chunk
-            const nodeContent = lines.slice(startLine - 1, endLine).join('\n');
+            const nodeContent = lines.slice(startLine - 1, endLine).join("\n");
             chunks.push({
                 content: nodeContent,
                 metadata: {
@@ -251,8 +386,8 @@ class AstCodeSplitterStub {
                     endLine,
                     language,
                     filePath,
-                    nodeType: astNode.type
-                }
+                    nodeType: astNode.type,
+                },
             });
 
             lastEndLine = endLine;
@@ -260,7 +395,7 @@ class AstCodeSplitterStub {
 
         // Add any remaining content after the last node
         if (lastEndLine < lines.length) {
-            const remainingContent = lines.slice(lastEndLine).join('\n');
+            const remainingContent = lines.slice(lastEndLine).join("\n");
             if (remainingContent.trim()) {
                 chunks.push({
                     content: remainingContent,
@@ -268,8 +403,8 @@ class AstCodeSplitterStub {
                         startLine: lastEndLine + 1,
                         endLine: lines.length,
                         language,
-                        filePath
-                    }
+                        filePath,
+                    },
                 });
             }
         }
@@ -304,24 +439,26 @@ class AstCodeSplitterStub {
                 refinedChunks.push(chunk);
             } else {
                 // Chunk is too large, split it using LangChain splitter
-                console.log(`📏 [AST Splitter] Chunk too large (${chunk.content.length} chars), using LangChain for refinement`);
+                console.log(
+                    `📏 [AST Splitter] Chunk too large (${chunk.content.length} chars), using LangChain for refinement`,
+                );
                 const subChunks = await this.fallbackSplitter.split(
                     chunk.content,
                     chunk.metadata.language,
-                    chunk.metadata.filePath
+                    chunk.metadata.filePath,
                 );
 
                 // Adjust line numbers for sub-chunks
                 let currentStartLine = chunk.metadata.startLine;
                 for (const subChunk of subChunks) {
-                    const subChunkLines = subChunk.content.split('\n').length;
+                    const subChunkLines = subChunk.content.split("\n").length;
                     refinedChunks.push({
                         content: subChunk.content,
                         metadata: {
                             ...chunk.metadata,
                             startLine: currentStartLine,
-                            endLine: currentStartLine + subChunkLines - 1
-                        }
+                            endLine: currentStartLine + subChunkLines - 1,
+                        },
                     });
                     currentStartLine += subChunkLines;
                 }
@@ -343,5 +480,5 @@ class AstCodeSplitterStub {
 }
 
 module.exports = {
-    AstCodeSplitter: AstCodeSplitterStub
+    AstCodeSplitter: AstCodeSplitterStub,
 };
