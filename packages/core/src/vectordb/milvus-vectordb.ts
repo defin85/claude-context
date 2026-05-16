@@ -23,13 +23,18 @@ export interface MilvusConfig {
 export class MilvusVectorDatabase implements VectorDatabase {
     protected config: MilvusConfig;
     private client: MilvusClient | null = null;
+    private resolvedAddress: string | null = null;
     protected initializationPromise: Promise<void>;
+    protected initializationError: unknown = null;
 
     constructor(config: MilvusConfig) {
         this.config = config;
 
         // Start initialization asynchronously without waiting
-        this.initializationPromise = this.initialize();
+        this.initializationPromise = this.initialize().catch((error) => {
+            this.initializationError = error;
+            console.error('[MilvusDB] ❌ Async initialization failed:', error);
+        });
     }
 
     private async initialize(): Promise<void> {
@@ -38,10 +43,20 @@ export class MilvusVectorDatabase implements VectorDatabase {
     }
 
     private async initializeClient(address: string): Promise<void> {
-        const milvusConfig = this.config as MilvusConfig;
         console.log('🔌 Connecting to vector database at: ', address);
+        this.resolvedAddress = address;
+    }
+
+    private createClient(): void {
+        if (this.client) {
+            return;
+        }
+        if (!this.resolvedAddress) {
+            throw new Error('Milvus address is not initialized');
+        }
+        const milvusConfig = this.config as MilvusConfig;
         this.client = new MilvusClient({
-            address: address,
+            address: this.resolvedAddress,
             username: milvusConfig.username,
             password: milvusConfig.password,
             token: milvusConfig.token,
@@ -73,9 +88,10 @@ export class MilvusVectorDatabase implements VectorDatabase {
      */
     protected async ensureInitialized(): Promise<void> {
         await this.initializationPromise;
-        if (!this.client) {
-            throw new Error('Client not initialized');
+        if (this.initializationError) {
+            throw this.initializationError;
         }
+        this.createClient();
     }
 
     /**
