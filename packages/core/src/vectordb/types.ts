@@ -138,6 +138,12 @@ export interface VectorDatabase {
      * Returns true if collection can be created, false if limit exceeded
      */
     checkCollectionLimit(): Promise<boolean>;
+
+    /**
+     * Get the number of rows in a collection.
+     * Returns -1 when the count is unknown or cannot be read.
+     */
+    getCollectionRowCount(collectionName: string): Promise<number>;
 }
 
 /**

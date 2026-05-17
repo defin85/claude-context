@@ -1,9 +1,57 @@
 import * as fs from "fs";
-import { Context, FileSynchronizer } from "@zilliz/claude-context-core";
+import { Context, FileSynchronizer, envManager } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager, RuntimeSyncCodebaseResult } from "./runtime-status.js";
 import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
+
+const DEFAULT_INITIAL_SYNC_DELAY_MS = 5_000;
+const DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const MIN_SYNC_INTERVAL_MS = 1_000;
+
+function isBackgroundSyncEnabled(): boolean {
+    const value = envManager.get('CLAUDE_CONTEXT_BACKGROUND_SYNC');
+    if (!value) {
+        return true;
+    }
+
+    switch (value.trim().toLowerCase()) {
+        case '1':
+        case 'true':
+        case 'yes':
+        case 'on':
+            return true;
+        case '0':
+        case 'false':
+        case 'no':
+        case 'off':
+            return false;
+        default:
+            console.warn(
+                `[SYNC-DEBUG] Invalid CLAUDE_CONTEXT_BACKGROUND_SYNC value '${value}'. ` +
+                'Expected true/false. Background sync will remain enabled.'
+            );
+            return true;
+    }
+}
+
+function getBackgroundSyncIntervalMs(): number {
+    const value = envManager.get('CLAUDE_CONTEXT_SYNC_INTERVAL_MS');
+    if (!value) {
+        return DEFAULT_SYNC_INTERVAL_MS;
+    }
+
+    const intervalMs = Number.parseInt(value, 10);
+    if (!Number.isFinite(intervalMs) || intervalMs < MIN_SYNC_INTERVAL_MS) {
+        console.warn(
+            `[SYNC-DEBUG] Invalid CLAUDE_CONTEXT_SYNC_INTERVAL_MS value '${value}'. ` +
+            `Falling back to ${DEFAULT_SYNC_INTERVAL_MS}ms.`
+        );
+        return DEFAULT_SYNC_INTERVAL_MS;
+    }
+
+    return intervalMs;
+}
 
 export class SyncManager {
     private context: Context;
@@ -295,8 +343,15 @@ export class SyncManager {
         }
         this.isStopped = false;
 
+        if (!isBackgroundSyncEnabled()) {
+            console.log('[SYNC-DEBUG] Background sync is disabled via CLAUDE_CONTEXT_BACKGROUND_SYNC=false.');
+            return;
+        }
+
+        const syncIntervalMs = getBackgroundSyncIntervalMs();
+
         // Execute initial sync immediately after a short delay to let server initialize
-        console.log('[SYNC-DEBUG] Scheduling initial sync in 5 seconds...');
+        console.log(`[SYNC-DEBUG] Scheduling initial sync in ${DEFAULT_INITIAL_SYNC_DELAY_MS}ms...`);
         this.initialSyncTimer = setTimeout(async () => {
             this.initialSyncTimer = undefined;
             if (this.isStopped) {
@@ -315,10 +370,10 @@ export class SyncManager {
                     throw error;
                 }
             }
-        }, 5000); // Initial sync after 5 seconds
+        }, DEFAULT_INITIAL_SYNC_DELAY_MS);
 
         // Periodically check for file changes and update the index
-        console.log('[SYNC-DEBUG] Setting up periodic sync every 5 minutes (300000ms)');
+        console.log(`[SYNC-DEBUG] Setting up periodic sync every ${syncIntervalMs}ms`);
         this.periodicSyncTimer = setInterval(() => {
             if (this.isStopped) {
                 console.log('[SYNC-DEBUG] Periodic sync tick observed after stop request. Skipping.');
@@ -326,7 +381,7 @@ export class SyncManager {
             }
             console.log('[SYNC-DEBUG] Executing scheduled periodic sync');
             void this.handleSyncIndex();
-        }, 5 * 60 * 1000); // every 5 minutes
+        }, syncIntervalMs);
 
         console.log('[SYNC-DEBUG] Background sync setup complete. Interval ID:', this.periodicSyncTimer);
     }

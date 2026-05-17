@@ -777,20 +777,29 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
             console.log(`[MilvusRestfulDB] ✅ Found ${results.length} results from hybrid search`);
 
             // Transform response to HybridSearchResult format
-            return results.map((result: any) => ({
-                document: {
-                    id: result.id,
-                    content: result.content,
-                    vector: [], // Vector not returned in search results
-                    sparse_vector: [], // Vector not returned in search results
-                    relativePath: result.relativePath,
-                    startLine: result.startLine,
-                    endLine: result.endLine,
-                    fileExtension: result.fileExtension,
-                    metadata: JSON.parse(result.metadata || '{}'),
-                },
-                score: result.score || result.distance || 0,
-            }));
+            return results.map((result: any) => {
+                let metadata = {};
+                try {
+                    metadata = JSON.parse(result.metadata || '{}');
+                } catch (error) {
+                    console.warn(`[MilvusRestfulDB] Failed to parse metadata for item ${result.id}:`, error);
+                }
+
+                return {
+                    document: {
+                        id: result.id,
+                        content: result.content,
+                        vector: [], // Vector not returned in search results
+                        sparse_vector: [], // Vector not returned in search results
+                        relativePath: result.relativePath,
+                        startLine: result.startLine,
+                        endLine: result.endLine,
+                        fileExtension: result.fileExtension,
+                        metadata,
+                    },
+                    score: result.score || result.distance || 0,
+                };
+            });
 
         } catch (error) {
             console.error(`[MilvusRestfulDB] ❌ Failed to perform hybrid search on collection '${collectionName}':`, error);
@@ -825,5 +834,36 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         // For now, always return true to maintain compatibility
         console.warn('[MilvusRestfulDB] ⚠️  checkCollectionLimit not implemented for REST API - returning true');
         return true;
+    }
+
+    async getCollectionRowCount(collectionName: string): Promise<number> {
+        await this.ensureInitialized();
+        try {
+            const restfulConfig = this.config as MilvusRestfulConfig;
+
+            const hasResponse = await this.makeRequest('/collections/has', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database
+            });
+            if (!hasResponse.data?.has) return -1;
+
+            await this.ensureLoaded(collectionName);
+
+            const response = await this.makeRequest('/entities/query', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database,
+                outputFields: ['count(*)'],
+            });
+
+            const row = response?.data?.[0];
+            if (!row) return -1;
+            const raw = row['count(*)'] ?? row.count;
+            if (raw === undefined || raw === null) return -1;
+            const count = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+            return Number.isFinite(count) && count >= 0 ? count : -1;
+        } catch (error) {
+            console.error(`[MilvusRestfulDB] ❌ Error in count(*) query for '${collectionName}':`, error);
+            return -1;
+        }
     }
 }

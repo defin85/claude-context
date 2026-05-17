@@ -74,10 +74,17 @@ function throwIfOperationAborted(abortSignal?: AbortSignal): void {
     }
 
     if (typeof reason === "string" && reason.trim().length > 0) {
-        throw new Error(reason);
+        throw new IndexAbortError(reason);
     }
 
-    throw new Error("Operation cancelled.");
+    throw new IndexAbortError("Operation cancelled.");
+}
+
+export class IndexAbortError extends Error {
+    constructor(message: string = "Indexing aborted") {
+        super(message);
+        this.name = "IndexAbortError";
+    }
 }
 
 const DEFAULT_SUPPORTED_EXTENSIONS = [
@@ -188,6 +195,7 @@ export interface ContextConfig {
     ignorePatterns?: string[];
     customExtensions?: string[]; // New: custom extensions from MCP
     customIgnorePatterns?: string[]; // New: custom ignore patterns from MCP
+    collectionNameOverride?: string;
 }
 
 export interface CodebaseSessionConfig {
@@ -206,11 +214,14 @@ interface CodebaseSessionState {
 }
 
 export class Context {
+    private static readonly MAX_COLLECTION_NAME_LENGTH = 255;
     private embedding: Embedding;
     private vectorDatabase: VectorDatabase;
     private codeSplitter: Splitter;
     private defaultSupportedExtensions: string[];
     private defaultIgnorePatterns: string[];
+    private collectionNameOverride?: string;
+    private warnedOverrideSanitization = new Set<string>();
     private codebaseSessions = new Map<string, CodebaseSessionState>();
     private synchronizers = new Map<string, FileSynchronizer>();
 
@@ -262,6 +273,7 @@ export class Context {
         ];
         // Remove duplicates
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
+        this.collectionNameOverride = config.collectionNameOverride;
 
         console.log(
             `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
@@ -361,6 +373,9 @@ export class Context {
         session.synchronizer?.updateIgnorePatterns(
             session.effectiveIgnorePatterns,
         );
+        session.synchronizer?.updateSupportedExtensions(
+            session.effectiveExtensions,
+        );
     }
 
     configureCodebaseSession(
@@ -415,6 +430,8 @@ export class Context {
     ): void {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(normalizedPath);
+        synchronizer.updateIgnorePatterns(session.effectiveIgnorePatterns);
+        synchronizer.updateSupportedExtensions(session.effectiveExtensions);
         session.synchronizer = synchronizer;
         this.synchronizers.set(
             this.getCollectionName(normalizedPath),
@@ -528,7 +545,63 @@ export class Context {
             .update(normalizedPath)
             .digest("hex");
         const prefix = isHybrid === true ? "hybrid_code_chunks" : "code_chunks";
-        return `${prefix}_${hash.substring(0, 8)}`;
+        const pathHash = hash.substring(0, 8);
+
+        const configOverride = this.getValidOverrideValue(this.collectionNameOverride);
+        if (configOverride) {
+            const suffix = this.sanitizeCollectionNameSuffix(configOverride, prefix, pathHash, "Context config");
+            return `${prefix}_${suffix}`;
+        }
+
+        const envOverride = this.getValidOverrideValue(envManager.get("CODE_CHUNKS_COLLECTION_NAME_OVERRIDE"));
+        if (envOverride) {
+            const suffix = this.sanitizeCollectionNameSuffix(envOverride, prefix, pathHash, "CODE_CHUNKS_COLLECTION_NAME_OVERRIDE");
+            return `${prefix}_${suffix}`;
+        }
+
+        return `${prefix}_${pathHash}`;
+    }
+
+    private getValidOverrideValue(value?: string): string | undefined {
+        if (!value) {
+            return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    private sanitizeCollectionNameSuffix(
+        value: string,
+        prefix: string,
+        pathHash: string,
+        source: string,
+    ): string {
+        const hashSuffix = `_${pathHash}`;
+        const maxReadableLength =
+            Context.MAX_COLLECTION_NAME_LENGTH -
+            `${prefix}_`.length -
+            hashSuffix.length;
+        const normalized = value.trim();
+        let sanitized = normalized.replace(/[^A-Za-z0-9_]/g, "_");
+        sanitized = sanitized.slice(0, Math.max(0, maxReadableLength));
+
+        if (sanitized.length === 0) {
+            sanitized = "custom";
+        }
+
+        const fullSuffix = `${sanitized}${hashSuffix}`;
+
+        if (sanitized !== normalized) {
+            const warningKey = `${source}:${normalized}:${sanitized}`;
+            if (!this.warnedOverrideSanitization.has(warningKey)) {
+                console.warn(
+                    `[Context] ⚠️ Sanitized collection name override from "${normalized}" to "${sanitized}" (${source}); final suffix "${fullSuffix}"`,
+                );
+                this.warnedOverrideSanitization.add(warningKey);
+            }
+        }
+
+        return fullSuffix;
     }
 
     /**
@@ -680,6 +753,7 @@ export class Context {
             const newSynchronizer = new FileSynchronizer(
                 codebasePath,
                 session.effectiveIgnorePatterns,
+                session.effectiveExtensions,
             );
             await newSynchronizer.initialize();
             session.synchronizer = newSynchronizer;
@@ -927,16 +1001,17 @@ export class Context {
                 }),
             );
 
+            const dedupedResults = this.deduplicateResults(results);
             console.log(
-                `[Context] ✅ Found ${results.length} relevant hybrid results`,
+                `[Context] ✅ Found ${results.length} relevant hybrid results, ${dedupedResults.length} after dedup`,
             );
-            if (results.length > 0) {
+            if (dedupedResults.length > 0) {
                 console.log(
-                    `[Context] 🔍 Top result score: ${results[0].score}, path: ${results[0].relativePath}`,
+                    `[Context] 🔍 Top result score: ${dedupedResults[0].score}, path: ${dedupedResults[0].relativePath}`,
                 );
             }
 
-            return results;
+            return dedupedResults;
         } else {
             // Regular semantic search
             // 1. Generate query vector
@@ -963,11 +1038,36 @@ export class Context {
                 }),
             );
 
+            const dedupedResults = this.deduplicateResults(results);
             console.log(
-                `[Context] ✅ Found ${results.length} relevant results`,
+                `[Context] ✅ Found ${results.length} relevant results, ${dedupedResults.length} after dedup`,
             );
-            return results;
+            return dedupedResults;
         }
+    }
+
+    private deduplicateResults(
+        results: SemanticSearchResult[],
+    ): SemanticSearchResult[] {
+        const kept: SemanticSearchResult[] = [];
+
+        for (const result of results) {
+            const overlaps = kept.some((existing) => {
+                if (existing.relativePath !== result.relativePath) return false;
+                const overlapStart = Math.max(existing.startLine, result.startLine);
+                const overlapEnd = Math.min(existing.endLine, result.endLine);
+                if (overlapStart > overlapEnd) return false;
+                const overlapSize = overlapEnd - overlapStart + 1;
+                const resultSize = result.endLine - result.startLine + 1;
+                return resultSize > 0 && overlapSize / resultSize > 0.5;
+            });
+
+            if (!overlaps) {
+                kept.push(result);
+            }
+        }
+
+        return kept;
     }
 
     /**
@@ -1775,6 +1875,10 @@ export class Context {
 
         const relativePath = path.relative(basePath, filePath);
         const normalizedPath = relativePath.replace(/\\/g, "/"); // Normalize path separators
+        const pathParts = normalizedPath.split("/");
+        if (pathParts.some((part) => part.startsWith("."))) {
+            return true;
+        }
 
         for (const pattern of ignorePatterns) {
             if (this.isPatternMatch(normalizedPath, pattern)) {
@@ -1792,24 +1896,55 @@ export class Context {
      * @returns True if pattern matches
      */
     private isPatternMatch(filePath: string, pattern: string): boolean {
+        const normalizedPattern = pattern.replace(/\\/g, "/");
+        const cleanPath = filePath.replace(/^\/+|\/+$/g, "");
+        const cleanPattern = normalizedPattern.replace(/^\/+|\/+$/g, "");
+        const isRootAnchored = normalizedPattern.startsWith("/");
+        const isDirectoryPattern = normalizedPattern.endsWith("/");
+
+        if (!cleanPath || !cleanPattern) {
+            return false;
+        }
+
         // Handle directory patterns (ending with /)
-        if (pattern.endsWith("/")) {
-            const dirPattern = pattern.slice(0, -1);
-            const pathParts = filePath.split("/");
-            return pathParts.some((part) =>
-                this.simpleGlobMatch(part, dirPattern),
-            );
+        if (isDirectoryPattern) {
+            if (isRootAnchored) {
+                return (
+                    this.simpleGlobMatch(cleanPath, cleanPattern) ||
+                    cleanPath.startsWith(`${cleanPattern}/`)
+                );
+            }
+
+            return this.matchesDirectoryPattern(cleanPath, cleanPattern);
+        }
+
+        if (isRootAnchored) {
+            return this.simpleGlobMatch(cleanPath, cleanPattern);
         }
 
         // Handle file patterns
-        if (pattern.includes("/")) {
+        if (cleanPattern.includes("/")) {
             // Pattern with path separator - match exact path
-            return this.simpleGlobMatch(filePath, pattern);
+            return this.simpleGlobMatch(cleanPath, cleanPattern);
         } else {
             // Pattern without path separator - match filename in any directory
-            const fileName = path.basename(filePath);
-            return this.simpleGlobMatch(fileName, pattern);
+            const fileName = path.basename(cleanPath);
+            return this.simpleGlobMatch(fileName, cleanPattern);
         }
+    }
+
+    private matchesDirectoryPattern(filePath: string, dirPattern: string): boolean {
+        const pathParts = filePath.split("/");
+        const dirPartCount = dirPattern.split("/").length;
+
+        for (let i = 0; i <= pathParts.length - dirPartCount; i++) {
+            const candidate = pathParts.slice(i, i + dirPartCount).join("/");
+            if (this.simpleGlobMatch(candidate, dirPattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

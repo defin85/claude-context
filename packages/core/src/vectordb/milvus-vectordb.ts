@@ -410,19 +410,28 @@ export class MilvusVectorDatabase implements VectorDatabase {
             return [];
         }
 
-        return searchResult.results.map((result: any) => ({
-            document: {
-                id: result.id,
-                vector: queryVector,
-                content: result.content,
-                relativePath: result.relativePath,
-                startLine: result.startLine,
-                endLine: result.endLine,
-                fileExtension: result.fileExtension,
-                metadata: JSON.parse(result.metadata || '{}'),
-            },
-            score: result.score,
-        }));
+        return searchResult.results.map((result: any) => {
+            let metadata = {};
+            try {
+                metadata = JSON.parse(result.metadata || '{}');
+            } catch (error) {
+                console.warn(`[MilvusDB] Failed to parse metadata for item ${result.id}:`, error);
+            }
+
+            return {
+                document: {
+                    id: result.id,
+                    vector: queryVector,
+                    content: result.content,
+                    relativePath: result.relativePath,
+                    startLine: result.startLine,
+                    endLine: result.endLine,
+                    fileExtension: result.fileExtension,
+                    metadata,
+                },
+                score: result.score,
+            };
+        });
     }
 
     async delete(collectionName: string, ids: string[]): Promise<void> {
@@ -717,20 +726,29 @@ export class MilvusVectorDatabase implements VectorDatabase {
             console.log(`[MilvusDB] ✅ Found ${searchResult.results.length} results from hybrid search`);
 
             // Transform results to HybridSearchResult format
-            return searchResult.results.map((result: any) => ({
-                document: {
-                    id: result.id,
-                    content: result.content,
-                    vector: [],
-                    sparse_vector: [],
-                    relativePath: result.relativePath,
-                    startLine: result.startLine,
-                    endLine: result.endLine,
-                    fileExtension: result.fileExtension,
-                    metadata: JSON.parse(result.metadata || '{}'),
-                },
-                score: result.score,
-            }));
+            return searchResult.results.map((result: any) => {
+                let metadata = {};
+                try {
+                    metadata = JSON.parse(result.metadata || '{}');
+                } catch (error) {
+                    console.warn(`[MilvusDB] Failed to parse metadata for item ${result.id}:`, error);
+                }
+
+                return {
+                    document: {
+                        id: result.id,
+                        content: result.content,
+                        vector: [],
+                        sparse_vector: [],
+                        relativePath: result.relativePath,
+                        startLine: result.startLine,
+                        endLine: result.endLine,
+                        fileExtension: result.fileExtension,
+                        metadata,
+                    },
+                    score: result.score,
+                };
+            });
 
         } catch (error) {
             console.error(`[MilvusDB] ❌ Failed to perform hybrid search on collection '${collectionName}':`, error);
@@ -757,10 +775,14 @@ export class MilvusVectorDatabase implements VectorDatabase {
      * Returns true if collection can be created, false if limit exceeded
      */
     async checkCollectionLimit(): Promise<boolean> {
+        await this.ensureInitialized();
         if (!this.client) {
-            throw new Error('MilvusClient is not initialized. Call ensureInitialized() first.');
+            console.warn('[MilvusDB] MilvusClient is not initialized; proceeding without collection limit pre-check.');
+            return true;
         }
 
+        const parsedTimeoutMs = Number(process.env.MILVUS_COLLECTION_LIMIT_CHECK_TIMEOUT_MS);
+        const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0 ? parsedTimeoutMs : 15000;
         const collectionName = `dummy_collection_${Date.now()}`;
         const createCollectionParams = {
             collection_name: collectionName,
@@ -780,8 +802,35 @@ export class MilvusVectorDatabase implements VectorDatabase {
             ]
         };
 
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        let timedOut = false;
         try {
-            await this.client.createCollection(createCollectionParams);
+            const createPromise = this.client.createCollection(createCollectionParams);
+            void createPromise
+                .then(async () => {
+                    if (!timedOut) return;
+                    try {
+                        if (!this.client) return;
+                        if (await this.client.hasCollection({ collection_name: collectionName })) {
+                            await this.client.dropCollection({ collection_name: collectionName });
+                        }
+                    } catch {
+                        // Best effort orphan cleanup after timeout.
+                    }
+                })
+                .catch(() => {
+                    // createCollection failed; nothing to clean up.
+                });
+
+            await Promise.race([
+                createPromise,
+                new Promise<never>((_, reject) => {
+                    timeoutHandle = setTimeout(() => {
+                        timedOut = true;
+                        reject(new Error(`checkCollectionLimit timeout after ${timeoutMs}ms`));
+                    }, timeoutMs);
+                }),
+            ]);
             // Immediately drop the collection after successful creation
             if (await this.client.hasCollection({ collection_name: collectionName })) {
                 await this.client.dropCollection({
@@ -796,8 +845,50 @@ export class MilvusVectorDatabase implements VectorDatabase {
                 // Return false for collection limit exceeded
                 return false;
             }
+            if (/deadline_exceeded|deadline exceeded|timeout/i.test(errorMessage)) {
+                console.warn(
+                    `[MilvusDB] checkCollectionLimit timed out after ${timeoutMs}ms; proceeding without limit pre-check. ` +
+                    'Set MILVUS_COLLECTION_LIMIT_CHECK_TIMEOUT_MS to increase timeout.'
+                );
+                return true;
+            }
             // Re-throw other errors as-is
             throw error;
+        } finally {
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+            }
+        }
+    }
+
+    async getCollectionRowCount(collectionName: string): Promise<number> {
+        await this.ensureInitialized();
+        if (!this.client) return -1;
+        try {
+            const hasCol = await this.client.hasCollection({ collection_name: collectionName });
+            if (!hasCol.value) return -1;
+
+            await this.ensureLoaded(collectionName);
+
+            const result = await this.client.query({
+                collection_name: collectionName,
+                output_fields: ['count(*)'],
+                expr: '',
+            });
+            if (result.status.error_code !== 'Success') {
+                console.warn(`[MilvusDB] count(*) query failed for '${collectionName}': ${result.status.reason}`);
+                return -1;
+            }
+
+            const row = result.data?.[0] as Record<string, any> | undefined;
+            if (!row) return -1;
+            const raw = row['count(*)'] ?? row.count;
+            if (raw === undefined || raw === null) return -1;
+            const count = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+            return Number.isFinite(count) && count >= 0 ? count : -1;
+        } catch (error) {
+            console.error(`[MilvusDB] Error in count(*) query for '${collectionName}':`, error);
+            return -1;
         }
     }
 }

@@ -232,6 +232,58 @@ export class ToolHandlers {
         };
     }
 
+    private async waitForCurrentRuntimeIndexingToStop(
+        codebasePath: string,
+        timeoutMs: number = 15000,
+    ): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+
+        while (Date.now() < deadline) {
+            const ownershipState = await this.snapshotManager.inspectIndexingOwnership(codebasePath);
+            if (ownershipState.state !== 'owned-by-current-runtime') {
+                return true;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        return false;
+    }
+
+    private async cancelCurrentRuntimeIndexingForClear(codebasePath: string): Promise<{ cancelled: boolean; error?: string }> {
+        if (!this.workloadManager) {
+            return {
+                cancelled: false,
+                error: 'clear_index cannot cancel active indexing because this runtime has no workload manager.'
+            };
+        }
+
+        const reason = `Cancelled by clear_index for '${codebasePath}'.`;
+        const cancellation = this.workloadManager.cancelCodebaseIndexingWork(codebasePath, reason);
+
+        if (cancellation.queued.length === 0 && cancellation.active.length === 0) {
+            return {
+                cancelled: false,
+                error: 'No queued or active indexing workload was found for this runtime.'
+            };
+        }
+
+        if (cancellation.active.length === 0 && cancellation.queued.length > 0) {
+            await this.snapshotManager.failIndexingOwnership(codebasePath, reason);
+        }
+
+        const stopped = await this.waitForCurrentRuntimeIndexingToStop(codebasePath);
+        if (!stopped) {
+            return {
+                cancelled: true,
+                error: 'Timed out waiting for this runtime indexing task to stop.'
+            };
+        }
+
+        await this.runtimeStatusManager?.refresh('clear-index-cancelled-active-indexing');
+        return { cancelled: true };
+    }
+
     private createPersistedSessionConfig(
         customExtensions: string[],
         customIgnorePatterns: string[]
@@ -742,8 +794,9 @@ export class ToolHandlers {
             // Initialize file synchronizer with proper ignore patterns (including project-specific patterns)
             const { FileSynchronizer } = await import("@zilliz/claude-context-core");
             const ignorePatterns = this.context.getIgnorePatterns(absolutePath) || [];
+            const supportedExtensions = this.context.getSupportedExtensions(absolutePath) || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
-            const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns);
+            const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns, supportedExtensions);
             await synchronizer.initialize();
             throwIfCancelled();
 
@@ -1096,17 +1149,27 @@ export class ToolHandlers {
                 };
             }
 
-            if (ownershipState.state === 'owned-by-current-runtime' || ownershipState.state === 'blocked-live-owner') {
+            if (ownershipState.state === 'owned-by-current-runtime') {
+                const cancellation = await this.cancelCurrentRuntimeIndexingForClear(absolutePath);
+                if (cancellation.error) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text:
+                                `Error: Codebase '${absolutePath}' is currently being indexed by this MCP runtime. ` +
+                                `${cancellation.error} ${this.formatOwnerForMessage(ownershipState.currentOwner)}`
+                        }],
+                        isError: true
+                    };
+                }
+            } else if (ownershipState.state === 'blocked-live-owner') {
                 const ownerDescription = this.formatOwnerForMessage(ownershipState.currentOwner);
-                const ownerScope = ownershipState.state === 'owned-by-current-runtime'
-                    ? 'this MCP runtime'
-                    : 'another MCP runtime';
 
                 return {
                     content: [{
                         type: "text",
                         text:
-                            `Error: Codebase '${absolutePath}' is currently being indexed by ${ownerScope}. ` +
+                            `Error: Codebase '${absolutePath}' is currently being indexed by another MCP runtime. ` +
                             `clear_index is blocked until indexing completes or fails. ${ownerDescription}`
                     }],
                     isError: true
