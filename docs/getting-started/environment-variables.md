@@ -60,6 +60,7 @@ Claude Context supports a global configuration file at `~/.context/.env` to simp
 |----------|-------------|---------|
 | `HYBRID_MODE` | Enable hybrid search (BM25 + dense vector). Set to `false` for dense-only search | `true` |
 | `EMBEDDING_BATCH_SIZE` | Batch size for processing. Larger batch size means less indexing time | `100` |
+| `CODE_CHUNK_LIMIT` | Maximum number of code chunks to index per codebase. Increase for very large repositories when you accept extra indexing time and vector database storage | `450000` |
 | `SPLITTER_TYPE` | Code splitter type: `ast`, `langchain` | `ast` |
 | `CUSTOM_EXTENSIONS` | Additional file extensions to include (comma-separated, e.g., `.vue,.svelte,.astro`) | None |
 | `CUSTOM_IGNORE_PATTERNS` | Additional ignore patterns (comma-separated, e.g., `temp/**,*.backup,private/**`) | None |
@@ -102,4 +103,3 @@ claude mcp add claude-context -- npx @zilliz/claude-context-mcp@latest
 
 For detailed information about file processing rules and how custom patterns work, see:
 - [What files does Claude Context decide to embed?](../troubleshooting/faq.md#q-what-files-does-claude-context-decide-to-embed)
- 

@@ -20,6 +20,8 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
 
+const DEFAULT_CODE_CHUNK_LIMIT = 450000;
+
 function normalizeCodebasePath(codebasePath: string): string {
     const trimmedPath = codebasePath.trim();
 
@@ -61,6 +63,24 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
         (error as { code?: unknown }).code ===
             "EMBEDDING_CONTEXT_LIMIT_EXCEEDED"
     );
+}
+
+function getCodeChunkLimit(): number {
+    const rawLimit = envManager.get("CODE_CHUNK_LIMIT");
+    if (!rawLimit) {
+        return DEFAULT_CODE_CHUNK_LIMIT;
+    }
+
+    const parsedLimit = Number.parseInt(rawLimit, 10);
+    if (Number.isInteger(parsedLimit) && parsedLimit > 0) {
+        return parsedLimit;
+    }
+
+    console.warn(
+        `[Context] ⚠️  Invalid CODE_CHUNK_LIMIT value '${rawLimit}'. ` +
+            `Using default ${DEFAULT_CODE_CHUNK_LIMIT}.`,
+    );
+    return DEFAULT_CODE_CHUNK_LIMIT;
 }
 
 function throwIfOperationAborted(abortSignal?: AbortSignal): void {
@@ -1386,10 +1406,11 @@ export class Context {
             1,
             parseInt(envManager.get("EMBEDDING_BATCH_SIZE") || "100", 10),
         );
-        const CHUNK_LIMIT = 450000;
+        const CODE_CHUNK_LIMIT = getCodeChunkLimit();
         console.log(
             `[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`,
         );
+        console.log(`[Context] 🔧 Using CODE_CHUNK_LIMIT: ${CODE_CHUNK_LIMIT}`);
 
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
         let processedFiles = 0;
@@ -1456,9 +1477,9 @@ export class Context {
                     }
 
                     // Check if chunk limit is reached
-                    if (totalChunks >= CHUNK_LIMIT) {
+                    if (totalChunks >= CODE_CHUNK_LIMIT) {
                         console.warn(
-                            `[Context] ⚠️  Chunk limit of ${CHUNK_LIMIT} reached. Stopping indexing.`,
+                            `[Context] ⚠️  Chunk limit of ${CODE_CHUNK_LIMIT} reached. Stopping indexing.`,
                         );
                         limitReached = true;
                         break; // Exit the inner loop (over chunks)

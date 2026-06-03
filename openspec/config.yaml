@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Claude Context is a pnpm TypeScript monorepo for semantic code search across codebases.
+  packages/core owns indexing, splitters, embeddings, and Milvus vector database integrations.
+  packages/mcp exposes index_codebase, search_code, clear_index, and daemon runtime tools.
+  packages/vscode-extension and packages/chrome-extension are clients over the same core indexing/search behavior.
+  The current local deployment uses Milvus standalone at localhost:19530 and Ollama for local embeddings.
+  Existing hybrid mode stores a dense vector plus a Milvus BM25 sparse vector and searches with RRF.
+  BGE-M3 full retrieval means model-generated dense vectors, model-generated sparse lexical weights, and ColBERT-style token vectors with late-interaction reranking.
+  Follow repository style: TypeScript, 4-space indentation, single quotes, semicolons.
+
+rules:
+  proposal:
+    - Include explicit non-goals.
+    - Call out migration impact for existing indexed collections.
+  design:
+    - Distinguish dense-only BGE-M3 from full BGE-M3 dense+sparse+ColBERT.
+    - Include storage and latency tradeoffs.
+  tasks:
+    - Keep tasks ordered so each milestone can be validated independently.

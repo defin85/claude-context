@@ -846,7 +846,7 @@ export class ToolHandlers {
 
             let message = `Background indexing completed for '${absolutePath}' using ${splitterType.toUpperCase()} splitter.\nIndexed ${stats.indexedFiles} files, ${stats.totalChunks} chunks.`;
             if (stats.status === 'limit_reached') {
-                message += `\n⚠️  Warning: Indexing stopped because the chunk limit (450,000) was reached. The index may be incomplete.`;
+                message += `\n⚠️  Warning: Indexing stopped because the configured chunk limit (${stats.totalChunks}) was reached. The index may be incomplete.`;
             }
 
             console.log(`[BACKGROUND-INDEX] ${message}`);

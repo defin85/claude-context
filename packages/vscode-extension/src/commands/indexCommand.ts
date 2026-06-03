@@ -77,7 +77,7 @@ export class IndexCommand {
                 const { indexedFiles, totalChunks, status } = indexStats;
                 if (status === 'limit_reached') {
                     vscode.window.showWarningMessage(
-                        `⚠️ Indexing paused. Reached chunk limit of 450,000.\n\nIndexed ${indexedFiles} files with ${totalChunks} code chunks.`
+                        `⚠️ Indexing paused. Reached configured chunk limit.\n\nIndexed ${indexedFiles} files with ${totalChunks} code chunks.`
                     );
                 } else if (typeof indexedFiles === 'number' && typeof totalChunks === 'number') {
                     vscode.window.showInformationMessage(

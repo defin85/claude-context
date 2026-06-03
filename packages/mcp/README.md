@@ -169,6 +169,14 @@ You can set the embedding batch size to optimize the performance of the MCP serv
 EMBEDDING_BATCH_SIZE=512
 ```
 
+#### Code Chunk Limit
+
+You can set the maximum number of code chunks to index per codebase. The default value is 450000.
+
+```bash
+CODE_CHUNK_LIMIT=900000
+```
+
 #### Custom File Processing (Optional)
 
 You can configure custom file extensions and ignore patterns globally via environment variables:

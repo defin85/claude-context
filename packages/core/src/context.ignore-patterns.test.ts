@@ -148,9 +148,11 @@ async function makeTempDir(): Promise<string> {
 
 describe('Context per-codebase options and ignore handling', () => {
     const originalHybridMode = process.env.HYBRID_MODE;
+    const originalCodeChunkLimit = process.env.CODE_CHUNK_LIMIT;
 
     beforeEach(() => {
         process.env.HYBRID_MODE = 'false';
+        delete process.env.CODE_CHUNK_LIMIT;
     });
 
     afterEach(() => {
@@ -158,6 +160,12 @@ describe('Context per-codebase options and ignore handling', () => {
             delete process.env.HYBRID_MODE;
         } else {
             process.env.HYBRID_MODE = originalHybridMode;
+        }
+
+        if (originalCodeChunkLimit === undefined) {
+            delete process.env.CODE_CHUNK_LIMIT;
+        } else {
+            process.env.CODE_CHUNK_LIMIT = originalCodeChunkLimit;
         }
     });
 
@@ -196,6 +204,26 @@ describe('Context per-codebase options and ignore handling', () => {
         expect(
             vectorDatabase.documents.get(context.getCollectionName(projectB)) || [],
         ).toHaveLength(0);
+    });
+
+    test('CODE_CHUNK_LIMIT stops indexing at the configured chunk count', async () => {
+        process.env.CODE_CHUNK_LIMIT = '2';
+
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await fs.writeFile(path.join(project, 'third.ts'), 'third');
+
+        const stats = await context.indexCodebase(project, undefined, true);
+
+        expect(stats.status).toBe('limit_reached');
+        expect(stats.totalChunks).toBe(2);
+        expect(
+            vectorDatabase.documents.get(context.getCollectionName(project)) || [],
+        ).toHaveLength(2);
     });
 
     test('root anchored directory ignore patterns only match the codebase root', async () => {
