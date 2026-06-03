@@ -2,11 +2,11 @@
 
 // CRITICAL: Redirect console outputs to stderr IMMEDIATELY to avoid interfering with MCP JSON protocol
 // Only MCP protocol messages should go to stdout
-console.log = (...args: any[]) => {
+console.log = (...args: unknown[]) => {
     process.stderr.write('[LOG] ' + args.join(' ') + '\n');
 };
 
-console.warn = (...args: any[]) => {
+console.warn = (...args: unknown[]) => {
     process.stderr.write('[WARN] ' + args.join(' ') + '\n');
 };
 
@@ -22,11 +22,16 @@ import {
 import { Context, MilvusVectorDatabase } from '@zilliz/claude-context-core';
 
 import { CodebaseAccessPolicy } from './access-policy.js';
+import {
+    createManagedBgeM3WorkerManager,
+    ManagedBgeM3WorkerManager
+} from './bge-m3-managed-workers.js';
 import { CodebaseConfigManager } from './codebase-config.js';
 import {
     createMcpConfig,
     createMcpRuntimeConfig,
     ContextMcpConfig,
+    logAcceleratorConfiguration,
     logConfigurationSummary,
     logRuntimeConfigurationSummary,
     McpRuntimeConfig,
@@ -45,7 +50,11 @@ import { ToolHandlers } from './handlers.js';
 import { RuntimeStatusManager } from './runtime-status.js';
 import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
+import { getErrorMessage } from './utils.js';
 import { WorkloadManager } from './workload-manager.js';
+
+type ToolArgs = Record<string, unknown>;
+type ContextOptions = NonNullable<ConstructorParameters<typeof Context>[0]>;
 
 function isIdleBenchmarkStubModeEnabled(): boolean {
     return process.env.MCP_BENCHMARK_IDLE_STUBS === '1';
@@ -78,6 +87,7 @@ class ContextMcpServer {
     private readonly runtimeStatusManager: RuntimeStatusManager;
     private readonly accessPolicy: CodebaseAccessPolicy;
     private readonly workloadManager?: WorkloadManager;
+    private readonly managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager;
     private readonly daemonRegistryManager?: DaemonRegistryManager;
     private readonly daemonClientConfigManager?: DaemonClientConfigManager;
     private stdioServer?: Server;
@@ -85,9 +95,14 @@ class ContextMcpServer {
     private daemonHttpServer?: http.Server;
     private isClosed = false;
 
-    constructor(config: ContextMcpConfig, runtimeConfig: McpRuntimeConfig) {
+    constructor(
+        config: ContextMcpConfig,
+        runtimeConfig: McpRuntimeConfig,
+        managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager
+    ) {
         this.config = config;
         this.runtimeConfig = runtimeConfig;
+        this.managedBgeM3WorkerManager = managedBgeM3WorkerManager;
 
         console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
         console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
@@ -97,7 +112,7 @@ class ContextMcpServer {
             console.log('[BENCHMARK] Using idle benchmark stubs for embedding and vector database.');
         }
 
-        let embedding: any;
+        let embedding: ReturnType<typeof createEmbeddingInstance> | ReturnType<typeof createIdleBenchmarkEmbeddingStub>;
         if (idleBenchmarkStubMode) {
             embedding = createIdleBenchmarkEmbeddingStub();
             console.log('[BENCHMARK] Idle benchmark stub embedding initialized (dimension: 1).');
@@ -106,7 +121,7 @@ class ContextMcpServer {
             logEmbeddingProviderInfo(config, embedding);
         }
 
-        const vectorDatabase: any = idleBenchmarkStubMode
+        const vectorDatabase = idleBenchmarkStubMode
             ? createIdleBenchmarkVectorDatabaseStub()
             : new MilvusVectorDatabase({
                 address: config.milvusAddress,
@@ -114,8 +129,8 @@ class ContextMcpServer {
             });
 
         this.context = new Context({
-            embedding,
-            vectorDatabase
+            embedding: embedding as ContextOptions['embedding'],
+            vectorDatabase: vectorDatabase as ContextOptions['vectorDatabase']
         });
 
         const runtimeId = crypto.randomUUID();
@@ -159,6 +174,20 @@ class ContextMcpServer {
                 maxSearchConcurrency: runtimeConfig.daemon.maxSearchConcurrency,
                 onStateChanged: async (snapshot, reason) => {
                     await this.runtimeStatusManager.updateWorkloadState(snapshot, `workload-${reason}`);
+                    if (snapshot.indexing.activeCount === 0 && snapshot.indexing.queuedCount === 0) {
+                        this.managedBgeM3WorkerManager?.scheduleStopWhenIdle(
+                            `indexing workload idle after workload-${reason}`,
+                            () => {
+                                const currentSnapshot = this.workloadManager?.getSnapshot();
+                                return !currentSnapshot || (
+                                    currentSnapshot.indexing.activeCount === 0
+                                    && currentSnapshot.indexing.queuedCount === 0
+                                );
+                            }
+                        );
+                    } else {
+                        this.managedBgeM3WorkerManager?.cancelScheduledStop();
+                    }
                 }
             })
             : undefined;
@@ -175,7 +204,8 @@ class ContextMcpServer {
             this.codebaseConfigManager,
             this.runtimeStatusManager,
             this.accessPolicy,
-            this.workloadManager
+            this.workloadManager,
+            this.managedBgeM3WorkerManager
         );
 
         this.snapshotManager.loadCodebaseSnapshot();
@@ -266,7 +296,7 @@ This tool is versatile and can be used before completing various tasks to retrie
 `;
 
         server.setRequestHandler(ListToolsRequestSchema, async () => {
-            const tools: Array<Record<string, any>> = [
+            const tools: Array<Record<string, unknown>> = [
                 {
                     name: 'index_codebase',
                     description: indexDescription,
@@ -420,22 +450,23 @@ This tool is versatile and can be used before completing various tasks to retrie
 
         server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
+            const toolArgs: ToolArgs = args ?? {};
 
             switch (name) {
                 case 'index_codebase':
-                    return await this.toolHandlers.handleIndexCodebase(args);
+                    return await this.toolHandlers.handleIndexCodebase(toolArgs);
                 case 'search_code':
-                    return await this.toolHandlers.handleSearchCode(args);
+                    return await this.toolHandlers.handleSearchCode(toolArgs);
                 case 'clear_index':
-                    return await this.toolHandlers.handleClearIndex(args);
+                    return await this.toolHandlers.handleClearIndex(toolArgs);
                 case 'get_indexing_status':
-                    return await this.toolHandlers.handleGetIndexingStatus(args);
+                    return await this.toolHandlers.handleGetIndexingStatus(toolArgs);
                 case 'get_daemon_status':
                     return await this.handleGetDaemonStatusTool();
                 case 'cancel_codebase_workload':
-                    return await this.handleCancelCodebaseWorkloadTool(args);
+                    return await this.handleCancelCodebaseWorkloadTool(toolArgs);
                 case 'shutdown_daemon':
-                    return await this.handleShutdownDaemonTool(args);
+                    return await this.handleShutdownDaemonTool(toolArgs);
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
@@ -466,6 +497,7 @@ This tool is versatile and can be used before completing various tasks to retrie
 
     private async handleGetDaemonStatusTool() {
         const operatorStatus = await readDaemonOperatorStatus();
+        const accelerator = this.context.getLastAcceleratorSnapshot();
         const textLines = [
             `Daemon runtimes: ${operatorStatus.runtimes.length}`
         ];
@@ -477,17 +509,27 @@ This tool is versatile and can be used before completing various tasks to retrie
                 `repos=${knownCodebasesCount} endpoint=${runtime.endpointUrl}`
             );
         }
+        if (accelerator) {
+            textLines.push(
+                `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
+                `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
+                `${accelerator.fallbackReason ? ` fallback=${accelerator.fallbackReason}` : ''}`
+            );
+        }
 
         return {
             content: [{
                 type: 'text',
                 text: textLines.join('\n')
             }],
-            structuredContent: operatorStatus
+            structuredContent: {
+                ...operatorStatus,
+                accelerator
+            }
         };
     }
 
-    private async handleCancelCodebaseWorkloadTool(args: any) {
+    private async handleCancelCodebaseWorkloadTool(args: ToolArgs) {
         const inputPath = typeof args?.path === 'string' ? args.path : '';
         const reason = typeof args?.reason === 'string' && args.reason.trim().length > 0
             ? args.reason.trim()
@@ -528,6 +570,10 @@ This tool is versatile and can be used before completing various tasks to retrie
         const cancelledInteractiveWork = [...cancellation.queued, ...cancellation.active]
             .some((job) => job.type === 'interactive-index');
 
+        if (cancellation.queued.length > 0 || cancellation.active.length > 0) {
+            await this.managedBgeM3WorkerManager?.stopAll(`cancelled workload for ${accessDecision.absolutePath}`);
+        }
+
         if (cancelledInteractiveWork) {
             const lastProgress = this.snapshotManager.getIndexingProgress(accessDecision.absolutePath);
             await this.snapshotManager.failIndexingOwnership(
@@ -558,7 +604,7 @@ This tool is versatile and can be used before completing various tasks to retrie
         };
     }
 
-    private async handleShutdownDaemonTool(args: any) {
+    private async handleShutdownDaemonTool(args: ToolArgs) {
         const reason = typeof args?.reason === 'string' && args.reason.trim().length > 0
             ? args.reason.trim()
             : 'shutdown requested by daemon operator';
@@ -694,9 +740,9 @@ This tool is versatile and can be used before completing various tasks to retrie
         try {
             await server.connect(transport);
             await transport.handleRequest(request, response);
-        } catch (error: any) {
+        } catch (error) {
             cleanup();
-            console.error('[DAEMON] Error handling MCP request:', error);
+            console.error('[DAEMON] Error handling MCP request:', getErrorMessage(error));
 
             if (!response.headersSent) {
                 this.writeDaemonError(response, 500, 'Internal server error.');
@@ -837,6 +883,7 @@ This tool is versatile and can be used before completing various tasks to retrie
 
         await this.daemonRegistryManager?.remove();
         await this.daemonClientConfigManager?.remove();
+        await this.managedBgeM3WorkerManager?.stopAll('daemon shutdown');
     }
 }
 
@@ -868,12 +915,26 @@ async function main() {
         process.exit(0);
     }
 
-    const config = createMcpConfig();
+    let config = createMcpConfig();
     const runtimeConfig = createMcpRuntimeConfig(args);
+    const managedBgeM3WorkerManager = await createManagedBgeM3WorkerManager(config);
+    if (managedBgeM3WorkerManager.endpoints.length > 0) {
+        config = {
+            ...config,
+            bgeM3WorkerEndpoints: [
+                ...config.bgeM3WorkerEndpoints,
+                ...managedBgeM3WorkerManager.endpoints
+            ]
+        };
+    }
+    if (managedBgeM3WorkerManager.fallbackReason) {
+        console.warn(`[MCP] Managed BGE-M3 worker fallback: ${managedBgeM3WorkerManager.fallbackReason}`);
+    }
     logConfigurationSummary(config);
+    logAcceleratorConfiguration(config);
     logRuntimeConfigurationSummary(runtimeConfig);
 
-    activeServer = new ContextMcpServer(config, runtimeConfig);
+    activeServer = new ContextMcpServer(config, runtimeConfig, managedBgeM3WorkerManager);
     await activeServer.start();
 }
 

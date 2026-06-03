@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getErrorCode, getErrorMessage } from './utils.js';
 
 export const DAEMON_CLIENT_CONFIG_FORMAT_VERSION = 'v1';
 export const DAEMON_CLIENT_COMPATIBILITY_VERSION = 1;
@@ -108,8 +109,8 @@ function isPidAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
-    } catch (error: any) {
-        if (error?.code === 'EPERM') {
+    } catch (error) {
+        if (getErrorCode(error) === 'EPERM') {
             return true;
         }
         return false;
@@ -130,8 +131,9 @@ function sanitizeDaemonClientConfig(config: DaemonClientConfigFile | null): Omit
         return null;
     }
 
-    const { bearerToken, ...sanitized } = config;
-    return sanitized;
+    const sanitized: Partial<DaemonClientConfigFile> = { ...config };
+    delete sanitized.bearerToken;
+    return sanitized as Omit<DaemonClientConfigFile, 'bearerToken'>;
 }
 
 export class DaemonClientConfigManager {
@@ -206,8 +208,8 @@ export class DaemonClientConfigManager {
         }
 
         this.heartbeatTimer = setInterval(() => {
-            void this.refresh().catch((error: any) => {
-                console.error('[DAEMON-DISCOVERY] Failed to refresh daemon client config:', error?.message || error);
+            void this.refresh().catch((error) => {
+                console.error('[DAEMON-DISCOVERY] Failed to refresh daemon client config:', getErrorMessage(error));
             });
         }, intervalMs);
         this.heartbeatTimer.unref?.();
@@ -230,16 +232,16 @@ export class DaemonClientConfigManager {
             if (currentPayload.runtimeId !== this.runtimeId) {
                 return;
             }
-        } catch (error: any) {
-            if (error?.code === 'ENOENT') {
+        } catch (error) {
+            if (getErrorCode(error) === 'ENOENT') {
                 return;
             }
         }
 
         try {
             await fs.promises.unlink(this.configFilePath);
-        } catch (error: any) {
-            if (error?.code !== 'ENOENT') {
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
                 throw error;
             }
         }
@@ -254,8 +256,8 @@ export async function readDaemonClientConfig(
 
     try {
         payload = await readJsonFile<DaemonClientConfigFile>(configPath);
-    } catch (error: any) {
-        if (error?.code === 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) === 'ENOENT') {
             return null;
         }
         throw error;
@@ -296,8 +298,8 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
 
     try {
         entries = await fs.promises.readdir(registryDir);
-    } catch (error: any) {
-        if (error?.code !== 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) !== 'ENOENT') {
             throw error;
         }
     }
@@ -318,10 +320,18 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
             let sync: DaemonRegistryRuntimeSummary['sync'];
 
             try {
-                const runtimeStatus = await readJsonFile<any>(registry.runtimeStatusFilePath);
+                const runtimeStatus = await readJsonFile<{
+                    reason?: string;
+                    knownCodebases?: Array<{ path: string; info?: { status?: string } }>;
+                    workload?: {
+                        indexing?: { activeCount?: number; queuedCount?: number };
+                        search?: { activeCount?: number; queuedCount?: number };
+                    };
+                    sync?: { outcome?: string; skipReason?: string; errorMessage?: string };
+                }>(registry.runtimeStatusFilePath);
                 statusReason = runtimeStatus?.reason;
                 if (Array.isArray(runtimeStatus?.knownCodebases)) {
-                    knownCodebases = runtimeStatus.knownCodebases.map((entry: any) => ({
+                    knownCodebases = runtimeStatus.knownCodebases.map((entry) => ({
                         path: entry.path,
                         status: entry.info?.status || 'unknown'
                     }));
@@ -344,8 +354,8 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
                         reason: runtimeStatus.sync.skipReason || runtimeStatus.sync.errorMessage
                     }
                     : undefined;
-            } catch (error: any) {
-                statusReason = `runtime status unavailable: ${error?.message || error}`;
+            } catch (error) {
+                statusReason = `runtime status unavailable: ${getErrorMessage(error)}`;
             }
 
             runtimes.push({
@@ -364,7 +374,7 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
                 workload,
                 sync
             });
-        } catch (error: any) {
+        } catch (error) {
             runtimes.push({
                 registryPath,
                 runtimeId: path.basename(entry, '.json'),
@@ -376,7 +386,7 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
                 runtimeStatusFilePath: 'unavailable',
                 snapshotFilePath: 'unavailable',
                 healthy: false,
-                statusReason: `registry unreadable: ${error?.message || error}`
+                statusReason: `registry unreadable: ${getErrorMessage(error)}`
             });
         }
     }

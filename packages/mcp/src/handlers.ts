@@ -6,9 +6,29 @@ import { CodebaseSessionConfig, Context, COLLECTION_LIMIT_MESSAGE } from "@zilli
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
-import { normalizeCodebasePath, truncateContent, trackCodebasePath } from "./utils.js";
+import {
+    getErrorCode,
+    getErrorMessage,
+    normalizeCodebasePath,
+    truncateContent,
+    trackCodebasePath
+} from "./utils.js";
 import { CodebaseAccessPolicy } from "./access-policy.js";
+import { ManagedBgeM3WorkerManager } from "./bge-m3-managed-workers.js";
 import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
+
+type ToolArgs = Record<string, unknown>;
+type StructuredContent = Record<string, unknown>;
+type CountQueryRow = Record<string, unknown>;
+type SearchResultSummary = {
+    relativePath: string;
+    language?: string;
+    startLine: number;
+    endLine: number;
+    score: number;
+    content: string;
+    metadata?: unknown;
+};
 
 export class ToolHandlers {
     private context: Context;
@@ -17,6 +37,7 @@ export class ToolHandlers {
     private runtimeStatusManager?: RuntimeStatusManager;
     private accessPolicy: CodebaseAccessPolicy;
     private workloadManager?: WorkloadManager;
+    private managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
@@ -26,7 +47,8 @@ export class ToolHandlers {
         codebaseConfigManager: CodebaseConfigManager,
         runtimeStatusManager?: RuntimeStatusManager,
         accessPolicy: CodebaseAccessPolicy = new CodebaseAccessPolicy({ mode: 'stdio' }),
-        workloadManager?: WorkloadManager
+        workloadManager?: WorkloadManager,
+        managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager
     ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
@@ -34,15 +56,40 @@ export class ToolHandlers {
         this.runtimeStatusManager = runtimeStatusManager;
         this.accessPolicy = accessPolicy;
         this.workloadManager = workloadManager;
+        this.managedBgeM3WorkerManager = managedBgeM3WorkerManager;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
 
-    private hasKnownIndexStats(info: any): info is { indexedFiles: number; totalChunks: number; statsState?: 'known' | 'unknown' } {
-        return info
-            && info.statsState !== 'unknown'
-            && typeof info.indexedFiles === 'number'
-            && typeof info.totalChunks === 'number';
+    private isIndexingWorkloadIdle(): boolean {
+        const snapshot = this.workloadManager?.getSnapshot();
+        if (!snapshot) {
+            return true;
+        }
+
+        return snapshot.indexing.activeCount === 0 && snapshot.indexing.queuedCount === 0;
+    }
+
+    private scheduleManagedWorkerStopWhenIdle(reason: string): void {
+        this.managedBgeM3WorkerManager?.scheduleStopWhenIdle(reason, () => this.isIndexingWorkloadIdle());
+    }
+
+    private hasKnownIndexStats(info: unknown): info is { indexedFiles: number; totalChunks: number; indexStatus: 'completed' | 'limit_reached'; lastUpdated: string; statsState?: 'known' | 'unknown' } {
+        if (typeof info !== 'object' || info === null) {
+            return false;
+        }
+        const candidate = info as {
+            indexedFiles?: unknown;
+            totalChunks?: unknown;
+            indexStatus?: unknown;
+            lastUpdated?: unknown;
+            statsState?: unknown;
+        };
+        return candidate.statsState !== 'unknown'
+            && typeof candidate.indexedFiles === 'number'
+            && typeof candidate.totalChunks === 'number'
+            && (candidate.indexStatus === 'completed' || candidate.indexStatus === 'limit_reached')
+            && typeof candidate.lastUpdated === 'string';
     }
 
     private getMerkleSnapshotPath(codebasePath: string): string {
@@ -64,20 +111,20 @@ export class ToolHandlers {
             }
 
             return snapshot.fileHashes.length;
-        } catch (error: any) {
-            if (error.code !== 'ENOENT') {
-                console.warn(`[INDEX-STATS] Failed to read merkle snapshot for '${codebasePath}':`, error.message || error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn(`[INDEX-STATS] Failed to read merkle snapshot for '${codebasePath}':`, getErrorMessage(error));
             }
             return undefined;
         }
     }
 
-    private parseCountQueryResult(rows: Record<string, any>[]): number | undefined {
+    private parseCountQueryResult(rows: CountQueryRow[]): number | undefined {
         if (!Array.isArray(rows) || rows.length === 0) {
             return undefined;
         }
 
-        const parseNumericValue = (value: any): number | undefined => {
+        const parseNumericValue = (value: unknown): number | undefined => {
             if (typeof value === 'number' && Number.isFinite(value)) {
                 return value;
             }
@@ -96,8 +143,9 @@ export class ToolHandlers {
                 }
             }
 
-            if (value && typeof value.toString === 'function') {
-                const parsed = Number(value.toString());
+            const toStringValue = value && typeof value === 'object' ? (value as { toString?: unknown }).toString : undefined;
+            if (typeof toStringValue === 'function') {
+                const parsed = Number(toStringValue.call(value));
                 if (Number.isFinite(parsed)) {
                     return parsed;
                 }
@@ -134,10 +182,10 @@ export class ToolHandlers {
 
             console.warn(`[INDEX-STATS] Could not parse count(*) result for collection '${collectionName}'`);
             return undefined;
-        } catch (error: any) {
+        } catch (error) {
             console.warn(
                 `[INDEX-STATS] Failed to query total chunk count for '${codebasePath}':`,
-                error.message || error
+                getErrorMessage(error)
             );
             return undefined;
         }
@@ -301,8 +349,8 @@ export class ToolHandlers {
                 if (!refreshed) {
                     console.warn(`[INDEX-OWNERSHIP] Heartbeat refresh lost ownership for '${codebasePath}'.`);
                 }
-            }).catch((error: any) => {
-                console.error(`[INDEX-OWNERSHIP] Heartbeat refresh failed for '${codebasePath}':`, error);
+            }).catch((error) => {
+                console.error(`[INDEX-OWNERSHIP] Heartbeat refresh failed for '${codebasePath}':`, getErrorMessage(error));
             });
         }, heartbeatIntervalMs);
         heartbeatTimer.unref?.();
@@ -400,8 +448,8 @@ export class ToolHandlers {
                                 extracted = true;
                             }
                         }
-                    } catch (descError: any) {
-                        console.warn(`[SYNC-CLOUD] ⚠️  Failed to get description for collection ${collectionName}:`, descError.message || descError);
+                    } catch (descError) {
+                        console.warn(`[SYNC-CLOUD] ⚠️  Failed to get description for collection ${collectionName}:`, getErrorMessage(descError));
                     }
 
                     if (!extracted) {
@@ -436,12 +484,12 @@ export class ToolHandlers {
                             } else {
                                 console.log(`[SYNC-CLOUD] ℹ️  Collection ${collectionName} is empty`);
                             }
-                        } catch (queryError: any) {
-                            console.warn(`[SYNC-CLOUD] ⚠️  Fallback query failed for collection ${collectionName}:`, queryError.message || queryError);
+                        } catch (queryError) {
+                            console.warn(`[SYNC-CLOUD] ⚠️  Fallback query failed for collection ${collectionName}:`, getErrorMessage(queryError));
                         }
                     }
-                } catch (collectionError: any) {
-                    console.warn(`[SYNC-CLOUD] ⚠️  Error checking collection ${collectionName}:`, collectionError.message || collectionError);
+                } catch (collectionError) {
+                    console.warn(`[SYNC-CLOUD] ⚠️  Error checking collection ${collectionName}:`, getErrorMessage(collectionError));
                 }
             }
 
@@ -465,17 +513,21 @@ export class ToolHandlers {
 
             console.log(`[SYNC-CLOUD] ℹ️  Cloud sync is non-destructive; local snapshot was not modified.`);
             console.log(`[SYNC-CLOUD] ✅ Cloud sync completed successfully`);
-        } catch (error: any) {
-            console.error(`[SYNC-CLOUD] ❌ Error syncing codebases from cloud:`, error.message || error);
+        } catch (error) {
+            console.error(`[SYNC-CLOUD] ❌ Error syncing codebases from cloud:`, getErrorMessage(error));
         }
     }
 
-    public async handleIndexCodebase(args: any) {
-        const { path: codebasePath, force, splitter, customExtensions, ignorePatterns } = args;
-        const forceReindex = force || false;
-        const splitterType = splitter || 'ast'; // Default to AST
-        const customFileExtensions = customExtensions || [];
-        const customIgnorePatterns = ignorePatterns || [];
+    public async handleIndexCodebase(args: ToolArgs) {
+        const codebasePath = typeof args.path === 'string' ? args.path : '';
+        const forceReindex = args.force === true;
+        const splitterType = typeof args.splitter === 'string' ? args.splitter : 'ast'; // Default to AST
+        const customFileExtensions = Array.isArray(args.customExtensions)
+            ? args.customExtensions.filter((extension): extension is string => typeof extension === 'string')
+            : [];
+        const customIgnorePatterns = Array.isArray(args.ignorePatterns)
+            ? args.ignorePatterns.filter((pattern): pattern is string => typeof pattern === 'string')
+            : [];
         const persistedSessionConfig = this.createPersistedSessionConfig(customFileExtensions, customIgnorePatterns);
         let ownershipClaimed = false;
         let claimedCodebasePath: string | null = null;
@@ -602,13 +654,13 @@ export class ToolHandlers {
                 }
 
                 console.log(`[INDEX-VALIDATION] ✅  Collection creation validation completed`);
-            } catch (validationError: any) {
+            } catch (validationError) {
                 // Handle other collection creation errors
-                console.error(`[INDEX-VALIDATION] ❌ Collection creation validation failed:`, validationError);
+                console.error(`[INDEX-VALIDATION] ❌ Collection creation validation failed:`, getErrorMessage(validationError));
                 return {
                     content: [{
                         type: "text",
-                        text: `Error validating collection creation: ${validationError.message || validationError}`
+                        text: `Error validating collection creation: ${getErrorMessage(validationError)}`
                     }],
                     isError: true
                 };
@@ -656,8 +708,7 @@ export class ToolHandlers {
 
             // Check current status and log if retrying after failure
             if (ownershipClaim.previousInfo?.status === 'indexfailed') {
-                const failedInfo = ownershipClaim.previousInfo as any;
-                console.log(`[BACKGROUND-INDEX] Retrying indexing for previously failed codebase. Previous error: ${failedInfo?.errorMessage || 'Unknown error'}`);
+                console.log(`[BACKGROUND-INDEX] Retrying indexing for previously failed codebase. Previous error: ${ownershipClaim.previousInfo.errorMessage || 'Unknown error'}`);
             }
 
             // Track the codebase path for syncing
@@ -667,9 +718,11 @@ export class ToolHandlers {
             const ownershipHeartbeat = this.startOwnershipHeartbeat(absolutePath);
             const runIndexingJob = async (signal: AbortSignal) => {
                 try {
+                    await this.managedBgeM3WorkerManager?.ensureStarted(`interactive indexing for ${absolutePath}`);
                     await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, signal);
                 } finally {
                     ownershipHeartbeat.stop();
+                    this.scheduleManagedWorkerStopWhenIdle(`indexing workload idle after ${absolutePath}`);
                 }
             };
 
@@ -681,8 +734,8 @@ export class ToolHandlers {
                     completion: runIndexingJob(new AbortController().signal)
                 };
 
-            void queuedIndexingJob.completion.catch((error: any) => {
-                console.error(`[BACKGROUND-INDEX] Queued indexing task failed for '${absolutePath}':`, error?.message || error);
+            void queuedIndexingJob.completion.catch((error) => {
+                console.error(`[BACKGROUND-INDEX] Queued indexing task failed for '${absolutePath}':`, getErrorMessage(error));
             });
 
             const pathInfo = codebasePath !== absolutePath
@@ -718,7 +771,7 @@ export class ToolHandlers {
                 }
             };
 
-        } catch (error: any) {
+        } catch (error) {
             // Enhanced error handling to prevent MCP service crash
             console.error('Error in handleIndexCodebase:', error);
 
@@ -726,11 +779,11 @@ export class ToolHandlers {
                 try {
                     await this.snapshotManager.failIndexingOwnership(
                         claimedCodebasePath,
-                        error.message || String(error)
+                        getErrorMessage(error)
                     );
                     await this.runtimeStatusManager?.refresh('index-start-failed');
-                } catch (ownershipError: any) {
-                    console.error(`[INDEX-OWNERSHIP] Failed to release ownership for '${claimedCodebasePath}':`, ownershipError);
+                } catch (ownershipError) {
+                    console.error(`[INDEX-OWNERSHIP] Failed to release ownership for '${claimedCodebasePath}':`, getErrorMessage(ownershipError));
                 }
             }
 
@@ -738,7 +791,7 @@ export class ToolHandlers {
             return {
                 content: [{
                     type: "text",
-                    text: `Error starting indexing: ${error.message || error}`
+                    text: `Error starting indexing: ${getErrorMessage(error)}`
                 }],
                 isError: true
             };
@@ -858,7 +911,7 @@ export class ToolHandlers {
 
             console.log(`[BACKGROUND-INDEX] ${message}`);
 
-        } catch (error: any) {
+        } catch (error) {
             console.error(`[BACKGROUND-INDEX] Error during indexing for ${absolutePath}:`, error);
 
             // Get the last attempted progress
@@ -866,7 +919,7 @@ export class ToolHandlers {
 
             const errorMessage = isWorkloadCancelledError(error)
                 ? (error.message || `Indexing for '${absolutePath}' was cancelled by daemon operator.`)
-                : (error.message || String(error));
+                : getErrorMessage(error);
             const failed = await this.snapshotManager.failIndexingOwnership(absolutePath, errorMessage, lastProgress);
             if (!failed) {
                 console.warn(`[INDEX-OWNERSHIP] Background indexing failed for '${absolutePath}' but ownership failure update was rejected.`);
@@ -878,9 +931,11 @@ export class ToolHandlers {
         }
     }
 
-    public async handleSearchCode(args: any) {
-        const { path: codebasePath, query, limit = 10, extensionFilter } = args;
-        const resultLimit = limit || 10;
+    public async handleSearchCode(args: ToolArgs) {
+        const codebasePath = typeof args.path === 'string' ? args.path : '';
+        const query = typeof args.query === 'string' ? args.query : '';
+        const resultLimit = typeof args.limit === 'number' ? args.limit : 10;
+        const extensionFilter = args.extensionFilter;
         const executeSearch = async () => {
             try {
                 // Sync indexed codebases from cloud first
@@ -976,8 +1031,8 @@ export class ToolHandlers {
                 let filterExpr: string | undefined = undefined;
                 if (Array.isArray(extensionFilter) && extensionFilter.length > 0) {
                     const cleaned = extensionFilter
-                        .filter((v: any) => typeof v === 'string')
-                        .map((v: string) => v.trim())
+                        .filter((v): v is string => typeof v === 'string')
+                        .map((v) => v.trim())
                         .filter((v: string) => v.length > 0);
                     const invalid = cleaned.filter((e: string) => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
                     if (invalid.length > 0) {
@@ -1031,7 +1086,7 @@ export class ToolHandlers {
                 }
 
                 // Format results
-                const formattedResults = searchResults.map((result: any, index: number) => {
+                const formattedResults = searchResults.map((result, index: number) => {
                     const location = `${result.relativePath}:${result.startLine}-${result.endLine}`;
                     const context = truncateContent(result.content, 5000);
                     const codebaseInfo = path.basename(absolutePath);
@@ -1058,7 +1113,7 @@ export class ToolHandlers {
                         query,
                         limit: Math.min(resultLimit, 50),
                         indexingStatus: isIndexing ? 'indexing' : 'indexed',
-                        results: searchResults.map((result: any) => ({
+                        results: searchResults.map((result): SearchResultSummary => ({
                             relativePath: result.relativePath,
                             language: result.language,
                             startLine: result.startLine,
@@ -1105,8 +1160,8 @@ export class ToolHandlers {
         return this.workloadManager.runSearch(searchCodebasePath, executeSearch);
     }
 
-    public async handleClearIndex(args: any) {
-        const { path: codebasePath } = args;
+    public async handleClearIndex(args: ToolArgs) {
+        const codebasePath = typeof args.path === 'string' ? args.path : '';
 
         try {
             // Force absolute path resolution - warn if relative path provided
@@ -1141,8 +1196,6 @@ export class ToolHandlers {
 
             // Check if this codebase is indexed, indexing, or otherwise tracked in the snapshot.
             const snapshotStatus = this.snapshotManager.getCodebaseStatus(absolutePath);
-            const isIndexed = snapshotStatus === 'indexed';
-            const isIndexing = snapshotStatus === 'indexing';
             const hasTrackedSnapshotState = snapshotStatus !== 'not_found';
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
             const ownershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
@@ -1197,8 +1250,8 @@ export class ToolHandlers {
                 try {
                     await this.context.clearIndex(absolutePath);
                     console.log(`[CLEAR] Successfully cleared index for: ${absolutePath}`);
-                } catch (error: any) {
-                    const errorMsg = `Failed to clear ${absolutePath}: ${error.message}`;
+                } catch (error) {
+                    const errorMsg = `Failed to clear ${absolutePath}: ${getErrorMessage(error)}`;
                     console.error(`[CLEAR] ${errorMsg}`);
                     return {
                         content: [{
@@ -1270,8 +1323,8 @@ export class ToolHandlers {
         }
     }
 
-    public async handleGetIndexingStatus(args: any) {
-        const { path: codebasePath } = args;
+    public async handleGetIndexingStatus(args: ToolArgs) {
+        const codebasePath = typeof args.path === 'string' ? args.path : '';
 
         try {
             // Force absolute path resolution
@@ -1357,12 +1410,16 @@ export class ToolHandlers {
             }
 
             let statusMessage = '';
-            const structuredStatus: Record<string, any> = {
+            const structuredStatus: StructuredContent = {
                 path: absolutePath,
                 status,
                 recoveredFromCloud,
                 hasPersistedSyncConfig
             };
+            const accelerator = this.context.getLastAcceleratorSnapshot();
+            if (accelerator) {
+                structuredStatus.accelerator = accelerator;
+            }
             if (persistedSyncConfig?.retrievalMode) {
                 structuredStatus.retrievalMode = persistedSyncConfig.retrievalMode;
                 structuredStatus.retrievalSchemaVersion = persistedSyncConfig.retrievalSchemaVersion;
@@ -1371,21 +1428,20 @@ export class ToolHandlers {
             switch (status) {
                 case 'indexed':
                     if (this.hasKnownIndexStats(info)) {
-                        const indexedInfo = info as any;
-                        structuredStatus.indexedFiles = indexedInfo.indexedFiles;
-                        structuredStatus.totalChunks = indexedInfo.totalChunks;
-                        structuredStatus.indexStatus = indexedInfo.indexStatus;
-                        structuredStatus.lastUpdated = indexedInfo.lastUpdated;
+                        structuredStatus.indexedFiles = info.indexedFiles;
+                        structuredStatus.totalChunks = info.totalChunks;
+                        structuredStatus.indexStatus = info.indexStatus;
+                        structuredStatus.lastUpdated = info.lastUpdated;
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
-                        statusMessage += `\n📊 Statistics: ${indexedInfo.indexedFiles} files, ${indexedInfo.totalChunks} chunks`;
-                        statusMessage += `\n📅 Status: ${indexedInfo.indexStatus}`;
+                        statusMessage += `\n📊 Statistics: ${info.indexedFiles} files, ${info.totalChunks} chunks`;
+                        statusMessage += `\n📅 Status: ${info.indexStatus}`;
                         if (persistedSyncConfig?.retrievalMode) {
                             statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
                             if (persistedSyncConfig.retrievalSchemaVersion) {
                                 statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
                             }
                         }
-                        statusMessage += `\n🕐 Last updated: ${new Date(indexedInfo.lastUpdated).toLocaleString()}`;
+                        statusMessage += `\n🕐 Last updated: ${new Date(info.lastUpdated).toLocaleString()}`;
                     } else {
                         if (info && info.status === 'indexed') {
                             structuredStatus.indexStatus = info.indexStatus;
@@ -1413,11 +1469,10 @@ export class ToolHandlers {
                     break;
 
                 case 'indexing':
-                    if (info && 'indexingPercentage' in info) {
-                        const indexingInfo = info as any;
-                        const progressPercentage = indexingInfo.indexingPercentage || 0;
+                    if (info && info.status === 'indexing') {
+                        const progressPercentage = info.indexingPercentage || 0;
                         structuredStatus.progressPercentage = progressPercentage;
-                        structuredStatus.lastUpdated = indexingInfo.lastUpdated;
+                        structuredStatus.lastUpdated = info.lastUpdated;
                         statusMessage = `🔄 Codebase '${absolutePath}' is currently being indexed. Progress: ${progressPercentage.toFixed(1)}%`;
 
                         // Add more detailed status based on progress
@@ -1426,24 +1481,23 @@ export class ToolHandlers {
                         } else if (progressPercentage < 100) {
                             statusMessage += ' (Processing files and generating embeddings...)';
                         }
-                        statusMessage += `\n🕐 Last updated: ${new Date(indexingInfo.lastUpdated).toLocaleString()}`;
+                        statusMessage += `\n🕐 Last updated: ${new Date(info.lastUpdated).toLocaleString()}`;
                     } else {
                         statusMessage = `🔄 Codebase '${absolutePath}' is currently being indexed.`;
                     }
                     break;
 
                 case 'indexfailed':
-                    if (info && 'errorMessage' in info) {
-                        const failedInfo = info as any;
-                        structuredStatus.errorMessage = failedInfo.errorMessage;
-                        structuredStatus.lastAttemptedPercentage = failedInfo.lastAttemptedPercentage;
-                        structuredStatus.lastUpdated = failedInfo.lastUpdated;
+                    if (info && info.status === 'indexfailed') {
+                        structuredStatus.errorMessage = info.errorMessage;
+                        structuredStatus.lastAttemptedPercentage = info.lastAttemptedPercentage;
+                        structuredStatus.lastUpdated = info.lastUpdated;
                         statusMessage = `❌ Codebase '${absolutePath}' indexing failed.`;
-                        statusMessage += `\n🚨 Error: ${failedInfo.errorMessage}`;
-                        if (failedInfo.lastAttemptedPercentage !== undefined) {
-                            statusMessage += `\n📊 Failed at: ${failedInfo.lastAttemptedPercentage.toFixed(1)}% progress`;
+                        statusMessage += `\n🚨 Error: ${info.errorMessage}`;
+                        if (info.lastAttemptedPercentage !== undefined) {
+                            statusMessage += `\n📊 Failed at: ${info.lastAttemptedPercentage.toFixed(1)}% progress`;
                         }
-                        statusMessage += `\n🕐 Failed at: ${new Date(failedInfo.lastUpdated).toLocaleString()}`;
+                        statusMessage += `\n🕐 Failed at: ${new Date(info.lastUpdated).toLocaleString()}`;
                         statusMessage += `\n💡 You can retry indexing by running the index_codebase command again.`;
                     } else {
                         statusMessage = `❌ Codebase '${absolutePath}' indexing failed. You can retry indexing.`;
@@ -1468,11 +1522,11 @@ export class ToolHandlers {
                 structuredContent: structuredStatus
             };
 
-        } catch (error: any) {
+        } catch (error) {
             return {
                 content: [{
                     type: "text",
-                    text: `Error getting indexing status: ${error.message || error}`
+                    text: `Error getting indexing status: ${getErrorMessage(error)}`
                 }],
                 isError: true
             };

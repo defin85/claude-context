@@ -3,5 +3,6 @@ export * from './embedding';
 export * from './vectordb';
 export * from './types';
 export * from './context';
+export * from './indexing-accelerator';
 export * from './sync/synchronizer';
 export * from './utils';

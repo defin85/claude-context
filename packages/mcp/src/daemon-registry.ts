@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getErrorCode, getErrorMessage } from './utils.js';
 
 interface DaemonRegistryManagerOptions {
     runtimeId: string;
@@ -105,8 +106,8 @@ export class DaemonRegistryManager {
         }
 
         this.heartbeatTimer = setInterval(() => {
-            void this.refresh().catch((error: any) => {
-                console.error('[DAEMON-REGISTRY] Failed to refresh registry:', error?.message || error);
+            void this.refresh().catch((error) => {
+                console.error('[DAEMON-REGISTRY] Failed to refresh registry:', getErrorMessage(error));
             });
         }, intervalMs);
         this.heartbeatTimer.unref?.();
@@ -126,8 +127,8 @@ export class DaemonRegistryManager {
 
         try {
             await fs.promises.unlink(this.registryFilePath);
-        } catch (error: any) {
-            if (error?.code !== 'ENOENT') {
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
                 throw error;
             }
         }

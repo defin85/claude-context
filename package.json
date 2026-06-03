@@ -26,6 +26,7 @@
         "verify:upstream-merge": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-upstream-merge.ts"
     },
     "devDependencies": {
+        "@eslint/js": "^9.28.0",
         "@types/node": "^20.0.0",
         "@typescript-eslint/eslint-plugin": "^8.31.1",
         "@typescript-eslint/parser": "^8.31.1",

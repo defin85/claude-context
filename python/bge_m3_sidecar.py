@@ -111,6 +111,10 @@ class BgeM3Service:
     model: Any
     model_name: str
     default_mode: BgeM3Mode = "full"
+    model_revision: str | None = None
+    precision: str = "fp16"
+    max_tokens: int = 8192
+    preprocessing_profile: str = "claude-context-bge-m3-v1"
 
     def embed(self, text: str, *, mode: BgeM3Mode | None = None) -> dict[str, Any]:
         return self.embed_batch([text], mode=mode)[0]
@@ -135,9 +139,14 @@ class BgeM3Service:
     def metadata(self) -> dict[str, Any]:
         return {
             "model": self.model_name,
+            "model_revision": self.model_revision,
             "default_mode": self.default_mode,
             "supported_modes": ["full", "dense"],
             "outputs": ["dense", "sparse", "colbert"],
+            "dense_dimension": 1024,
+            "precision": self.precision,
+            "max_tokens": self.max_tokens,
+            "preprocessing_profile": self.preprocessing_profile,
         }
 
 
@@ -165,7 +174,15 @@ def load_service(
 
     selected_device = device or _default_device()
     model = BGEM3FlagModel(model_name, use_fp16=use_fp16, devices=selected_device)
-    return BgeM3Service(model=model, model_name=model_name, default_mode=mode)
+    return BgeM3Service(
+        model=model,
+        model_name=model_name,
+        default_mode=mode,
+        model_revision=os.environ.get("BGE_M3_MODEL_REVISION"),
+        precision="fp16" if use_fp16 else "fp32",
+        max_tokens=int(os.environ.get("BGE_M3_MAX_TOKENS", "8192")),
+        preprocessing_profile=os.environ.get("BGE_M3_PREPROCESSING_PROFILE", "claude-context-bge-m3-v1"),
+    )
 
 
 def create_app(service: BgeM3Service | None = None):

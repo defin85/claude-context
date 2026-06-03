@@ -43,6 +43,18 @@ Workers are treated as equivalent only when metadata matches the configured embe
 
 Alternative considered: route through an external load balancer. A local managed pool keeps lifecycle, metadata validation, and fallback behavior under the daemon's control.
 
+### Decision: Launch managed extra BGE-M3 sidecars as `systemd --user` transient services
+
+Managed extra sidecars SHALL use `systemd --user` transient services by default. This keeps heavy GPU worker lifecycle visible to the OS, gives operators normal `systemctl --user` / `journalctl --user` observability, and lets the daemon retire workers on shutdown or workload cancellation without orphaning model processes.
+
+Child-process startup remains available as an explicit development/fallback lifecycle, but it is not the default for normal daemon operation. If `systemd --user` is unavailable, the daemon SHALL avoid managed startup unless the operator explicitly selects the child lifecycle.
+
+### Decision: Start managed extra BGE-M3 sidecars on demand and retire them when indexing becomes idle
+
+Managed extra sidecars SHALL publish planned loopback endpoints at daemon startup so the embedding client can validate a stable worker pool, but the heavy model processes SHALL start only when an interactive initial or force indexing job begins. When the indexing workload has no active or queued jobs, the daemon SHALL schedule extra-worker retirement with a short debounce. A longer idle timeout remains as a fallback for missed lifecycle events.
+
+Background sync SHALL NOT keep or start managed extra workers unless background-sync acceleration is explicitly enabled. The primary BGE-M3 sidecar remains outside this lifecycle and can stay available for search, dimension detection, and conservative single-worker indexing.
+
 ### Decision: Preserve deterministic document identity and idempotent writes
 
 Batch completion order may change, but document IDs SHALL continue to derive from relative path, line range, and content. Accelerated writes SHALL be idempotent at the batch level. Prefer Milvus upsert for accelerated BGE-M3 writes when the configured Milvus client supports it; otherwise, only retry failures that happened before the write was submitted, and fail the indexing job instead of retrying an ambiguous insert failure.
@@ -58,6 +70,7 @@ Alternative considered: one global batch concurrency. This is simpler but makes 
 ## Risks / Trade-offs
 
 - Extra BGE-M3 workers increase VRAM and RAM use -> enforce a VRAM budget, validate after startup, and stop launching workers before the budget is exceeded.
+- Extra workers can otherwise hold VRAM after indexing completes -> start them on demand and retire them once the indexing workload becomes idle, with an idle timeout as a safety fallback.
 - GPU OOM or worker crashes can interrupt batches -> mark workers unhealthy, retry affected batches on healthy workers only when the failed stage is safe to retry, and fall back to the primary worker.
 - Parallel batches can make progress reporting less linear -> report submitted, completed, failed, and retried batch counts in addition to file progress.
 - Multiple workers can hide version drift -> require matching metadata before a worker joins the pool.
@@ -72,7 +85,7 @@ Rollout:
 
 1. Add configuration with defaults that preserve current behavior unless acceleration is enabled.
 2. Implement batch pipeline and status metrics with a single existing worker.
-3. Add optional BGE-M3 worker pool lifecycle and metadata validation.
+3. Add optional BGE-M3 worker pool lifecycle and metadata validation using `systemd --user` transient services by default.
 4. Enable `auto` mode for initial and force indexing only after tests and local benchmarks pass.
 
 Rollback:
@@ -83,6 +96,5 @@ Rollback:
 
 ## Open Questions
 
-- Whether extra sidecars should be launched as child processes, systemd transient user services, or an external operator-managed pool.
 - The first production-safe default for `INDEX_EMBEDDING_CONCURRENCY`; likely `2` for BGE-M3 full on a single GPU.
 - Whether accelerated BGE-M3 writes should use Milvus SDK upsert directly or a vector database abstraction method that maps to upsert-capable clients.

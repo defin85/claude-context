@@ -119,6 +119,11 @@ export interface VectorDatabase {
     insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void>;
 
     /**
+     * Upsert BGE-M3 full retrieval documents when the backing database supports idempotent writes.
+     */
+    upsertBgeM3?(collectionName: string, documents: VectorDocument[]): Promise<void>;
+
+    /**
      * Search similar vectors
      * @param collectionName Collection name
      * @param queryVector Query vector

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodebaseSessionConfig } from '@zilliz/claude-context-core';
-import { normalizeCodebasePath } from './utils.js';
+import { getErrorCode, getErrorMessage, normalizeCodebasePath } from './utils.js';
 
 interface PersistedCodebaseSessionConfig extends CodebaseSessionConfig {
     formatVersion: 'v1';
@@ -92,9 +92,9 @@ export class CodebaseConfigManager {
             }
 
             return this.normalizeSessionConfig(parsed);
-        } catch (error: any) {
-            if (error.code !== 'ENOENT') {
-                console.warn(`[CODEBASE-CONFIG] Failed to read persisted config for '${codebasePath}':`, error.message || error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn(`[CODEBASE-CONFIG] Failed to read persisted config for '${codebasePath}':`, getErrorMessage(error));
             }
             return null;
         }
@@ -125,8 +125,8 @@ export class CodebaseConfigManager {
     public async removeConfig(codebasePath: string): Promise<void> {
         try {
             await fs.promises.unlink(this.getConfigPath(codebasePath));
-        } catch (error: any) {
-            if (error.code !== 'ENOENT') {
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
                 throw error;
             }
         }
@@ -148,15 +148,15 @@ export class CodebaseConfigManager {
                     if (parsed?.formatVersion === 'v1' && typeof parsed.codebasePath === 'string') {
                         configuredCodebases.push(normalizeCodebasePath(parsed.codebasePath));
                     }
-                } catch (error: any) {
-                    console.warn(`[CODEBASE-CONFIG] Failed to inspect persisted config '${entry.name}':`, error.message || error);
+                } catch (error) {
+                    console.warn(`[CODEBASE-CONFIG] Failed to inspect persisted config '${entry.name}':`, getErrorMessage(error));
                 }
             }
 
             return [...new Set(configuredCodebases)];
-        } catch (error: any) {
-            if (error.code !== 'ENOENT') {
-                console.warn('[CODEBASE-CONFIG] Failed to list persisted codebase configs:', error.message || error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn('[CODEBASE-CONFIG] Failed to list persisted codebase configs:', getErrorMessage(error));
             }
             return [];
         }

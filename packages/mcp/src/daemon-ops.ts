@@ -11,6 +11,7 @@ import {
     readDaemonClientConfig
 } from './daemon-discovery.js';
 import { SnapshotManager } from './snapshot.js';
+import { getErrorCode } from './utils.js';
 
 const RESTART_WAIT_TIMEOUT_MS = 30_000;
 const SHUTDOWN_WAIT_TIMEOUT_MS = 15_000;
@@ -73,8 +74,8 @@ function isPidAlive(pid: number | undefined): boolean {
     try {
         process.kill(pid, 0);
         return true;
-    } catch (error: any) {
-        if (error?.code === 'EPERM') {
+    } catch (error) {
+        if (getErrorCode(error) === 'EPERM') {
             return true;
         }
         return false;
@@ -85,8 +86,8 @@ async function pathExists(targetPath: string): Promise<boolean> {
     try {
         await fs.promises.access(targetPath);
         return true;
-    } catch (error: any) {
-        if (error?.code === 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) === 'ENOENT') {
             return false;
         }
         throw error;
@@ -97,8 +98,8 @@ async function unlinkIfExists(targetPath: string): Promise<boolean> {
     try {
         await fs.promises.unlink(targetPath);
         return true;
-    } catch (error: any) {
-        if (error?.code === 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) === 'ENOENT') {
             return false;
         }
         throw error;
@@ -201,8 +202,8 @@ async function cleanupOrphanDaemonRuntimeStatusArtifacts(
     let runtimeEntries: string[] = [];
     try {
         runtimeEntries = await fs.promises.readdir(getDaemonRuntimeStatusDir());
-    } catch (error: any) {
-        if (error?.code !== 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) !== 'ENOENT') {
             throw error;
         }
         return orphanRemovals;
@@ -266,8 +267,8 @@ export async function cleanupStaleDaemonState(): Promise<DaemonStaleCleanupResul
     let registryEntries: string[] = [];
     try {
         registryEntries = await fs.promises.readdir(getDaemonRegistryDir());
-    } catch (error: any) {
-        if (error?.code !== 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) !== 'ENOENT') {
             throw error;
         }
     }

@@ -3,6 +3,7 @@ import { Context, FileSynchronizer, envManager } from "@zilliz/claude-context-co
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager, RuntimeSyncCodebaseResult } from "./runtime-status.js";
+import { getErrorCode, getErrorErrno, getErrorMessage, getErrorStack } from "./utils.js";
 import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
 
 const DEFAULT_INITIAL_SYNC_DELAY_MS = 5_000;
@@ -122,8 +123,8 @@ export class SyncManager {
                 this.snapshotManager.setCodebaseIndexedWithoutStats(codebasePath);
                 recoveredCodebases.push(codebasePath);
                 console.log(`[SYNC-DEBUG] Self-healed snapshot entry for '${codebasePath}' from persisted config + cloud index.`);
-            } catch (error: any) {
-                console.warn(`[SYNC-DEBUG] Failed self-heal check for '${codebasePath}':`, error.message || error);
+            } catch (error) {
+                console.warn(`[SYNC-DEBUG] Failed self-heal check for '${codebasePath}':`, getErrorMessage(error));
             }
         }
 
@@ -200,12 +201,12 @@ export class SyncManager {
                         });
                         continue;
                     }
-                } catch (pathError: any) {
+                } catch (pathError) {
                     console.error(`[SYNC-DEBUG] Error checking codebase path '${codebasePath}':`, pathError);
                     codebaseResults.push({
                         path: codebasePath,
                         outcome: 'failed',
-                        reason: `path validation failed: ${pathError.message || pathError}`
+                        reason: `path validation failed: ${getErrorMessage(pathError)}`
                     });
                     continue;
                 }
@@ -277,7 +278,7 @@ export class SyncManager {
                         });
                         console.log(`[SYNC] No changes detected for '${codebasePath}' (${codebaseElapsed}ms)`);
                     }
-                } catch (error: any) {
+                } catch (error) {
                     const codebaseElapsed = Date.now() - codebaseStartTime;
                     if (isWorkloadCancelledError(error)) {
                         codebaseResults.push({
@@ -291,25 +292,27 @@ export class SyncManager {
                     }
 
                     console.error(`[SYNC-DEBUG] Error syncing codebase '${codebasePath}' after ${codebaseElapsed}ms:`, error);
-                    console.error(`[SYNC-DEBUG] Error stack:`, error.stack);
+                    console.error(`[SYNC-DEBUG] Error stack:`, getErrorStack(error));
 
-                    if (error.message.includes('Failed to query Milvus')) {
+                    if (getErrorMessage(error).includes('Failed to query Milvus')) {
                         // Collection maybe deleted manually, delete the snapshot file
                         await FileSynchronizer.deleteSnapshot(codebasePath);
                     }
 
                     // Log additional error details
-                    if (error.code) {
-                        console.error(`[SYNC-DEBUG] Error code: ${error.code}`);
+                    const errorCode = getErrorCode(error);
+                    if (errorCode) {
+                        console.error(`[SYNC-DEBUG] Error code: ${errorCode}`);
                     }
-                    if (error.errno) {
-                        console.error(`[SYNC-DEBUG] Error errno: ${error.errno}`);
+                    const errorErrno = getErrorErrno(error);
+                    if (errorErrno) {
+                        console.error(`[SYNC-DEBUG] Error errno: ${errorErrno}`);
                     }
 
                     codebaseResults.push({
                         path: codebasePath,
                         outcome: 'failed',
-                        reason: error.message || String(error),
+                        reason: getErrorMessage(error),
                         durationMs: codebaseElapsed
                     });
 
@@ -323,11 +326,11 @@ export class SyncManager {
             console.log(`[SYNC-DEBUG] Index sync completed for all codebases in ${totalElapsed}ms`);
             console.log(`[SYNC] Index sync completed for all codebases. Total changes - Added: ${totalStats.added}, Removed: ${totalStats.removed}, Modified: ${totalStats.modified}`);
             await this.runtimeStatusManager?.markSyncCompleted(totalStats, codebaseResults);
-        } catch (error: any) {
+        } catch (error) {
             const totalElapsed = Date.now() - syncStartTime;
             console.error(`[SYNC-DEBUG] Error during index sync after ${totalElapsed}ms:`, error);
-            console.error(`[SYNC-DEBUG] Error stack:`, error.stack);
-            await this.runtimeStatusManager?.markSyncFailed(error.message || String(error), codebaseResults);
+            console.error(`[SYNC-DEBUG] Error stack:`, getErrorStack(error));
+            await this.runtimeStatusManager?.markSyncFailed(getErrorMessage(error), codebaseResults);
         } finally {
             this.isSyncing = false;
             const totalElapsed = Date.now() - syncStartTime;

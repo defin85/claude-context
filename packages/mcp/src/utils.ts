@@ -53,3 +53,29 @@ export function trackCodebasePath(codebasePath: string): void {
     const absolutePath = normalizeCodebasePath(codebasePath);
     console.log(`[TRACKING] Tracked codebase path: ${absolutePath} (not marked as indexed)`);
 }
+
+export function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export function getErrorStack(error: unknown): string | undefined {
+    return error instanceof Error ? error.stack : undefined;
+}
+
+export function getErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object' || !('code' in error)) {
+        return undefined;
+    }
+
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' || typeof code === 'number' ? String(code) : undefined;
+}
+
+export function getErrorErrno(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object' || !('errno' in error)) {
+        return undefined;
+    }
+
+    const errno = (error as { errno?: unknown }).errno;
+    return typeof errno === 'string' || typeof errno === 'number' ? String(errno) : undefined;
+}

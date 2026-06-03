@@ -45,6 +45,18 @@ The system SHALL optionally use multiple equivalent BGE-M3 sidecar workers for B
 - **WHEN** starting another worker would exceed the configured VRAM budget
 - **THEN** the system SHALL stop launching additional workers and continue with the healthy worker set
 
+#### Scenario: Managed workers start on demand
+- **WHEN** managed extra BGE-M3 workers are configured and no eligible interactive indexing job is running
+- **THEN** the daemon SHALL expose their planned loopback endpoints without starting the heavy sidecar processes
+
+#### Scenario: Indexing workload becomes idle
+- **WHEN** all interactive indexing jobs have completed, failed, or been cancelled and no indexing jobs remain queued
+- **THEN** the daemon SHALL retire managed extra BGE-M3 workers after a short debounce
+
+#### Scenario: Lifecycle event is missed
+- **WHEN** managed extra workers remain running after the indexing workload has become idle
+- **THEN** the daemon SHALL use the configured idle timeout as a fallback retirement mechanism
+
 ### Requirement: Safe fallback and retry
 The system SHALL preserve indexing progress safety when accelerated workers fail.
 

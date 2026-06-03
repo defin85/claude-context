@@ -12,7 +12,11 @@ import {
     CodebaseInfoIndexFailed,
     IndexingOwnerInfo
 } from "./config.js";
-import { normalizeCodebasePath as normalizeTrackedCodebasePath } from "./utils.js";
+import {
+    getErrorCode,
+    getErrorMessage,
+    normalizeCodebasePath as normalizeTrackedCodebasePath
+} from "./utils.js";
 
 type SnapshotScope = 'workspace' | 'global' | 'daemon';
 
@@ -188,8 +192,8 @@ export class SnapshotManager {
         try {
             process.kill(pid, 0);
             return true;
-        } catch (error: any) {
-            if (error?.code === 'EPERM') {
+        } catch (error) {
+            if (getErrorCode(error) === 'EPERM') {
                 return true;
             }
             return false;
@@ -390,9 +394,9 @@ export class SnapshotManager {
                 await fs.promises.unlink(this.lockFilePath);
                 console.warn(`[SNAPSHOT-DEBUG] Removed stale snapshot lock: ${this.lockFilePath}`);
             }
-        } catch (error: any) {
-            if (error.code !== 'ENOENT') {
-                console.warn('[SNAPSHOT-DEBUG] Failed to inspect snapshot lock file:', error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn('[SNAPSHOT-DEBUG] Failed to inspect snapshot lock file:', getErrorMessage(error));
             }
         }
     }
@@ -433,13 +437,13 @@ export class SnapshotManager {
                     }
                     try {
                         await fs.promises.unlink(this.lockFilePath);
-                    } catch (error: any) {
-                        if (error.code !== 'ENOENT') {
-                            console.warn('[SNAPSHOT-DEBUG] Failed to remove snapshot lock file:', error);
+                    } catch (error) {
+                        if (getErrorCode(error) !== 'ENOENT') {
+                            console.warn('[SNAPSHOT-DEBUG] Failed to remove snapshot lock file:', getErrorMessage(error));
                         }
                     }
                 }
-            } catch (error: any) {
+            } catch (error) {
                 if (lockHandle !== null) {
                     try {
                         await lockHandle.close();
@@ -448,7 +452,7 @@ export class SnapshotManager {
                     }
                 }
 
-                if (error.code !== 'EEXIST') {
+                if (getErrorCode(error) !== 'EEXIST') {
                     throw error;
                 }
 
@@ -589,8 +593,8 @@ export class SnapshotManager {
                 snapshot: this.normalizeSnapshot(this.convertV1ToV2(snapshot)),
                 sourceFormat: 'v1'
             };
-        } catch (error: any) {
-            console.warn('[SNAPSHOT-DEBUG] Failed to parse snapshot from disk:', error);
+        } catch (error) {
+            console.warn('[SNAPSHOT-DEBUG] Failed to parse snapshot from disk:', getErrorMessage(error));
             if (!rotateCorruptFile) {
                 return { snapshot: null, sourceFormat: 'corrupt' };
             }
@@ -599,9 +603,9 @@ export class SnapshotManager {
                 const corruptedPath = `${snapshotPath}.corrupt.${Date.now()}`;
                 fs.renameSync(snapshotPath, corruptedPath);
                 console.warn(`[SNAPSHOT-DEBUG] Corrupted snapshot moved to: ${corruptedPath}`);
-            } catch (rotateError: any) {
-                if (rotateError.code !== 'ENOENT') {
-                    console.warn('[SNAPSHOT-DEBUG] Failed to rotate corrupted snapshot file:', rotateError);
+            } catch (rotateError) {
+                if (getErrorCode(rotateError) !== 'ENOENT') {
+                    console.warn('[SNAPSHOT-DEBUG] Failed to rotate corrupted snapshot file:', getErrorMessage(rotateError));
                 }
             }
             return { snapshot: null, sourceFormat: 'corrupt' };
@@ -816,8 +820,8 @@ export class SnapshotManager {
         if (delayMs <= 0) {
             const immediateReason = this.pendingSaveReason || 'scheduled-immediate';
             this.pendingSaveReason = null;
-            void this.enqueueSave(immediateReason).catch((error: any) => {
-                console.error('[SNAPSHOT-DEBUG] Error during immediate scheduled snapshot save:', error);
+            void this.enqueueSave(immediateReason).catch((error) => {
+                console.error('[SNAPSHOT-DEBUG] Error during immediate scheduled snapshot save:', getErrorMessage(error));
             });
             return;
         }
@@ -830,8 +834,8 @@ export class SnapshotManager {
             const scheduledReason = this.pendingSaveReason || 'scheduled';
             this.pendingSaveReason = null;
             this.pendingSaveTimer = null;
-            void this.enqueueSave(scheduledReason).catch((error: any) => {
-                console.error('[SNAPSHOT-DEBUG] Error during scheduled snapshot save:', error);
+            void this.enqueueSave(scheduledReason).catch((error) => {
+                console.error('[SNAPSHOT-DEBUG] Error during scheduled snapshot save:', getErrorMessage(error));
             });
         }, delayMs);
     }
@@ -887,8 +891,10 @@ export class SnapshotManager {
     /**
      * Check if snapshot is v2 format
      */
-    private isV2Format(snapshot: any): snapshot is CodebaseSnapshotV2 {
-        return snapshot && snapshot.formatVersion === 'v2';
+    private isV2Format(snapshot: unknown): snapshot is CodebaseSnapshotV2 {
+        return typeof snapshot === 'object'
+            && snapshot !== null
+            && (snapshot as { formatVersion?: unknown }).formatVersion === 'v2';
     }
 
     /**
@@ -1716,13 +1722,13 @@ export class SnapshotManager {
             this.loadV2Format(snapshot);
 
             if (this.shouldPersistLoadedSnapshot(snapshot, sourceFormat)) {
-                void this.saveCodebaseSnapshot('post-load-migration').catch((error: any) => {
-                    console.error('[SNAPSHOT-DEBUG] Error persisting post-load migration snapshot:', error);
+                void this.saveCodebaseSnapshot('post-load-migration').catch((error) => {
+                    console.error('[SNAPSHOT-DEBUG] Error persisting post-load migration snapshot:', getErrorMessage(error));
                 });
             }
 
-        } catch (error: any) {
-            console.error('[SNAPSHOT-DEBUG] Error loading snapshot:', error);
+        } catch (error) {
+            console.error('[SNAPSHOT-DEBUG] Error loading snapshot:', getErrorMessage(error));
             console.log('[SNAPSHOT-DEBUG] Starting with empty codebase list due to snapshot error.');
         }
     }

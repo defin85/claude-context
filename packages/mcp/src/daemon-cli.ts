@@ -15,14 +15,23 @@ interface DaemonCliCommand {
     path?: string;
 }
 
-function textFromToolResult(result: any): string {
-    if (!Array.isArray(result?.content)) {
+interface TextToolResult {
+    content?: Array<{ type?: string; text?: string }>;
+}
+
+function textFromToolResult(result: unknown): string {
+    if (!result || typeof result !== 'object' || !('content' in result)) {
         return '';
     }
 
-    return result.content
-        .filter((item: any) => item?.type === 'text' && typeof item?.text === 'string')
-        .map((item: any) => item.text)
+    const content = (result as TextToolResult).content;
+    if (!Array.isArray(content)) {
+        return '';
+    }
+
+    return content
+        .filter((item): item is { type: 'text'; text: string } => item?.type === 'text' && typeof item?.text === 'string')
+        .map((item) => item.text)
         .join('\n');
 }
 

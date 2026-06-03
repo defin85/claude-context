@@ -68,9 +68,11 @@ export function createEmbeddingInstance(config: ContextMcpConfig): SupportedEmbe
             console.log(`[EMBEDDING] 🔧 Configuring BGE-M3 with model: ${config.embeddingModel}, endpoint: ${config.bgeM3Endpoint}, mode: ${config.bgeM3Mode}`);
             const bgeM3Embedding = new BgeM3Embedding({
                 endpoint: config.bgeM3Endpoint,
+                workerEndpoints: config.bgeM3WorkerEndpoints,
                 model: config.embeddingModel,
                 mode: config.bgeM3Mode,
-                dimension: config.ollamaDimension
+                dimension: config.ollamaDimension,
+                retryBudget: config.acceleratorRetryBudget,
             });
             console.log(`[EMBEDDING] ✅ BGE-M3 embedding instance created successfully (${bgeM3Embedding.getRetrievalMode()})`);
             return bgeM3Embedding;

@@ -26,11 +26,30 @@ export interface ContextMcpConfig {
     ollamaDimension?: number;
     // BGE-M3 configuration
     bgeM3Endpoint?: string;
+    bgeM3WorkerEndpoints: string[];
     bgeM3Model?: string;
     bgeM3Mode: BgeM3Mode;
     bgeM3CandidateLimit: number;
     bgeM3RerankLimit?: number;
     bgeM3StoreColbert: boolean;
+    acceleratorMode: 'off' | 'auto';
+    acceleratorEmbeddingConcurrency: number;
+    acceleratorInsertConcurrency: number;
+    acceleratorMaxBgeM3Workers: number;
+    acceleratorVramLimitPercent: number;
+    acceleratorRetryBudget: number;
+    acceleratorBackgroundSync: boolean;
+    acceleratorManagedBgeM3Workers: boolean;
+    acceleratorManagedWorkerLifecycle: 'systemd' | 'child';
+    acceleratorManagedWorkerStartPort: number;
+    acceleratorAllowUnmeasuredVram: boolean;
+    acceleratorWorkerStartTimeoutMs: number;
+    acceleratorWorkerStopDebounceMs: number;
+    acceleratorWorkerIdleTimeoutMs: number;
+    bgeM3SidecarPython: string;
+    bgeM3SidecarScript: string;
+    bgeM3Device?: string;
+    bgeM3UseFp16: boolean;
     // Vector database configuration
     milvusAddress?: string; // Optional, can be auto-resolved from token
     milvusToken?: string;
@@ -227,6 +246,7 @@ export function createMcpConfig(): ContextMcpConfig {
 
     const embeddingProvider = (envManager.get('EMBEDDING_PROVIDER') as EmbeddingProviderName) || 'OpenAI';
     const bgeM3Mode = getBgeM3ModeFromEnv();
+    const acceleratorMode = parseAcceleratorMode(envManager.get('INDEX_ACCELERATOR_MODE') || envManager.get('BGE_M3_ACCELERATOR'));
 
     const config: ContextMcpConfig = {
         name: envManager.get('MCP_SERVER_NAME') || "Context MCP Server",
@@ -246,11 +266,30 @@ export function createMcpConfig(): ContextMcpConfig {
         ollamaDimension: getPositiveIntegerFromEnv('EMBEDDING_DIMENSION'),
         // BGE-M3 configuration
         bgeM3Endpoint: envManager.get('BGE_M3_ENDPOINT'),
+        bgeM3WorkerEndpoints: parseEndpointList(envManager.get('BGE_M3_WORKER_ENDPOINTS')),
         bgeM3Model: envManager.get('BGE_M3_MODEL'),
         bgeM3Mode,
         bgeM3CandidateLimit: getPositiveIntegerFromEnvWithDefault('BGE_M3_CANDIDATE_LIMIT', 100),
         bgeM3RerankLimit: getPositiveIntegerFromEnv('BGE_M3_RERANK_LIMIT'),
         bgeM3StoreColbert: getBooleanFromEnv('BGE_M3_STORE_COLBERT', true),
+        acceleratorMode,
+        acceleratorEmbeddingConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_EMBEDDING_CONCURRENCY', acceleratorMode === 'auto' ? 2 : 1),
+        acceleratorInsertConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_INSERT_CONCURRENCY', 1),
+        acceleratorMaxBgeM3Workers: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_MAX_WORKERS', 1),
+        acceleratorVramLimitPercent: Math.max(1, Math.min(100, getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75))),
+        acceleratorRetryBudget: getPositiveIntegerFromEnvWithDefault('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
+        acceleratorBackgroundSync: getBooleanFromEnv('INDEX_ACCELERATE_BACKGROUND_SYNC', false),
+        acceleratorManagedBgeM3Workers: getBooleanFromEnv('BGE_M3_ACCELERATOR_MANAGED_WORKERS', false),
+        acceleratorManagedWorkerLifecycle: parseManagedWorkerLifecycle(envManager.get('BGE_M3_ACCELERATOR_WORKER_LIFECYCLE')),
+        acceleratorManagedWorkerStartPort: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_START_PORT', 8001),
+        acceleratorAllowUnmeasuredVram: getBooleanFromEnv('BGE_M3_ACCELERATOR_ALLOW_UNMEASURED_VRAM', false),
+        acceleratorWorkerStartTimeoutMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_START_TIMEOUT_MS', 180000),
+        acceleratorWorkerStopDebounceMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_STOP_DEBOUNCE_MS', 15000),
+        acceleratorWorkerIdleTimeoutMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_IDLE_TIMEOUT_MS', 300000),
+        bgeM3SidecarPython: envManager.get('BGE_M3_SIDECAR_PYTHON') || 'python3',
+        bgeM3SidecarScript: envManager.get('BGE_M3_SIDECAR_SCRIPT') || path.resolve(process.cwd(), 'python', 'bge_m3_sidecar.py'),
+        bgeM3Device: envManager.get('BGE_M3_DEVICE'),
+        bgeM3UseFp16: getBooleanFromEnv('BGE_M3_USE_FP16', true),
         // Vector database configuration - address can be auto-resolved from token
         milvusAddress: envManager.get('MILVUS_ADDRESS'), // Optional, can be resolved from token
         milvusToken: envManager.get('MILVUS_TOKEN')
@@ -261,6 +300,38 @@ export function createMcpConfig(): ContextMcpConfig {
     }
 
     return config;
+}
+
+function parseAcceleratorMode(rawValue: string | undefined): 'off' | 'auto' {
+    if (!rawValue || rawValue === 'off') {
+        return 'off';
+    }
+    if (rawValue === 'auto') {
+        return 'auto';
+    }
+    console.warn(`[DEBUG] ⚠️  Ignoring invalid accelerator mode '${rawValue}'. Expected 'off' or 'auto'.`);
+    return 'off';
+}
+
+function parseManagedWorkerLifecycle(rawValue: string | undefined): 'systemd' | 'child' {
+    if (!rawValue || rawValue === 'systemd') {
+        return 'systemd';
+    }
+    if (rawValue === 'child') {
+        return 'child';
+    }
+    console.warn(`[DEBUG] ⚠️  Ignoring invalid BGE_M3_ACCELERATOR_WORKER_LIFECYCLE '${rawValue}'. Expected 'systemd' or 'child'.`);
+    return 'systemd';
+}
+
+function parseEndpointList(rawValue: string | undefined): string[] {
+    if (!rawValue) {
+        return [];
+    }
+    return [...new Set(rawValue
+        .split(/[,\s]+/)
+        .map((endpoint) => endpoint.trim())
+        .filter(Boolean))];
 }
 
 function parsePositivePort(rawValue: string | undefined, fallback: number): number {
@@ -469,6 +540,9 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
             console.log(`[MCP]   BGE-M3 Candidate Limit: ${config.bgeM3CandidateLimit}`);
             console.log(`[MCP]   BGE-M3 Rerank Limit: ${config.bgeM3RerankLimit || '[search limit]'}`);
             console.log(`[MCP]   BGE-M3 Store ColBERT: ${config.bgeM3StoreColbert ? 'true' : 'false'}`);
+            if (config.bgeM3WorkerEndpoints.length > 0) {
+                console.log(`[MCP]   BGE-M3 Worker Endpoints: ${config.bgeM3WorkerEndpoints.join(', ')}`);
+            }
             break;
     }
 
@@ -493,6 +567,26 @@ export function logRuntimeConfigurationSummary(runtimeConfig: McpRuntimeConfig):
 
     if (daemon.generatedBearerToken) {
         console.log(`[MCP]   Generated Daemon Bearer Token: ${daemon.bearerToken}`);
+    }
+}
+
+export function logAcceleratorConfiguration(config: ContextMcpConfig): void {
+    console.log(`[MCP]   Accelerator Mode: ${config.acceleratorMode}`);
+    console.log(`[MCP]   Accelerator Embedding Concurrency: ${config.acceleratorEmbeddingConcurrency}`);
+    console.log(`[MCP]   Accelerator Insert Concurrency: ${config.acceleratorInsertConcurrency}`);
+    console.log(`[MCP]   Accelerator Max BGE-M3 Workers: ${config.acceleratorMaxBgeM3Workers}`);
+    console.log(`[MCP]   Accelerator VRAM Limit: ${config.acceleratorVramLimitPercent}%`);
+    console.log(`[MCP]   Accelerator Retry Budget: ${config.acceleratorRetryBudget}`);
+    console.log(`[MCP]   Accelerator Background Sync: ${config.acceleratorBackgroundSync ? 'true' : 'false'}`);
+    console.log(`[MCP]   Accelerator Managed BGE-M3 Workers: ${config.acceleratorManagedBgeM3Workers ? 'true' : 'false'}`);
+    if (config.acceleratorManagedBgeM3Workers) {
+        console.log(`[MCP]   Accelerator Worker Lifecycle: ${config.acceleratorManagedWorkerLifecycle}`);
+        console.log(`[MCP]   Accelerator Worker Start Port: ${config.acceleratorManagedWorkerStartPort}`);
+        console.log(`[MCP]   Accelerator Worker Start Timeout: ${config.acceleratorWorkerStartTimeoutMs}ms`);
+        console.log(`[MCP]   Accelerator Worker Stop Debounce: ${config.acceleratorWorkerStopDebounceMs}ms`);
+        console.log(`[MCP]   Accelerator Worker Idle Timeout: ${config.acceleratorWorkerIdleTimeoutMs}ms`);
+        console.log(`[MCP]   Accelerator Allow Unmeasured VRAM: ${config.acceleratorAllowUnmeasuredVram ? 'true' : 'false'}`);
+        console.log(`[MCP]   BGE-M3 Sidecar Script: ${config.bgeM3SidecarScript}`);
     }
 }
 
@@ -554,6 +648,20 @@ Environment Variables:
   BGE_M3_CANDIDATE_LIMIT  Max first-stage candidates for ColBERT reranking (default: 100)
   BGE_M3_RERANK_LIMIT     Max candidates to return after reranking (default: search limit)
   BGE_M3_STORE_COLBERT    Store ColBERT token vectors for full mode; full mode requires true (default: true)
+  BGE_M3_WORKER_ENDPOINTS Additional BGE-M3 sidecar endpoints, separated by comma or whitespace
+  BGE_M3_ACCELERATOR      Legacy alias for INDEX_ACCELERATOR_MODE
+  INDEX_ACCELERATOR_MODE  Accelerator mode: off or auto (default: off)
+  INDEX_EMBEDDING_CONCURRENCY Max in-flight embedding batches (default: 2 in auto, else 1)
+  INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 1)
+  BGE_M3_ACCELERATOR_MAX_WORKERS Total BGE-M3 worker budget including primary (default: 1)
+  BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT Managed worker VRAM ceiling (default: 75)
+  BGE_M3_ACCELERATOR_MANAGED_WORKERS Start extra BGE-M3 sidecars when eligible (default: false)
+  BGE_M3_ACCELERATOR_WORKER_LIFECYCLE Managed worker lifecycle: systemd or child (default: systemd)
+  BGE_M3_ACCELERATOR_START_PORT First managed sidecar loopback port (default: 8001)
+  BGE_M3_ACCELERATOR_ALLOW_UNMEASURED_VRAM Allow managed startup without nvidia-smi metrics (default: false)
+  BGE_M3_ACCELERATOR_WORKER_START_TIMEOUT_MS Health wait timeout for managed workers (default: 180000)
+  BGE_M3_SIDECAR_PYTHON  Python executable for managed sidecars (default: python3)
+  BGE_M3_SIDECAR_SCRIPT  Sidecar script path (default: ./python/bge_m3_sidecar.py)
   
   Vector Database Configuration:
   MILVUS_ADDRESS          Milvus address (optional, can be auto-resolved from token)

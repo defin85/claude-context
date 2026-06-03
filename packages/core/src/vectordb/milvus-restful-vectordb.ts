@@ -837,6 +837,21 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         }
     }
 
+    private toBgeM3Entities(documents: VectorDocument[]): any[] {
+        return documents.map(doc => ({
+            id: doc.id,
+            content: doc.content,
+            dense_vector: doc.vector,
+            sparse_vector: this.toSparseVectorPayload(doc),
+            colbert_vectors: JSON.stringify(doc.colbertVectors || []),
+            relativePath: doc.relativePath,
+            startLine: doc.startLine,
+            endLine: doc.endLine,
+            fileExtension: doc.fileExtension,
+            metadata: JSON.stringify(doc.metadata),
+        }));
+    }
+
     async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.ensureInitialized();
         await this.ensureLoaded(collectionName);
@@ -844,23 +859,10 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         try {
             const restfulConfig = this.config as MilvusRestfulConfig;
 
-            const data = documents.map(doc => ({
-                id: doc.id,
-                content: doc.content,
-                dense_vector: doc.vector,
-                sparse_vector: this.toSparseVectorPayload(doc),
-                colbert_vectors: JSON.stringify(doc.colbertVectors || []),
-                relativePath: doc.relativePath,
-                startLine: doc.startLine,
-                endLine: doc.endLine,
-                fileExtension: doc.fileExtension,
-                metadata: JSON.stringify(doc.metadata),
-            }));
-
             const response = await this.makeRequest('/entities/insert', 'POST', {
                 collectionName,
                 dbName: restfulConfig.database,
-                data,
+                data: this.toBgeM3Entities(documents),
             });
 
             if (response.code !== 0) {
@@ -868,6 +870,28 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
             }
         } catch (error) {
             console.error(`[MilvusRestfulDB] ❌ Failed to insert BGE-M3 documents to collection '${collectionName}':`, error);
+            throw error;
+        }
+    }
+
+    async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        try {
+            const restfulConfig = this.config as MilvusRestfulConfig;
+
+            const response = await this.makeRequest('/entities/upsert', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database,
+                data: this.toBgeM3Entities(documents),
+            });
+
+            if (response.code !== 0) {
+                throw new Error(`BGE-M3 upsert failed: ${response.message || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`[MilvusRestfulDB] ❌ Failed to upsert BGE-M3 documents to collection '${collectionName}':`, error);
             throw error;
         }
     }

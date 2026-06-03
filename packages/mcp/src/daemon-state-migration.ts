@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { CodebaseConfigManager } from './codebase-config.js';
 import { CodebaseAccessPolicy } from './access-policy.js';
 import { SnapshotManager } from './snapshot.js';
+import { getErrorCode, getErrorMessage } from './utils.js';
 import type {
     CodebaseInfo,
     CodebaseInfoIndexed,
@@ -87,8 +88,8 @@ export async function migrateWorkspaceStateToDaemon(
     let entries: fs.Dirent[] = [];
     try {
         entries = await fs.promises.readdir(workspaceMcpRoot, { withFileTypes: true });
-    } catch (error: any) {
-        if (error?.code === 'ENOENT') {
+    } catch (error) {
+        if (getErrorCode(error) === 'ENOENT') {
             return result;
         }
         throw error;
@@ -125,9 +126,9 @@ export async function migrateWorkspaceStateToDaemon(
                     });
                 }
             }
-        } catch (error: any) {
-            if (error?.code !== 'ENOENT') {
-                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace snapshot '${snapshotPath}':`, error?.message || error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace snapshot '${snapshotPath}':`, getErrorMessage(error));
             }
         }
 
@@ -135,9 +136,9 @@ export async function migrateWorkspaceStateToDaemon(
         let configEntries: fs.Dirent[] = [];
         try {
             configEntries = await fs.promises.readdir(configDir, { withFileTypes: true });
-        } catch (error: any) {
-            if (error?.code !== 'ENOENT') {
-                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace config dir '${configDir}':`, error?.message || error);
+        } catch (error) {
+            if (getErrorCode(error) !== 'ENOENT') {
+                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace config dir '${configDir}':`, getErrorMessage(error));
             }
         }
 
@@ -169,8 +170,8 @@ export async function migrateWorkspaceStateToDaemon(
                     customExtensions: payload.customExtensions || [],
                     customIgnorePatterns: payload.customIgnorePatterns || []
                 });
-            } catch (error: any) {
-                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace config '${configPath}':`, error?.message || error);
+            } catch (error) {
+                console.warn(`[DAEMON-MIGRATION] Failed to inspect workspace config '${configPath}':`, getErrorMessage(error));
             }
         }
     }

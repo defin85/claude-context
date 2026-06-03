@@ -22,6 +22,14 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
+import {
+    AsyncLimiter,
+    IndexingBatchMetadata,
+    IndexingAcceleratorRuntime,
+    IndexingAcceleratorSnapshot,
+    getIndexingAcceleratorConfig,
+    shouldAccelerateIndexing,
+} from "./indexing-accelerator";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 const RETRIEVAL_SCHEMA_VERSION = 1;
@@ -229,6 +237,12 @@ export interface CodebaseSessionConfig {
     retrievalSchemaVersion?: number;
 }
 
+interface ProcessFileListOptions {
+    abortSignal?: AbortSignal;
+    allowAcceleration?: boolean;
+    isBackgroundSync?: boolean;
+}
+
 interface CodebaseSessionState {
     codebasePath: string;
     customExtensions: string[];
@@ -242,6 +256,11 @@ interface CodebaseSessionState {
 type MultiVectorEmbeddingProvider = Embedding & {
     embedMulti(text: string): Promise<MultiVectorEmbedding>;
     embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]>;
+    embedMultiBatchWithWorkerPool?(texts: string[]): Promise<MultiVectorEmbedding[]>;
+};
+
+type WorkerSnapshotProvider = Embedding & {
+    getWorkerSnapshot(): Array<{ healthy: boolean; rejectedReason?: string }>;
 };
 
 export class Context {
@@ -255,6 +274,7 @@ export class Context {
     private warnedOverrideSanitization = new Set<string>();
     private codebaseSessions = new Map<string, CodebaseSessionState>();
     private synchronizers = new Map<string, FileSynchronizer>();
+    private lastAcceleratorSnapshot?: IndexingAcceleratorSnapshot;
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -319,6 +339,23 @@ export class Context {
                 `[Context] 🚫 Loaded ${envCustomIgnorePatterns.length} custom ignore patterns from environment: ${envCustomIgnorePatterns.join(", ")}`,
             );
         }
+    }
+
+    getLastAcceleratorSnapshot(): IndexingAcceleratorSnapshot | undefined {
+        return this.lastAcceleratorSnapshot ? { ...this.lastAcceleratorSnapshot } : undefined;
+    }
+
+    private updateAcceleratorWorkerSnapshot(acceleratorRuntime: IndexingAcceleratorRuntime): void {
+        const candidate = this.embedding as Embedding & Partial<WorkerSnapshotProvider>;
+        if (typeof candidate.getWorkerSnapshot !== "function") {
+            return;
+        }
+
+        const workers = candidate.getWorkerSnapshot();
+        acceleratorRuntime.updateWorkerCounts(
+            workers.filter((worker) => worker.healthy).length,
+            workers.filter((worker) => worker.rejectedReason).length,
+        );
     }
 
     private normalizeExtensionsList(extensions: string[] = []): string[] {
@@ -927,7 +964,11 @@ export class Context {
                     percentage: Math.round(progressPercentage),
                 });
             },
-            abortSignal,
+            {
+                abortSignal,
+                allowAcceleration: forceReindex || codeFiles.length > 0,
+                isBackgroundSync: false,
+            },
         );
 
         console.log(
@@ -1058,7 +1099,11 @@ export class Context {
                         `Indexed ${filePath} (${fileIndex}/${totalFiles})`,
                     );
                 },
-                abortSignal,
+                {
+                    abortSignal,
+                    allowAcceleration: false,
+                    isBackgroundSync: true,
+                },
             );
         }
 
@@ -1688,135 +1733,201 @@ export class Context {
             fileIndex: number,
             totalFiles: number,
         ) => void,
-        abortSignal?: AbortSignal,
+        options: ProcessFileListOptions = {},
     ): Promise<{
         processedFiles: number;
         totalChunks: number;
         status: "completed" | "limit_reached";
     }> {
+        const abortSignal = options.abortSignal;
         const isHybrid = this.getIsHybrid();
         const EMBEDDING_BATCH_SIZE = Math.max(
             1,
             parseInt(envManager.get("EMBEDDING_BATCH_SIZE") || "100", 10),
         );
         const CODE_CHUNK_LIMIT = getCodeChunkLimit();
+        const acceleratorConfig = getIndexingAcceleratorConfig();
+        const accelerationDecision = shouldAccelerateIndexing(acceleratorConfig, {
+            isInitialOrForce: options.allowAcceleration === true,
+            isBackgroundSync: options.isBackgroundSync === true,
+        });
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            acceleratorConfig,
+            accelerationDecision.active,
+            accelerationDecision.fallbackReason,
+        );
+        const embeddingLimiter = new AsyncLimiter(
+            accelerationDecision.active ? acceleratorConfig.embeddingConcurrency : 1,
+        );
+        const insertLimiter = new AsyncLimiter(
+            accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1,
+        );
+        const submittedBatches: Promise<void>[] = [];
+        this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
             `[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`,
         );
         console.log(`[Context] 🔧 Using CODE_CHUNK_LIMIT: ${CODE_CHUNK_LIMIT}`);
+        console.log(
+            `[Context] ⚡ Index accelerator: mode=${acceleratorConfig.mode}, active=${accelerationDecision.active}, embeddingConcurrency=${accelerationDecision.active ? acceleratorConfig.embeddingConcurrency : 1}, insertConcurrency=${accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1}${accelerationDecision.fallbackReason ? `, fallback=${accelerationDecision.fallbackReason}` : ""}`,
+        );
 
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
         let processedFiles = 0;
         let totalChunks = 0;
         let limitReached = false;
+        let batchSequence = 0;
+        const createBatchMetadata = (batch: Array<{ chunk: CodeChunk; codebasePath: string }>): IndexingBatchMetadata => {
+            const filePaths = batch
+                .map((item) => item.chunk.metadata.filePath)
+                .filter((filePath): filePath is string => typeof filePath === "string");
+            return {
+                id: ++batchSequence,
+                chunkCount: batch.length,
+                firstFile: filePaths[0],
+                lastFile: filePaths[filePaths.length - 1],
+            };
+        };
 
-        for (let i = 0; i < filePaths.length; i++) {
-            throwIfOperationAborted(abortSignal);
-            const filePath = filePaths[i];
-
-            try {
-                const content = await fs.promises.readFile(filePath, "utf-8");
+        try {
+            for (let i = 0; i < filePaths.length; i++) {
                 throwIfOperationAborted(abortSignal);
-                const language = this.getLanguageFromExtension(
-                    path.extname(filePath),
-                );
-                const chunks = await this.codeSplitter.split(
-                    content,
-                    language,
-                    filePath,
-                );
-                throwIfOperationAborted(abortSignal);
+                const filePath = filePaths[i];
 
-                // Log files with many chunks or large content
-                if (chunks.length > 50) {
-                    console.warn(
-                        `[Context] ⚠️  File ${filePath} generated ${chunks.length} chunks (${Math.round(content.length / 1024)}KB)`,
+                try {
+                    const scanStartedAt = Date.now();
+                    const content = await fs.promises.readFile(filePath, "utf-8");
+                    acceleratorRuntime.recordScan(Date.now() - scanStartedAt);
+                    throwIfOperationAborted(abortSignal);
+                    const language = this.getLanguageFromExtension(
+                        path.extname(filePath),
                     );
-                } else if (content.length > 100000) {
-                    console.log(
-                        `📄 Large file ${filePath}: ${Math.round(content.length / 1024)}KB -> ${chunks.length} chunks`,
+                    const splitStartedAt = Date.now();
+                    const chunks = await this.codeSplitter.split(
+                        content,
+                        language,
+                        filePath,
                     );
-                }
+                    acceleratorRuntime.recordSplit(Date.now() - splitStartedAt);
+                    throwIfOperationAborted(abortSignal);
 
-                // Add chunks to buffer
-                for (const chunk of chunks) {
-                    chunkBuffer.push({ chunk, codebasePath });
-                    totalChunks++;
+                    // Log files with many chunks or large content
+                    if (chunks.length > 50) {
+                        console.warn(
+                            `[Context] ⚠️  File ${filePath} generated ${chunks.length} chunks (${Math.round(content.length / 1024)}KB)`,
+                        );
+                    } else if (content.length > 100000) {
+                        console.log(
+                            `📄 Large file ${filePath}: ${Math.round(content.length / 1024)}KB -> ${chunks.length} chunks`,
+                        );
+                    }
 
-                    // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
-                    if (chunkBuffer.length >= EMBEDDING_BATCH_SIZE) {
-                        throwIfOperationAborted(abortSignal);
-                        try {
-                            await this.processChunkBuffer(chunkBuffer);
-                        } catch (error) {
-                            if (isFatalEmbeddingBatchError(error)) {
-                                throw error;
-                            }
-                            const searchType =
-                                isHybrid === true ? "hybrid" : "regular";
-                            console.error(
-                                `[Context] ❌ Failed to process chunk batch for ${searchType}:`,
-                                error,
-                            );
-                            if (error instanceof Error) {
+                    // Add chunks to buffer
+                    for (const chunk of chunks) {
+                        chunkBuffer.push({ chunk, codebasePath });
+                        totalChunks++;
+
+                        // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
+                        if (chunkBuffer.length >= EMBEDDING_BATCH_SIZE) {
+                            throwIfOperationAborted(abortSignal);
+                            const batch = chunkBuffer;
+                            const batchMetadata = createBatchMetadata(batch);
+                            chunkBuffer = [];
+                            const submittedBatch = embeddingLimiter.run(async () => {
+                                await this.processChunkBuffer(batch, acceleratorRuntime, insertLimiter, batchMetadata);
+                            }, abortSignal).catch((error) => {
+                                const searchType =
+                                    isHybrid === true ? "hybrid" : "regular";
                                 console.error(
-                                    "[Context] Stack trace:",
-                                    error.stack,
+                                    `[Context] ❌ Failed to process chunk batch ${batchMetadata.id} for ${searchType}:`,
+                                    error,
                                 );
+                                if (error instanceof Error) {
+                                    console.error(
+                                        "[Context] Stack trace:",
+                                        error.stack,
+                                    );
+                                }
+                                throw error;
+                            }).finally(() => {
+                                this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+                                this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+                            });
+                            submittedBatches.push(submittedBatch);
+
+                            if (!accelerationDecision.active) {
+                                await submittedBatch;
                             }
-                        } finally {
-                            chunkBuffer = []; // Always clear buffer, even on failure
+                        }
+
+                        // Check if chunk limit is reached
+                        if (totalChunks >= CODE_CHUNK_LIMIT) {
+                            console.warn(
+                                `[Context] ⚠️  Chunk limit of ${CODE_CHUNK_LIMIT} reached. Stopping indexing.`,
+                            );
+                            limitReached = true;
+                            break; // Exit the inner loop (over chunks)
                         }
                     }
 
-                    // Check if chunk limit is reached
-                    if (totalChunks >= CODE_CHUNK_LIMIT) {
-                        console.warn(
-                            `[Context] ⚠️  Chunk limit of ${CODE_CHUNK_LIMIT} reached. Stopping indexing.`,
-                        );
-                        limitReached = true;
-                        break; // Exit the inner loop (over chunks)
+                    processedFiles++;
+                    onFileProcessed?.(filePath, i + 1, filePaths.length);
+
+                    if (limitReached) {
+                        break; // Exit the outer loop (over files)
                     }
-                }
-
-                processedFiles++;
-                onFileProcessed?.(filePath, i + 1, filePaths.length);
-
-                if (limitReached) {
-                    break; // Exit the outer loop (over files)
-                }
-            } catch (error) {
-                if (isFatalEmbeddingBatchError(error)) {
-                    throw error;
-                }
-                console.warn(
-                    `[Context] ⚠️  Skipping file ${filePath}: ${error}`,
-                );
-            }
-        }
-
-        // Process any remaining chunks in the buffer
-        if (chunkBuffer.length > 0) {
-            throwIfOperationAborted(abortSignal);
-            const searchType = isHybrid === true ? "hybrid" : "regular";
-            console.log(
-                `📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`,
-            );
-            try {
-                await this.processChunkBuffer(chunkBuffer);
-            } catch (error) {
-                if (isFatalEmbeddingBatchError(error)) {
-                    throw error;
-                }
-                console.error(
-                    `[Context] ❌ Failed to process final chunk batch for ${searchType}:`,
-                    error,
-                );
-                if (error instanceof Error) {
-                    console.error("[Context] Stack trace:", error.stack);
+                } catch (error) {
+                    if (error instanceof IndexAbortError) {
+                        throw error;
+                    }
+                    if (isFatalEmbeddingBatchError(error)) {
+                        throw error;
+                    }
+                    console.warn(
+                        `[Context] ⚠️  Skipping file ${filePath}: ${error}`,
+                    );
                 }
             }
+
+            // Process any remaining chunks in the buffer
+            if (chunkBuffer.length > 0) {
+                throwIfOperationAborted(abortSignal);
+                const searchType = isHybrid === true ? "hybrid" : "regular";
+                console.log(
+                    `📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`,
+                );
+                const finalBatch = chunkBuffer;
+                const finalBatchMetadata = createBatchMetadata(finalBatch);
+                chunkBuffer = [];
+                const submittedBatch = embeddingLimiter.run(async () => {
+                    await this.processChunkBuffer(finalBatch, acceleratorRuntime, insertLimiter, finalBatchMetadata);
+                }, abortSignal).catch((error) => {
+                    console.error(
+                        `[Context] ❌ Failed to process final chunk batch ${finalBatchMetadata.id} for ${searchType}:`,
+                        error,
+                    );
+                    if (error instanceof Error) {
+                        console.error("[Context] Stack trace:", error.stack);
+                    }
+                    throw error;
+                }).finally(() => {
+                    this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+                    this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+                });
+                submittedBatches.push(submittedBatch);
+            }
+        } catch (error) {
+            await Promise.allSettled(submittedBatches);
+            this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+            this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+            throw error;
         }
+
+        await Promise.all(submittedBatches);
+        this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+        console.log(
+            `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
+        );
 
         return {
             processedFiles,
@@ -1830,6 +1941,9 @@ export class Context {
      */
     private async processChunkBuffer(
         chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>,
+        acceleratorRuntime?: IndexingAcceleratorRuntime,
+        insertLimiter?: AsyncLimiter,
+        batchMetadata?: IndexingBatchMetadata,
     ): Promise<void> {
         if (chunkBuffer.length === 0) return;
 
@@ -1848,7 +1962,19 @@ export class Context {
         console.log(
             `[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`,
         );
-        await this.processChunkBatch(chunks, codebasePath);
+        acceleratorRuntime?.recordBatchSubmitted(batchMetadata || {
+            id: 0,
+            chunkCount: chunks.length,
+            firstFile: chunks[0]?.metadata.filePath,
+            lastFile: chunks[chunks.length - 1]?.metadata.filePath,
+        });
+        try {
+            await this.processChunkBatch(chunks, codebasePath, acceleratorRuntime, insertLimiter, batchMetadata?.id);
+            acceleratorRuntime?.recordBatchCompleted(batchMetadata?.id);
+        } catch (error) {
+            acceleratorRuntime?.recordBatchFailed(batchMetadata?.id);
+            throw error;
+        }
     }
 
     /**
@@ -1857,6 +1983,9 @@ export class Context {
     private async processChunkBatch(
         chunks: CodeChunk[],
         codebasePath: string,
+        acceleratorRuntime?: IndexingAcceleratorRuntime,
+        insertLimiter?: AsyncLimiter,
+        batchId?: number,
     ): Promise<void> {
         const retrievalMode = this.getRetrievalMode();
         const isHybrid = retrievalMode === "hybrid_bm25";
@@ -1869,7 +1998,14 @@ export class Context {
                 throw new Error("BGE-M3 full retrieval requires an embedding provider with embedMultiBatch support.");
             }
 
-            const embeddings = await multiVectorEmbedding.embedMultiBatch(chunkContents);
+            let embeddings: MultiVectorEmbedding[];
+            try {
+                embeddings = acceleratorRuntime?.getSnapshot().active && multiVectorEmbedding.embedMultiBatchWithWorkerPool
+                    ? await acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(chunkContents))
+                    : await multiVectorEmbedding.embedMultiBatch(chunkContents);
+            } catch (error) {
+                throw this.createBatchStageError("embedding", batchId, error);
+            }
             const documents: VectorDocument[] = chunks.map((chunk, index) => {
                 if (!chunk.metadata.filePath) {
                     throw new Error(
@@ -1916,14 +2052,38 @@ export class Context {
                 };
             });
 
-            await this.vectorDatabase.insertBgeM3(
-                this.getCollectionName(codebasePath),
-                documents,
-            );
+            const collectionName = this.getCollectionName(codebasePath);
+            const insert = () => {
+                if (acceleratorRuntime?.getSnapshot().active && this.vectorDatabase.upsertBgeM3) {
+                    return this.vectorDatabase.upsertBgeM3(collectionName, documents);
+                }
+
+                return this.vectorDatabase.insertBgeM3(collectionName, documents);
+            };
+            if (acceleratorRuntime && insertLimiter) {
+                try {
+                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            } else {
+                try {
+                    await insert();
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            }
             return;
         }
 
-        const embeddings = await this.embedding.embedBatch(chunkContents);
+        let embeddings: EmbeddingVector[];
+        try {
+            embeddings = acceleratorRuntime
+                ? await acceleratorRuntime.trackEmbedding(() => this.embedding.embedBatch(chunkContents))
+                : await this.embedding.embedBatch(chunkContents);
+        } catch (error) {
+            throw this.createBatchStageError("embedding", batchId, error);
+        }
 
         if (isHybrid === true) {
             // Create hybrid vector documents
@@ -1965,10 +2125,23 @@ export class Context {
             });
 
             // Store to vector database
-            await this.vectorDatabase.insertHybrid(
+            const insert = () => this.vectorDatabase.insertHybrid(
                 this.getCollectionName(codebasePath),
                 documents,
             );
+            if (acceleratorRuntime && insertLimiter) {
+                try {
+                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            } else {
+                try {
+                    await insert();
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            }
         } else {
             // Create regular vector documents
             const documents: VectorDocument[] = chunks.map((chunk, index) => {
@@ -2009,11 +2182,34 @@ export class Context {
             });
 
             // Store to vector database
-            await this.vectorDatabase.insert(
+            const insert = () => this.vectorDatabase.insert(
                 this.getCollectionName(codebasePath),
                 documents,
             );
+            if (acceleratorRuntime && insertLimiter) {
+                try {
+                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            } else {
+                try {
+                    await insert();
+                } catch (error) {
+                    throw this.createBatchStageError("insert", batchId, error);
+                }
+            }
         }
+    }
+
+    private createBatchStageError(stage: "embedding" | "insert", batchId: number | undefined, error: unknown): Error {
+        const batchLabel = batchId === undefined ? "unknown" : String(batchId);
+        const message = error instanceof Error ? error.message : String(error);
+        const wrapped = new Error(`Indexing batch ${batchLabel} failed during ${stage}: ${message}`);
+        if (error instanceof Error && error.stack) {
+            wrapped.stack = `${wrapped.stack}\nCaused by: ${error.stack}`;
+        }
+        return wrapped;
     }
 
     /**

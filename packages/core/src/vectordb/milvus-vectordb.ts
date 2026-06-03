@@ -776,15 +776,8 @@ export class MilvusVectorDatabase implements VectorDatabase {
         });
     }
 
-    async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
-        await this.ensureInitialized();
-        await this.ensureLoaded(collectionName);
-
-        if (!this.client) {
-            throw new Error('MilvusClient is not initialized after ensureInitialized().');
-        }
-
-        const data = documents.map(doc => ({
+    private toBgeM3Entities(documents: VectorDocument[]): any[] {
+        return documents.map(doc => ({
             id: doc.id,
             content: doc.content,
             dense_vector: doc.vector,
@@ -796,6 +789,17 @@ export class MilvusVectorDatabase implements VectorDatabase {
             fileExtension: doc.fileExtension,
             metadata: JSON.stringify(doc.metadata),
         }));
+    }
+
+    async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        if (!this.client) {
+            throw new Error('MilvusClient is not initialized after ensureInitialized().');
+        }
+
+        const data = this.toBgeM3Entities(documents);
 
         const insertResult = await this.client.insert({
             collection_name: collectionName,
@@ -805,6 +809,37 @@ export class MilvusVectorDatabase implements VectorDatabase {
         if ((insertResult as any).status?.error_code !== 'Success') {
             throw new Error(
                 `Failed to insert BGE-M3 documents into '${collectionName}': ${(insertResult as any).status?.reason || 'unknown Milvus error'}`,
+            );
+        }
+
+        await this.client.flushSync({
+            collection_names: [collectionName],
+        });
+    }
+
+    async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        if (!this.client) {
+            throw new Error('MilvusClient is not initialized after ensureInitialized().');
+        }
+
+        const upsert = (this.client as unknown as {
+            upsert?: (request: { collection_name: string; data: Array<Record<string, unknown>> }) => Promise<unknown>;
+        }).upsert;
+        if (typeof upsert !== 'function') {
+            throw new Error('Milvus SDK client does not support BGE-M3 upsert.');
+        }
+
+        const upsertResult = await upsert.call(this.client, {
+            collection_name: collectionName,
+            data: this.toBgeM3Entities(documents),
+        });
+
+        if ((upsertResult as any)?.status?.error_code && (upsertResult as any).status.error_code !== 'Success') {
+            throw new Error(
+                `Failed to upsert BGE-M3 documents into '${collectionName}': ${(upsertResult as any).status?.reason || 'unknown Milvus error'}`,
             );
         }
 
