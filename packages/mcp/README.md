@@ -20,7 +20,7 @@ Model Context Protocol (MCP) allows you to integrate Claude Context with your fa
 
 Before using the MCP server, make sure you have:
 
-- API key for your chosen embedding provider (OpenAI, VoyageAI, Gemini, or Ollama setup)
+- API key or local runtime for your chosen embedding provider (OpenAI, VoyageAI, Gemini, Ollama, or BGE-M3 sidecar)
 - Milvus vector database (local or cloud)
 
 > 💡 **Setup Help:** See the [main project setup guide](../../README.md#-quick-start) for detailed installation instructions.
@@ -34,7 +34,7 @@ Claude Context MCP supports multiple embedding providers. Choose the one that be
 > 📋 **Quick Reference**: For a complete list of environment variables and their descriptions, see the [Environment Variables Guide](../../docs/getting-started/environment-variables.md).
 
 ```bash
-# Supported providers: OpenAI, VoyageAI, Gemini, Ollama
+# Supported providers: OpenAI, VoyageAI, Gemini, Ollama, BGE_M3
 EMBEDDING_PROVIDER=OpenAI
 ```
 
@@ -146,6 +146,52 @@ OLLAMA_HOST=http://127.0.0.1:11434
    ```bash
    ollama serve
    ```
+
+</details>
+
+<details>
+<summary><strong>5. BGE-M3 Configuration (Local/Self-hosted)</strong></summary>
+
+BGE-M3 full mode uses a local sidecar that returns dense vectors, model-generated sparse lexical weights, and ColBERT token vectors. Claude Context stores these in a distinct `bge_m3_code_chunks_*` collection and reranks first-stage dense+sparse candidates with ColBERT MaxSim.
+
+```bash
+# Required: select BGE-M3 and point at your sidecar
+EMBEDDING_PROVIDER=BGE_M3
+BGE_M3_ENDPOINT=http://127.0.0.1:8000
+
+# Optional: defaults shown
+BGE_M3_MODEL=BAAI/bge-m3
+BGE_M3_MODE=full
+BGE_M3_CANDIDATE_LIMIT=100
+BGE_M3_STORE_COLBERT=true
+BGE_M3_COLBERT_TOKEN_LIMIT=4
+BGE_M3_COLBERT_DECIMAL_PLACES=6
+
+# Local Milvus is supported
+MILVUS_ADDRESS=localhost:19530
+```
+
+The sidecar must expose:
+
+- `POST /embed` for one input.
+- `POST /embed_batch` for indexing batches.
+
+This repository includes a local Python sidecar in `python/bge_m3_sidecar.py`.
+Run it from a Python 3.10-3.12 environment with `FlagEmbedding`, PyTorch, and
+FastAPI installed:
+
+```bash
+cd python
+python3.12 -m venv .venv-bge-m3
+source .venv-bge-m3/bin/activate
+pip install -r requirements-bge-m3-sidecar.txt
+python bge_m3_sidecar.py --device cuda --mode full
+```
+
+`BGE_M3_MODE=dense` is explicit dense-only mode. It must not be treated as full dense+sparse+ColBERT retrieval. `BGE_M3_MODE=full` requires `BGE_M3_STORE_COLBERT=true`; disabling ColBERT storage is rejected because reranking needs stored document token vectors. Switching from existing dense-only or BM25-hybrid indexes to `BGE_M3_MODE=full` requires reindexing with `force=true`.
+The stored ColBERT token cap defaults to `4` to keep the same-collection JSON
+payload under Milvus `VarChar` row limits; raise it only after validating row
+sizes for your chunking settings.
 
 </details>
 

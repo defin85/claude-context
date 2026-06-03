@@ -73,6 +73,10 @@ class TestVectorDatabase implements VectorDatabase {
         await this.createCollection(collectionName);
     }
 
+    async createBgeM3Collection(collectionName: string): Promise<void> {
+        await this.createCollection(collectionName);
+    }
+
     async dropCollection(collectionName: string): Promise<void> {
         this.collections.delete(collectionName);
         this.documents.delete(collectionName);
@@ -97,11 +101,23 @@ class TestVectorDatabase implements VectorDatabase {
         await this.insert(collectionName, documents);
     }
 
+    async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.insert(collectionName, documents);
+    }
+
     async search(): Promise<VectorSearchResult[]> {
         return this.searchResults;
     }
 
     async hybridSearch(
+        _collectionName: string,
+        _searchRequests: HybridSearchRequest[],
+        _options?: HybridSearchOptions,
+    ): Promise<HybridSearchResult[]> {
+        return this.searchResults;
+    }
+
+    async bgeM3HybridSearch(
         _collectionName: string,
         _searchRequests: HybridSearchRequest[],
         _options?: HybridSearchOptions,

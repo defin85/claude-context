@@ -20,7 +20,7 @@ Claude Context supports a global configuration file at `~/.context/.env` to simp
 ### Embedding Provider
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EMBEDDING_PROVIDER` | Provider: `OpenAI`, `VoyageAI`, `Gemini`, `Ollama` | `OpenAI` |
+| `EMBEDDING_PROVIDER` | Provider: `OpenAI`, `VoyageAI`, `Gemini`, `Ollama`, `BGE_M3` | `OpenAI` |
 | `EMBEDDING_MODEL` | Embedding model name (works for all providers) | Provider-specific default |
 | `OPENAI_API_KEY` | OpenAI API key | Required for OpenAI |
 | `OPENAI_BASE_URL` | OpenAI API base URL (optional, for custom endpoints) | `https://api.openai.com/v1` |
@@ -53,6 +53,26 @@ Claude Context supports a global configuration file at `~/.context/.env` to simp
 |----------|-------------|---------|
 | `OLLAMA_HOST` | Ollama server URL | `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL`(alternative to `EMBEDDING_MODEL`) | Model name |  |
+
+### BGE-M3 (Optional, Local/Self-hosted)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BGE_M3_ENDPOINT` | Local BGE-M3 sidecar endpoint. Required when `EMBEDDING_PROVIDER=BGE_M3` | None |
+| `BGE_M3_MODEL` | BGE-M3 model name | `BAAI/bge-m3` |
+| `BGE_M3_MODE` | `full` for dense+sparse+ColBERT retrieval, or `dense` for dense-only mode | `full` |
+| `BGE_M3_CANDIDATE_LIMIT` | First-stage dense+sparse candidates sent to ColBERT reranking | `100` |
+| `BGE_M3_RERANK_LIMIT` | Max results retained after ColBERT reranking | Search limit |
+| `BGE_M3_STORE_COLBERT` | Store ColBERT token vectors for full mode. `full` mode requires this to remain `true`. | `true` |
+| `BGE_M3_COLBERT_TOKEN_LIMIT` | Max ColBERT token vectors stored per chunk to keep Milvus rows under payload limits | `4` |
+| `BGE_M3_COLBERT_DECIMAL_PLACES` | Decimal places retained for stored ColBERT vectors | `6` |
+
+`BGE_M3_MODE=full` requires the sidecar to return dense vectors, model-generated sparse lexical weights, and ColBERT token vectors from `POST /embed` and `POST /embed_batch`. It also requires `BGE_M3_STORE_COLBERT=true` because search reranking depends on stored document token vectors. Existing dense-only and BM25-hybrid indexes cannot be reused for BGE-M3 full retrieval; reindex with `force=true`.
+
+The repository includes a local Python sidecar at `python/bge_m3_sidecar.py`.
+Use Python 3.10-3.12, install `python/requirements-bge-m3-sidecar.txt`, and run
+`python bge_m3_sidecar.py --device cuda --mode full` to use a local NVIDIA GPU.
+ColBERT vectors can be large; the default storage cap keeps local Milvus payloads
+small enough for typical code chunks.
 
 
 ### Advanced Configuration

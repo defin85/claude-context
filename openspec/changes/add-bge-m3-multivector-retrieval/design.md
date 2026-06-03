@@ -164,7 +164,7 @@ ColBERT vectors can grow storage by an order of magnitude because each chunk sto
 - avoid returning ColBERT vectors in normal search output;
 - rerank only a bounded candidate set;
 - log index size and rerank latency;
-- allow disabling ColBERT storage for dense+sparse-only deployments.
+- fail fast if full mode is configured without ColBERT storage, because full retrieval requires stored document token vectors for reranking.
 
 ## Risks
 

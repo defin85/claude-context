@@ -69,6 +69,41 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         this.initializationPromise = this.initialize();
     }
 
+    private toSparseVectorPayload(document: VectorDocument): Record<number, number> | undefined {
+        if (!document.sparseVector) {
+            return undefined;
+        }
+
+        return document.sparseVector.indices.reduce<Record<number, number>>((payload, index, itemIndex) => {
+            payload[index] = document.sparseVector!.values[itemIndex];
+            return payload;
+        }, {});
+    }
+
+    private searchSparsePayload(data: HybridSearchRequest['data']): HybridSearchRequest['data'] {
+        if (typeof data === 'object' && data !== null && 'indices' in data && 'values' in data) {
+            const sparse = data as { indices: number[]; values: number[] };
+            return sparse.indices.reduce<Record<number, number>>((payload, index, itemIndex) => {
+                payload[index] = sparse.values[itemIndex];
+                return payload;
+            }, {});
+        }
+        return data;
+    }
+
+    private parseColbertVectors(value: unknown, id: string): number[][] | undefined {
+        if (!value || typeof value !== 'string') {
+            return undefined;
+        }
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : undefined;
+        } catch (error) {
+            console.warn(`[MilvusRestfulDB] Failed to parse ColBERT vectors for item ${id}:`, error);
+            return undefined;
+        }
+    }
+
     private async initialize(): Promise<void> {
         const resolvedAddress = await this.resolveAddress();
         await this.initializeClient(resolvedAddress);
@@ -621,6 +656,111 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
         }
     }
 
+    async createBgeM3Collection(collectionName: string, dimension: number, description?: string): Promise<void> {
+        try {
+            const restfulConfig = this.config as MilvusRestfulConfig;
+
+            const collectionSchema: any = {
+                collectionName,
+                dbName: restfulConfig.database,
+                description: description || `BGE-M3 code context collection: ${collectionName}`,
+                schema: {
+                    enableDynamicField: false,
+                    fields: [
+                        {
+                            fieldName: "id",
+                            dataType: "VarChar",
+                            isPrimary: true,
+                            elementTypeParams: {
+                                max_length: 512
+                            }
+                        },
+                        {
+                            fieldName: "content",
+                            dataType: "VarChar",
+                            elementTypeParams: {
+                                max_length: 65535
+                            }
+                        },
+                        {
+                            fieldName: "dense_vector",
+                            dataType: "FloatVector",
+                            elementTypeParams: {
+                                dim: dimension
+                            }
+                        },
+                        {
+                            fieldName: "sparse_vector",
+                            dataType: "SparseFloatVector"
+                        },
+                        {
+                            fieldName: "colbert_vectors",
+                            dataType: "VarChar",
+                            elementTypeParams: {
+                                max_length: 65535
+                            }
+                        },
+                        {
+                            fieldName: "relativePath",
+                            dataType: "VarChar",
+                            elementTypeParams: {
+                                max_length: 1024
+                            }
+                        },
+                        {
+                            fieldName: "startLine",
+                            dataType: "Int64"
+                        },
+                        {
+                            fieldName: "endLine",
+                            dataType: "Int64"
+                        },
+                        {
+                            fieldName: "fileExtension",
+                            dataType: "VarChar",
+                            elementTypeParams: {
+                                max_length: 32
+                            }
+                        },
+                        {
+                            fieldName: "metadata",
+                            dataType: "VarChar",
+                            elementTypeParams: {
+                                max_length: 65535
+                            }
+                        }
+                    ]
+                }
+            };
+
+            await createCollectionWithLimitCheck(this.makeRequest.bind(this), collectionSchema);
+
+            await this.makeRequest('/indexes/create', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database,
+                indexParams: [
+                    {
+                        fieldName: "dense_vector",
+                        indexName: "dense_vector_index",
+                        metricType: "COSINE",
+                        index_type: "AUTOINDEX"
+                    },
+                    {
+                        fieldName: "sparse_vector",
+                        indexName: "sparse_vector_index",
+                        metricType: "IP",
+                        index_type: "SPARSE_INVERTED_INDEX"
+                    }
+                ]
+            });
+
+            await this.loadCollection(collectionName);
+        } catch (error) {
+            console.error(`[MilvusRestfulDB] ❌ Failed to create BGE-M3 collection '${collectionName}':`, error);
+            throw error;
+        }
+    }
+
     private async createHybridIndexes(collectionName: string): Promise<void> {
         try {
             const restfulConfig = this.config as MilvusRestfulConfig;
@@ -693,6 +833,41 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
 
         } catch (error) {
             console.error(`[MilvusRestfulDB] ❌ Failed to insert hybrid documents to collection '${collectionName}':`, error);
+            throw error;
+        }
+    }
+
+    async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        try {
+            const restfulConfig = this.config as MilvusRestfulConfig;
+
+            const data = documents.map(doc => ({
+                id: doc.id,
+                content: doc.content,
+                dense_vector: doc.vector,
+                sparse_vector: this.toSparseVectorPayload(doc),
+                colbert_vectors: JSON.stringify(doc.colbertVectors || []),
+                relativePath: doc.relativePath,
+                startLine: doc.startLine,
+                endLine: doc.endLine,
+                fileExtension: doc.fileExtension,
+                metadata: JSON.stringify(doc.metadata),
+            }));
+
+            const response = await this.makeRequest('/entities/insert', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database,
+                data,
+            });
+
+            if (response.code !== 0) {
+                throw new Error(`BGE-M3 insert failed: ${response.message || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`[MilvusRestfulDB] ❌ Failed to insert BGE-M3 documents to collection '${collectionName}':`, error);
             throw error;
         }
     }
@@ -803,6 +978,87 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
 
         } catch (error) {
             console.error(`[MilvusRestfulDB] ❌ Failed to perform hybrid search on collection '${collectionName}':`, error);
+            throw error;
+        }
+    }
+
+    async bgeM3HybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        try {
+            const restfulConfig = this.config as MilvusRestfulConfig;
+            const denseSearch = searchRequests[0];
+            const sparseSearch = searchRequests[1];
+            const search_param_1: any = {
+                data: Array.isArray(denseSearch.data) ? [denseSearch.data] : [[denseSearch.data]],
+                annsField: denseSearch.anns_field,
+                limit: denseSearch.limit,
+                outputFields: ["*"],
+                searchParams: {
+                    metricType: "COSINE",
+                    params: denseSearch.param || { nprobe: 10 }
+                }
+            };
+
+            const search_param_2: any = {
+                data: [this.searchSparsePayload(sparseSearch.data)],
+                annsField: sparseSearch.anns_field,
+                limit: sparseSearch.limit,
+                outputFields: ["*"],
+                searchParams: {
+                    metricType: "IP",
+                    params: sparseSearch.param || { drop_ratio_search: 0.2 }
+                }
+            };
+
+            if (options?.filterExpr && options.filterExpr.trim().length > 0) {
+                search_param_1.filter = options.filterExpr;
+                search_param_2.filter = options.filterExpr;
+            }
+
+            const response = await this.makeRequest('/entities/hybrid_search', 'POST', {
+                collectionName,
+                dbName: restfulConfig.database,
+                search: [search_param_1, search_param_2],
+                rerank: options?.rerank || {
+                    strategy: "rrf",
+                    params: { k: 100 }
+                },
+                limit: options?.limit || denseSearch.limit || 100,
+                outputFields: ['id', 'content', 'relativePath', 'startLine', 'endLine', 'fileExtension', 'metadata', 'colbert_vectors'],
+            });
+
+            if (response.code !== 0) {
+                throw new Error(`BGE-M3 hybrid search failed: ${response.message || 'Unknown error'}`);
+            }
+
+            const results = response.data || [];
+            return results.map((result: any) => {
+                let metadata = {};
+                try {
+                    metadata = JSON.parse(result.metadata || '{}');
+                } catch (error) {
+                    console.warn(`[MilvusRestfulDB] Failed to parse metadata for item ${result.id}:`, error);
+                }
+
+                return {
+                    document: {
+                        id: result.id,
+                        content: result.content,
+                        vector: [],
+                        colbertVectors: this.parseColbertVectors(result.colbert_vectors, result.id),
+                        relativePath: result.relativePath,
+                        startLine: result.startLine,
+                        endLine: result.endLine,
+                        fileExtension: result.fileExtension,
+                        metadata,
+                    },
+                    score: result.score || result.distance || 0,
+                };
+            });
+        } catch (error) {
+            console.error(`[MilvusRestfulDB] ❌ Failed to perform BGE-M3 hybrid search on collection '${collectionName}':`, error);
             throw error;
         }
     }

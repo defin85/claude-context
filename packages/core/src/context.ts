@@ -2,6 +2,7 @@ import { Splitter, CodeChunk, AstCodeSplitter } from "./splitter";
 import {
     Embedding,
     EmbeddingVector,
+    MultiVectorEmbedding,
     EmbeddingContextLimitError,
     OpenAIEmbedding,
 } from "./embedding";
@@ -12,6 +13,8 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    RetrievalMode,
+    RetrievalSchemaMetadata,
 } from "./vectordb";
 import { SemanticSearchResult } from "./types";
 import { envManager } from "./utils/env-manager";
@@ -21,6 +24,7 @@ import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
+const RETRIEVAL_SCHEMA_VERSION = 1;
 
 function normalizeCodebasePath(codebasePath: string): string {
     const trimmedPath = codebasePath.trim();
@@ -221,6 +225,8 @@ export interface ContextConfig {
 export interface CodebaseSessionConfig {
     customExtensions?: string[];
     customIgnorePatterns?: string[];
+    retrievalMode?: RetrievalMode;
+    retrievalSchemaVersion?: number;
 }
 
 interface CodebaseSessionState {
@@ -232,6 +238,11 @@ interface CodebaseSessionState {
     effectiveIgnorePatterns: string[];
     synchronizer?: FileSynchronizer;
 }
+
+type MultiVectorEmbeddingProvider = Embedding & {
+    embedMulti(text: string): Promise<MultiVectorEmbedding>;
+    embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]>;
+};
 
 export class Context {
     private static readonly MAX_COLLECTION_NAME_LENGTH = 255;
@@ -430,6 +441,8 @@ export class Context {
         return {
             customExtensions: [...session.customExtensions],
             customIgnorePatterns: [...session.customIgnorePatterns],
+            retrievalMode: this.getRetrievalMode(),
+            retrievalSchemaVersion: RETRIEVAL_SCHEMA_VERSION,
         };
     }
 
@@ -554,18 +567,200 @@ export class Context {
         return isHybridEnv.toLowerCase() === "true";
     }
 
-    /**
-     * Generate collection name based on codebase path and hybrid mode
-     */
-    public getCollectionName(codebasePath: string): string {
-        const isHybrid = this.getIsHybrid();
-        const normalizedPath = normalizeCodebasePath(codebasePath);
-        const hash = crypto
+    private getRetrievalMode(): RetrievalMode {
+        if (this.embedding.getProvider() === "BGE_M3") {
+            const bgeMode = (this.embedding as Embedding & { getMode?: () => string }).getMode?.();
+            return bgeMode === "dense" ? "bge_m3_dense" : "bge_m3_full";
+        }
+
+        return this.getIsHybrid() ? "hybrid_bm25" : "dense";
+    }
+
+    private getCollectionPrefixForMode(mode: RetrievalMode = this.getRetrievalMode()): string {
+        switch (mode) {
+            case "bge_m3_full":
+                return "bge_m3_code_chunks";
+            case "bge_m3_dense":
+                return "bge_m3_dense_code_chunks";
+            case "hybrid_bm25":
+                return "hybrid_code_chunks";
+            case "dense":
+            default:
+                return "code_chunks";
+        }
+    }
+
+    private getMultiVectorBatchEmbeddingProvider(): MultiVectorEmbeddingProvider | undefined {
+        const candidate = this.embedding as Embedding & Partial<MultiVectorEmbeddingProvider>;
+        return typeof candidate.embedMulti === "function" && typeof candidate.embedMultiBatch === "function"
+            ? candidate as MultiVectorEmbeddingProvider
+            : undefined;
+    }
+
+    private getBgeM3CandidateLimit(topK: number): number {
+        const rawLimit = envManager.get("BGE_M3_CANDIDATE_LIMIT");
+        if (!rawLimit) {
+            return Math.max(100, topK);
+        }
+
+        const parsedLimit = Number.parseInt(rawLimit, 10);
+        return Number.isInteger(parsedLimit) && parsedLimit > 0
+            ? parsedLimit
+            : Math.max(100, topK);
+    }
+
+    private getBgeM3RerankLimit(topK: number): number {
+        const rawLimit = envManager.get("BGE_M3_RERANK_LIMIT");
+        if (!rawLimit) {
+            return topK;
+        }
+
+        const parsedLimit = Number.parseInt(rawLimit, 10);
+        return Number.isInteger(parsedLimit) && parsedLimit > 0
+            ? parsedLimit
+            : topK;
+    }
+
+    private getBgeM3ColbertTokenLimit(): number {
+        const rawLimit = envManager.get("BGE_M3_COLBERT_TOKEN_LIMIT");
+        if (!rawLimit) {
+            return 4;
+        }
+
+        const parsedLimit = Number.parseInt(rawLimit, 10);
+        return Number.isInteger(parsedLimit) && parsedLimit > 0
+            ? parsedLimit
+            : 4;
+    }
+
+    private getBgeM3ColbertDecimalPlaces(): number {
+        const rawPlaces = envManager.get("BGE_M3_COLBERT_DECIMAL_PLACES");
+        if (!rawPlaces) {
+            return 6;
+        }
+
+        const parsedPlaces = Number.parseInt(rawPlaces, 10);
+        return Number.isInteger(parsedPlaces) && parsedPlaces >= 0
+            ? parsedPlaces
+            : 6;
+    }
+
+    private compactBgeM3ColbertVectors(vectors: number[][]): number[][] {
+        const tokenLimit = this.getBgeM3ColbertTokenLimit();
+        const decimalPlaces = this.getBgeM3ColbertDecimalPlaces();
+        const scale = 10 ** decimalPlaces;
+
+        return vectors.slice(0, tokenLimit).map((vector) =>
+            vector.map((value) => Math.round(value * scale) / scale),
+        );
+    }
+
+    private dotProduct(left: number[], right: number[]): number {
+        const length = Math.min(left.length, right.length);
+        let score = 0;
+        for (let index = 0; index < length; index += 1) {
+            score += left[index] * right[index];
+        }
+        return score;
+    }
+
+    private scoreColbertMaxSim(queryVectors: number[][], documentVectors: number[][]): number {
+        if (queryVectors.length === 0 || documentVectors.length === 0) {
+            return 0;
+        }
+
+        let totalScore = 0;
+        for (const queryVector of queryVectors) {
+            let maxScore = Number.NEGATIVE_INFINITY;
+            for (const documentVector of documentVectors) {
+                maxScore = Math.max(maxScore, this.dotProduct(queryVector, documentVector));
+            }
+            totalScore += maxScore;
+        }
+        return totalScore / queryVectors.length;
+    }
+
+    private rerankBgeM3Results(
+        queryColbertVectors: number[][],
+        searchResults: HybridSearchResult[],
+        limit: number,
+    ): HybridSearchResult[] {
+        return searchResults
+            .map((result) => {
+                if (!result.document.colbertVectors || result.document.colbertVectors.length === 0) {
+                    throw new Error(
+                        `BGE-M3 full retrieval candidate '${result.document.id}' is missing ColBERT vectors. Reindex is required.`,
+                    );
+                }
+
+                return {
+                    ...result,
+                    score: this.scoreColbertMaxSim(queryColbertVectors, result.document.colbertVectors),
+                    metadata: {
+                        ...(result.metadata || {}),
+                        rerank: {
+                            applied: true,
+                            strategy: "colbert_maxsim",
+                            firstStageScore: result.score,
+                        },
+                    },
+                };
+            })
+            .sort((left, right) => right.score - left.score)
+            .slice(0, limit);
+    }
+
+    private getPathHash(codebasePath: string): string {
+        return crypto
             .createHash("md5")
-            .update(normalizedPath)
-            .digest("hex");
-        const prefix = isHybrid === true ? "hybrid_code_chunks" : "code_chunks";
-        const pathHash = hash.substring(0, 8);
+            .update(normalizeCodebasePath(codebasePath))
+            .digest("hex")
+            .substring(0, 8);
+    }
+
+    private getRetrievalCollectionDescription(codebasePath: string, retrievalMode: RetrievalMode): string {
+        return [
+            `codebasePath:${codebasePath}`,
+            `retrievalMode:${retrievalMode}`,
+            `retrievalSchemaVersion:${RETRIEVAL_SCHEMA_VERSION}`,
+        ].join("\n");
+    }
+
+    private parseRetrievalCollectionDescription(description: string): Partial<RetrievalSchemaMetadata> {
+        const metadata: Partial<RetrievalSchemaMetadata> = {};
+        for (const line of description.split(/\r?\n/)) {
+            const separatorIndex = line.indexOf(":");
+            if (separatorIndex < 0) {
+                continue;
+            }
+
+            const key = line.slice(0, separatorIndex).trim();
+            const value = line.slice(separatorIndex + 1).trim();
+            if (key === "retrievalMode") {
+                metadata.retrievalMode = value as RetrievalMode;
+            } else if (key === "retrievalSchemaVersion") {
+                const parsedVersion = Number.parseInt(value, 10);
+                if (Number.isInteger(parsedVersion)) {
+                    metadata.schemaVersion = parsedVersion;
+                }
+            }
+        }
+        return metadata;
+    }
+
+    private async validateExistingBgeM3Collection(collectionName: string, codebasePath: string): Promise<void> {
+        const description = await this.vectorDatabase.getCollectionDescription(collectionName);
+        const metadata = this.parseRetrievalCollectionDescription(description || "");
+
+        if (metadata.retrievalMode !== "bge_m3_full" || metadata.schemaVersion !== RETRIEVAL_SCHEMA_VERSION) {
+            throw new Error(
+                `Existing collection '${collectionName}' for '${codebasePath}' has incompatible BGE-M3 collection metadata. Re-run indexing with force=true.`,
+            );
+        }
+    }
+
+    private getCollectionNameForPrefix(codebasePath: string, prefix: string): string {
+        const pathHash = this.getPathHash(codebasePath);
 
         const configOverride = this.getValidOverrideValue(this.collectionNameOverride);
         if (configOverride) {
@@ -580,6 +775,16 @@ export class Context {
         }
 
         return `${prefix}_${pathHash}`;
+    }
+
+    /**
+     * Generate collection name based on codebase path and hybrid mode
+     */
+    public getCollectionName(codebasePath: string): string {
+        return this.getCollectionNameForPrefix(
+            codebasePath,
+            this.getCollectionPrefixForMode(),
+        );
     }
 
     private getValidOverrideValue(value?: string): string | undefined {
@@ -932,6 +1137,62 @@ export class Context {
             return [];
         }
 
+        if (this.getRetrievalMode() === "bge_m3_full") {
+            const multiVectorEmbedding = this.getMultiVectorBatchEmbeddingProvider();
+            if (!multiVectorEmbedding) {
+                throw new Error("BGE-M3 full retrieval requires an embedding provider with embedMulti support.");
+            }
+
+            const queryEmbedding = await multiVectorEmbedding.embedMulti(query);
+            if (!queryEmbedding.sparse || !queryEmbedding.colbert) {
+                throw new Error("BGE-M3 full mode requires dense, sparse, and ColBERT query vectors.");
+            }
+
+            const candidateLimit = this.getBgeM3CandidateLimit(topK);
+            const rerankLimit = this.getBgeM3RerankLimit(topK);
+            const searchResults = await this.vectorDatabase.bgeM3HybridSearch(
+                collectionName,
+                [
+                    {
+                        data: queryEmbedding.dense.vector,
+                        anns_field: "dense_vector",
+                        param: { nprobe: 10 },
+                        limit: candidateLimit,
+                    },
+                    {
+                        data: queryEmbedding.sparse,
+                        anns_field: "sparse_vector",
+                        param: { drop_ratio_search: 0.2 },
+                        limit: candidateLimit,
+                    },
+                ],
+                {
+                    rerank: {
+                        strategy: "rrf",
+                        params: { k: 100 },
+                    },
+                    limit: candidateLimit,
+                    filterExpr,
+                },
+            );
+
+            const rerankedResults = this.rerankBgeM3Results(
+                queryEmbedding.colbert.vectors,
+                searchResults,
+                rerankLimit,
+            );
+
+            return rerankedResults.map((result) => ({
+                content: result.document.content,
+                relativePath: result.document.relativePath,
+                startLine: result.document.startLine,
+                endLine: result.document.endLine,
+                language: result.document.metadata.language || "unknown",
+                score: result.score,
+                metadata: result.metadata,
+            }));
+        }
+
         if (isHybrid === true) {
             try {
                 // Check collection stats to see if it has data
@@ -1278,8 +1539,16 @@ export class Context {
         codebasePath: string,
         forceReindex: boolean = false,
     ): Promise<void> {
-        const isHybrid = this.getIsHybrid();
-        const collectionType = isHybrid === true ? "hybrid vector" : "vector";
+        const retrievalMode = this.getRetrievalMode();
+        const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
+        const collectionType =
+            retrievalMode === "bge_m3_full"
+                ? "BGE-M3 full multivector"
+                : retrievalMode === "bge_m3_dense"
+                    ? "BGE-M3 dense"
+                    : isHybrid === true
+                        ? "hybrid vector"
+                        : "vector";
         console.log(
             `[Context] 🔧 Preparing ${collectionType} collection for codebase: ${codebasePath}${forceReindex ? " (FORCE REINDEX)" : ""}`,
         );
@@ -1290,10 +1559,28 @@ export class Context {
             await this.vectorDatabase.hasCollection(collectionName);
 
         if (collectionExists && !forceReindex) {
+            if (retrievalMode === "bge_m3_full") {
+                await this.validateExistingBgeM3Collection(collectionName, codebasePath);
+            }
             console.log(
                 `📋 Collection ${collectionName} already exists, skipping creation`,
             );
             return;
+        }
+
+        if (retrievalMode === "bge_m3_full" && !forceReindex) {
+            const incompatibleCollections = [
+                this.getCollectionNameForPrefix(codebasePath, "code_chunks"),
+                this.getCollectionNameForPrefix(codebasePath, "hybrid_code_chunks"),
+            ];
+
+            for (const incompatibleCollection of incompatibleCollections) {
+                if (await this.vectorDatabase.hasCollection(incompatibleCollection)) {
+                    throw new Error(
+                        `BGE-M3 full retrieval for '${codebasePath}' requires explicit reindexing because existing incompatible collection '${incompatibleCollection}' was found. Re-run indexing with force=true.`,
+                    );
+                }
+            }
         }
 
         if (collectionExists && forceReindex) {
@@ -1315,7 +1602,13 @@ export class Context {
         );
         const dirName = path.basename(codebasePath);
 
-        if (isHybrid === true) {
+        if (retrievalMode === "bge_m3_full") {
+            await this.vectorDatabase.createBgeM3Collection(
+                collectionName,
+                dimension,
+                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
+            );
+        } else if (isHybrid === true) {
             await this.vectorDatabase.createHybridCollection(
                 collectionName,
                 dimension,
@@ -1565,10 +1858,71 @@ export class Context {
         chunks: CodeChunk[],
         codebasePath: string,
     ): Promise<void> {
-        const isHybrid = this.getIsHybrid();
+        const retrievalMode = this.getRetrievalMode();
+        const isHybrid = retrievalMode === "hybrid_bm25";
 
         // Generate embedding vectors
         const chunkContents = chunks.map((chunk) => chunk.content);
+        if (retrievalMode === "bge_m3_full") {
+            const multiVectorEmbedding = this.getMultiVectorBatchEmbeddingProvider();
+            if (!multiVectorEmbedding) {
+                throw new Error("BGE-M3 full retrieval requires an embedding provider with embedMultiBatch support.");
+            }
+
+            const embeddings = await multiVectorEmbedding.embedMultiBatch(chunkContents);
+            const documents: VectorDocument[] = chunks.map((chunk, index) => {
+                if (!chunk.metadata.filePath) {
+                    throw new Error(
+                        `Missing filePath in chunk metadata at index ${index}`,
+                    );
+                }
+
+                const multiVector = embeddings[index];
+                if (!multiVector.sparse || !multiVector.colbert) {
+                    throw new Error("BGE-M3 full mode requires dense, sparse, and ColBERT vectors for every indexed chunk.");
+                }
+
+                const relativePath = path.relative(
+                    codebasePath,
+                    chunk.metadata.filePath,
+                );
+                const fileExtension = path.extname(chunk.metadata.filePath);
+                const { filePath, startLine, endLine, ...restMetadata } =
+                    chunk.metadata;
+
+                return {
+                    id: this.generateId(
+                        relativePath,
+                        chunk.metadata.startLine || 0,
+                        chunk.metadata.endLine || 0,
+                        chunk.content,
+                    ),
+                    content: chunk.content,
+                    vector: multiVector.dense.vector,
+                    sparseVector: multiVector.sparse,
+                    colbertVectors: this.compactBgeM3ColbertVectors(multiVector.colbert.vectors),
+                    relativePath,
+                    startLine: chunk.metadata.startLine || 0,
+                    endLine: chunk.metadata.endLine || 0,
+                    fileExtension,
+                    metadata: {
+                        ...restMetadata,
+                        codebasePath,
+                        language: chunk.metadata.language || "unknown",
+                        chunkIndex: index,
+                        retrievalMode,
+                        retrievalSchemaVersion: RETRIEVAL_SCHEMA_VERSION,
+                    },
+                };
+            });
+
+            await this.vectorDatabase.insertBgeM3(
+                this.getCollectionName(codebasePath),
+                documents,
+            );
+            return;
+        }
+
         const embeddings = await this.embedding.embedBatch(chunkContents);
 
         if (isHybrid === true) {

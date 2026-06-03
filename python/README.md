@@ -11,6 +11,8 @@ This directory contains a basic bridge that allows you to run Claude Context Typ
 - `ts_executor.py` - Executes TypeScript methods from Python
 - `test_context.ts` - TypeScript test script with Claude Context workflow
 - `test_endtoend.py` - Python script that calls the TypeScript test
+- `bge_m3_sidecar.py` - Local HTTP sidecar for BGE-M3 dense+sparse+ColBERT embeddings
+- `requirements-bge-m3-sidecar.txt` - Python runtime dependencies for the BGE-M3 sidecar
 
 ## Prerequisites
 
@@ -66,3 +68,47 @@ print(result)
 4. Supports async functions and complex parameters
 
 That's it! This is just a simple bridge for testing purposes. 
+
+## BGE-M3 Sidecar
+
+The BGE-M3 sidecar is a small FastAPI service used by
+`EMBEDDING_PROVIDER=BGE_M3`. It exposes:
+
+- `GET /health`
+- `GET /metadata`
+- `POST /embed`
+- `POST /embed_batch`
+
+Use Python 3.10-3.12 for the runtime environment. PyTorch wheels may not be
+available for newer Python versions.
+
+```bash
+cd python
+python3.12 -m venv .venv-bge-m3
+source .venv-bge-m3/bin/activate
+pip install -r requirements-bge-m3-sidecar.txt
+
+python bge_m3_sidecar.py \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --model BAAI/bge-m3 \
+  --mode full \
+  --device cuda
+```
+
+Then configure Claude Context:
+
+```bash
+EMBEDDING_PROVIDER=BGE_M3
+BGE_M3_ENDPOINT=http://127.0.0.1:8000
+BGE_M3_MODEL=BAAI/bge-m3
+BGE_M3_MODE=full
+```
+
+Run the lightweight sidecar tests without installing model dependencies. FastAPI
+endpoint checks run when FastAPI is installed and are skipped otherwise:
+
+```bash
+cd python
+python -m unittest test_bge_m3_sidecar.py
+```

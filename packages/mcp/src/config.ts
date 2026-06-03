@@ -5,11 +5,14 @@ import { envManager } from "@zilliz/claude-context-core";
 import { McpRuntimeMode } from './access-policy.js';
 import { normalizeCodebasePath } from './utils.js';
 
+export type EmbeddingProviderName = 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama' | 'BGE_M3';
+export type BgeM3Mode = 'full' | 'dense';
+
 export interface ContextMcpConfig {
     name: string;
     version: string;
     // Embedding provider configuration
-    embeddingProvider: 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama';
+    embeddingProvider: EmbeddingProviderName;
     embeddingModel: string;
     // Provider-specific API keys
     openaiApiKey?: string;
@@ -21,6 +24,13 @@ export interface ContextMcpConfig {
     ollamaModel?: string;
     ollamaHost?: string;
     ollamaDimension?: number;
+    // BGE-M3 configuration
+    bgeM3Endpoint?: string;
+    bgeM3Model?: string;
+    bgeM3Mode: BgeM3Mode;
+    bgeM3CandidateLimit: number;
+    bgeM3RerankLimit?: number;
+    bgeM3StoreColbert: boolean;
     // Vector database configuration
     milvusAddress?: string; // Optional, can be auto-resolved from token
     milvusToken?: string;
@@ -124,6 +134,8 @@ export function getDefaultModelForProvider(provider: string): string {
             return 'gemini-embedding-001';
         case 'Ollama':
             return 'nomic-embed-text';
+        case 'BGE_M3':
+            return 'BAAI/bge-m3';
         default:
             return 'text-embedding-3-small';
     }
@@ -137,6 +149,10 @@ export function getEmbeddingModelForProvider(provider: string): string {
             const ollamaModel = envManager.get('OLLAMA_MODEL') || envManager.get('EMBEDDING_MODEL') || getDefaultModelForProvider(provider);
             console.log(`[DEBUG] 🎯 Ollama model selection: OLLAMA_MODEL=${envManager.get('OLLAMA_MODEL') || 'NOT SET'}, EMBEDDING_MODEL=${envManager.get('EMBEDDING_MODEL') || 'NOT SET'}, selected=${ollamaModel}`);
             return ollamaModel;
+        case 'BGE_M3':
+            const bgeM3Model = envManager.get('BGE_M3_MODEL') || envManager.get('EMBEDDING_MODEL') || getDefaultModelForProvider(provider);
+            console.log(`[DEBUG] 🎯 BGE-M3 model selection: BGE_M3_MODEL=${envManager.get('BGE_M3_MODEL') || 'NOT SET'}, EMBEDDING_MODEL=${envManager.get('EMBEDDING_MODEL') || 'NOT SET'}, selected=${bgeM3Model}`);
+            return bgeM3Model;
         case 'OpenAI':
         case 'VoyageAI':
         case 'Gemini':
@@ -163,6 +179,37 @@ function getPositiveIntegerFromEnv(name: string): number | undefined {
     return undefined;
 }
 
+function getPositiveIntegerFromEnvWithDefault(name: string, fallback: number): number {
+    return getPositiveIntegerFromEnv(name) || fallback;
+}
+
+function getBooleanFromEnv(name: string, fallback: boolean): boolean {
+    const rawValue = envManager.get(name);
+    if (!rawValue) {
+        return fallback;
+    }
+
+    const normalized = rawValue.toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+        return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+        return false;
+    }
+
+    console.warn(`[DEBUG] ⚠️  Ignoring invalid ${name}: ${rawValue}. Expected true or false.`);
+    return fallback;
+}
+
+function getBgeM3ModeFromEnv(): BgeM3Mode {
+    const mode = envManager.get('BGE_M3_MODE') || 'full';
+    if (mode === 'full' || mode === 'dense') {
+        return mode;
+    }
+
+    throw new Error(`Invalid BGE_M3_MODE '${mode}'. Expected 'full' or 'dense'.`);
+}
+
 export function createMcpConfig(): ContextMcpConfig {
     // Debug: Print all environment variables related to Context
     console.log(`[DEBUG] 🔍 Environment Variables Debug:`);
@@ -170,17 +217,23 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   EMBEDDING_MODEL: ${envManager.get('EMBEDDING_MODEL') || 'NOT SET'}`);
     console.log(`[DEBUG]   EMBEDDING_DIMENSION: ${envManager.get('EMBEDDING_DIMENSION') || 'NOT SET'}`);
     console.log(`[DEBUG]   OLLAMA_MODEL: ${envManager.get('OLLAMA_MODEL') || 'NOT SET'}`);
+    console.log(`[DEBUG]   BGE_M3_ENDPOINT: ${envManager.get('BGE_M3_ENDPOINT') || 'NOT SET'}`);
+    console.log(`[DEBUG]   BGE_M3_MODEL: ${envManager.get('BGE_M3_MODEL') || 'NOT SET'}`);
+    console.log(`[DEBUG]   BGE_M3_MODE: ${envManager.get('BGE_M3_MODE') || 'NOT SET'}`);
     console.log(`[DEBUG]   GEMINI_API_KEY: ${envManager.get('GEMINI_API_KEY') ? 'SET (length: ' + envManager.get('GEMINI_API_KEY')!.length + ')' : 'NOT SET'}`);
     console.log(`[DEBUG]   OPENAI_API_KEY: ${envManager.get('OPENAI_API_KEY') ? 'SET (length: ' + envManager.get('OPENAI_API_KEY')!.length + ')' : 'NOT SET'}`);
     console.log(`[DEBUG]   MILVUS_ADDRESS: ${envManager.get('MILVUS_ADDRESS') || 'NOT SET'}`);
     console.log(`[DEBUG]   NODE_ENV: ${envManager.get('NODE_ENV') || 'NOT SET'}`);
 
+    const embeddingProvider = (envManager.get('EMBEDDING_PROVIDER') as EmbeddingProviderName) || 'OpenAI';
+    const bgeM3Mode = getBgeM3ModeFromEnv();
+
     const config: ContextMcpConfig = {
         name: envManager.get('MCP_SERVER_NAME') || "Context MCP Server",
         version: envManager.get('MCP_SERVER_VERSION') || "1.0.0",
         // Embedding provider configuration
-        embeddingProvider: (envManager.get('EMBEDDING_PROVIDER') as 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama') || 'OpenAI',
-        embeddingModel: getEmbeddingModelForProvider(envManager.get('EMBEDDING_PROVIDER') || 'OpenAI'),
+        embeddingProvider,
+        embeddingModel: getEmbeddingModelForProvider(embeddingProvider),
         // Provider-specific API keys
         openaiApiKey: envManager.get('OPENAI_API_KEY'),
         openaiBaseUrl: envManager.get('OPENAI_BASE_URL'),
@@ -191,10 +244,21 @@ export function createMcpConfig(): ContextMcpConfig {
         ollamaModel: envManager.get('OLLAMA_MODEL'),
         ollamaHost: envManager.get('OLLAMA_HOST'),
         ollamaDimension: getPositiveIntegerFromEnv('EMBEDDING_DIMENSION'),
+        // BGE-M3 configuration
+        bgeM3Endpoint: envManager.get('BGE_M3_ENDPOINT'),
+        bgeM3Model: envManager.get('BGE_M3_MODEL'),
+        bgeM3Mode,
+        bgeM3CandidateLimit: getPositiveIntegerFromEnvWithDefault('BGE_M3_CANDIDATE_LIMIT', 100),
+        bgeM3RerankLimit: getPositiveIntegerFromEnv('BGE_M3_RERANK_LIMIT'),
+        bgeM3StoreColbert: getBooleanFromEnv('BGE_M3_STORE_COLBERT', true),
         // Vector database configuration - address can be auto-resolved from token
         milvusAddress: envManager.get('MILVUS_ADDRESS'), // Optional, can be resolved from token
         milvusToken: envManager.get('MILVUS_TOKEN')
     };
+
+    if (config.embeddingProvider === 'BGE_M3' && config.bgeM3Mode === 'full' && !config.bgeM3StoreColbert) {
+        throw new Error('BGE_M3_STORE_COLBERT=false is incompatible with BGE_M3_MODE=full because full retrieval requires stored ColBERT vectors for reranking.');
+    }
 
     return config;
 }
@@ -399,6 +463,13 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
                 console.log(`[MCP]   Ollama Embedding Dimension: ${config.ollamaDimension}`);
             }
             break;
+        case 'BGE_M3':
+            console.log(`[MCP]   BGE-M3 Endpoint: ${config.bgeM3Endpoint || '❌ Missing'}`);
+            console.log(`[MCP]   BGE-M3 Mode: ${config.bgeM3Mode === 'full' ? 'full dense+sparse+ColBERT' : 'dense-only'}`);
+            console.log(`[MCP]   BGE-M3 Candidate Limit: ${config.bgeM3CandidateLimit}`);
+            console.log(`[MCP]   BGE-M3 Rerank Limit: ${config.bgeM3RerankLimit || '[search limit]'}`);
+            console.log(`[MCP]   BGE-M3 Store ColBERT: ${config.bgeM3StoreColbert ? 'true' : 'false'}`);
+            break;
     }
 
     console.log(`[MCP] 🔧 Initializing server components...`);
@@ -461,7 +532,7 @@ Environment Variables:
   MCP_DAEMON_ALLOW_ROOTS  Allowed codebase roots for daemon mode, separated by '${path.delimiter}'
   
   Embedding Provider Configuration:
-  EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama (default: OpenAI)
+  EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama, BGE_M3 (default: OpenAI)
   EMBEDDING_MODEL         Embedding model name (works for all providers)
   EMBEDDING_DIMENSION     Optional embedding dimension override for Ollama
   
@@ -475,6 +546,14 @@ Environment Variables:
   Ollama Configuration:
   OLLAMA_HOST             Ollama server host (default: http://127.0.0.1:11434)
   OLLAMA_MODEL            Ollama model name (alternative to EMBEDDING_MODEL for Ollama)
+
+  BGE-M3 Configuration:
+  BGE_M3_ENDPOINT         Local BGE-M3 sidecar endpoint (required for BGE_M3 provider)
+  BGE_M3_MODEL            BGE-M3 model name (default: BAAI/bge-m3)
+  BGE_M3_MODE             BGE-M3 mode: full or dense (default: full)
+  BGE_M3_CANDIDATE_LIMIT  Max first-stage candidates for ColBERT reranking (default: 100)
+  BGE_M3_RERANK_LIMIT     Max candidates to return after reranking (default: search limit)
+  BGE_M3_STORE_COLBERT    Store ColBERT token vectors for full mode; full mode requires true (default: true)
   
   Vector Database Configuration:
   MILVUS_ADDRESS          Milvus address (optional, can be auto-resolved from token)
@@ -498,6 +577,9 @@ Examples:
   
   # Start MCP server with Ollama and specific model (using EMBEDDING_MODEL)
   EMBEDDING_PROVIDER=Ollama EMBEDDING_MODEL=nomic-embed-text MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+
+  # Start MCP server with local BGE-M3 sidecar in full dense+sparse+ColBERT mode
+  EMBEDDING_PROVIDER=BGE_M3 BGE_M3_ENDPOINT=http://127.0.0.1:8000 MILVUS_ADDRESS=localhost:19530 npx @zilliz/claude-context-mcp@latest
 
   # Start shared daemon mode for two repositories
   MCP_RUNTIME_MODE=daemon MCP_DAEMON_TOKEN=local-secret MCP_DAEMON_ALLOW_ROOTS=/repo/a${path.delimiter}/repo/b npx @zilliz/claude-context-mcp@latest

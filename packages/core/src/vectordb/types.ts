@@ -2,12 +2,24 @@
 export interface VectorDocument {
     id: string;
     vector: number[];
+    sparseVector?: {
+        indices: number[];
+        values: number[];
+    };
+    colbertVectors?: number[][];
     content: string;
     relativePath: string;
     startLine: number;
     endLine: number;
     fileExtension: string;
     metadata: Record<string, any>;
+}
+
+export type RetrievalMode = 'dense' | 'hybrid_bm25' | 'bge_m3_dense' | 'bge_m3_full';
+
+export interface RetrievalSchemaMetadata {
+    retrievalMode: RetrievalMode;
+    schemaVersion: number;
 }
 
 export interface SearchOptions {
@@ -19,7 +31,7 @@ export interface SearchOptions {
 
 // New interfaces for hybrid search
 export interface HybridSearchRequest {
-    data: number[] | string; // Query vector or text
+    data: number[] | string | { indices: number[]; values: number[] } | Record<number, number>; // Query vector, text, or sparse vector
     anns_field: string; // Vector field name (vector or sparse_vector)
     param: Record<string, any>; // Search parameters
     limit: number;
@@ -44,6 +56,7 @@ export interface VectorSearchResult {
 export interface HybridSearchResult {
     document: VectorDocument;
     score: number;
+    metadata?: Record<string, any>;
 }
 
 export interface VectorDatabase {
@@ -62,6 +75,12 @@ export interface VectorDatabase {
      * @param description Collection description
      */
     createHybridCollection(collectionName: string, dimension: number, description?: string): Promise<void>;
+
+    /**
+     * Create collection with BGE-M3 full retrieval support.
+     * Stores dense vectors, model-generated sparse vectors, and ColBERT token vectors.
+     */
+    createBgeM3Collection(collectionName: string, dimension: number, description?: string): Promise<void>;
 
     /**
      * Drop collection
@@ -95,6 +114,11 @@ export interface VectorDatabase {
     insertHybrid(collectionName: string, documents: VectorDocument[]): Promise<void>;
 
     /**
+     * Insert BGE-M3 full retrieval documents.
+     */
+    insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void>;
+
+    /**
      * Search similar vectors
      * @param collectionName Collection name
      * @param queryVector Query vector
@@ -109,6 +133,11 @@ export interface VectorDatabase {
      * @param options Hybrid search options including reranking
      */
     hybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]>;
+
+    /**
+     * BGE-M3 dense+sparse candidate search using model-generated sparse vectors.
+     */
+    bgeM3HybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]>;
 
     /**
      * Delete documents

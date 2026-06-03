@@ -7,6 +7,8 @@ export {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    RetrievalMode,
+    RetrievalSchemaMetadata,
     RerankStrategy,
     COLLECTION_LIMIT_MESSAGE
 } from './types';

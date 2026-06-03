@@ -372,7 +372,12 @@ export class ToolHandlers {
 
             for (const collectionName of collections) {
                 try {
-                    if (!collectionName.startsWith('code_chunks_') && !collectionName.startsWith('hybrid_code_chunks_')) {
+                    if (
+                        !collectionName.startsWith('code_chunks_') &&
+                        !collectionName.startsWith('hybrid_code_chunks_') &&
+                        !collectionName.startsWith('bge_m3_code_chunks_') &&
+                        !collectionName.startsWith('bge_m3_dense_code_chunks_')
+                    ) {
                         console.log(`[SYNC-CLOUD] ⏭️  Skipping non-code collection: ${collectionName}`);
                         continue;
                     }
@@ -384,7 +389,9 @@ export class ToolHandlers {
                     try {
                         const description = await vectorDb.getCollectionDescription(collectionName);
                         if (description && description.startsWith('codebasePath:')) {
-                            const codebasePath = description.substring('codebasePath:'.length);
+                            const codebasePath = description
+                                .split(/\r?\n/, 1)[0]
+                                .substring('codebasePath:'.length);
                             if (codebasePath.length > 0) {
                                 const normalizedPath = normalizeCodebasePath(codebasePath);
                                 console.log(`[SYNC-CLOUD] 📍 Found codebase path from description: ${normalizedPath} in collection: ${collectionName}`);
@@ -643,8 +650,8 @@ export class ToolHandlers {
                 await this.context.clearIndex(absolutePath);
             }
 
-            this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
-            await this.codebaseConfigManager.saveConfig(absolutePath, persistedSessionConfig);
+            const configuredSessionConfig = this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
+            await this.codebaseConfigManager.saveConfig(absolutePath, configuredSessionConfig);
             await this.runtimeStatusManager?.refresh('codebase-sync-config-saved');
 
             // Check current status and log if retrying after failure
@@ -1057,7 +1064,8 @@ export class ToolHandlers {
                             startLine: result.startLine,
                             endLine: result.endLine,
                             score: result.score,
-                            content: result.content
+                            content: result.content,
+                            ...(result.metadata && { metadata: result.metadata })
                         }))
                     }
                 };
@@ -1302,6 +1310,9 @@ export class ToolHandlers {
             let recoveredFromCloud = false;
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
             const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
+            const persistedSyncConfig = hasPersistedSyncConfig
+                ? await this.codebaseConfigManager.getConfig(absolutePath)
+                : null;
 
             // Self-heal snapshot if cloud has index but local status is missing
             if (status === 'not_found' && hasCloudIndex) {
@@ -1352,6 +1363,10 @@ export class ToolHandlers {
                 recoveredFromCloud,
                 hasPersistedSyncConfig
             };
+            if (persistedSyncConfig?.retrievalMode) {
+                structuredStatus.retrievalMode = persistedSyncConfig.retrievalMode;
+                structuredStatus.retrievalSchemaVersion = persistedSyncConfig.retrievalSchemaVersion;
+            }
 
             switch (status) {
                 case 'indexed':
@@ -1364,6 +1379,12 @@ export class ToolHandlers {
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
                         statusMessage += `\n📊 Statistics: ${indexedInfo.indexedFiles} files, ${indexedInfo.totalChunks} chunks`;
                         statusMessage += `\n📅 Status: ${indexedInfo.indexStatus}`;
+                        if (persistedSyncConfig?.retrievalMode) {
+                            statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
+                            if (persistedSyncConfig.retrievalSchemaVersion) {
+                                statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
+                            }
+                        }
                         statusMessage += `\n🕐 Last updated: ${new Date(indexedInfo.lastUpdated).toLocaleString()}`;
                     } else {
                         if (info && info.status === 'indexed') {
@@ -1374,6 +1395,12 @@ export class ToolHandlers {
                         if (info && info.status === 'indexed') {
                             statusMessage += `\n📊 Statistics: unavailable in local snapshot`;
                             statusMessage += `\n📅 Status: ${info.indexStatus}`;
+                            if (persistedSyncConfig?.retrievalMode) {
+                                statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
+                                if (persistedSyncConfig.retrievalSchemaVersion) {
+                                    statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
+                                }
+                            }
                             statusMessage += `\n🕐 Last updated: ${new Date(info.lastUpdated).toLocaleString()}`;
                         }
                     }

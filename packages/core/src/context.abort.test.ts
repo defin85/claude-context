@@ -46,13 +46,20 @@ class TestSplitter implements Splitter {
 class TestVectorDatabase implements VectorDatabase {
     async createCollection(): Promise<void> {}
     async createHybridCollection(): Promise<void> {}
+    async createBgeM3Collection(): Promise<void> {}
     async dropCollection(): Promise<void> {}
     async hasCollection(): Promise<boolean> { return false; }
     async listCollections(): Promise<string[]> { return []; }
     async insert(): Promise<void> {}
     async insertHybrid(): Promise<void> {}
+    async insertBgeM3(): Promise<void> {}
     async search(): Promise<VectorSearchResult[]> { return []; }
     async hybridSearch(
+        _collectionName: string,
+        _searchRequests: HybridSearchRequest[],
+        _options?: HybridSearchOptions,
+    ): Promise<HybridSearchResult[]> { return []; }
+    async bgeM3HybridSearch(
         _collectionName: string,
         _searchRequests: HybridSearchRequest[],
         _options?: HybridSearchOptions,

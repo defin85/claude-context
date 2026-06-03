@@ -37,6 +37,41 @@ export class MilvusVectorDatabase implements VectorDatabase {
         });
     }
 
+    private toSparseVectorPayload(document: VectorDocument): Record<number, number> | undefined {
+        if (!document.sparseVector) {
+            return undefined;
+        }
+
+        return document.sparseVector.indices.reduce<Record<number, number>>((payload, index, itemIndex) => {
+            payload[index] = document.sparseVector!.values[itemIndex];
+            return payload;
+        }, {});
+    }
+
+    private searchSparsePayload(data: HybridSearchRequest['data']): HybridSearchRequest['data'] {
+        if (typeof data === 'object' && data !== null && 'indices' in data && 'values' in data) {
+            const sparse = data as { indices: number[]; values: number[] };
+            return sparse.indices.reduce<Record<number, number>>((payload, index, itemIndex) => {
+                payload[index] = sparse.values[itemIndex];
+                return payload;
+            }, {});
+        }
+        return data;
+    }
+
+    private parseColbertVectors(value: unknown, id: string): number[][] | undefined {
+        if (!value || typeof value !== 'string') {
+            return undefined;
+        }
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : undefined;
+        } catch (error) {
+            console.warn(`[MilvusDB] Failed to parse ColBERT vectors for item ${id}:`, error);
+            return undefined;
+        }
+    }
+
     private async initialize(): Promise<void> {
         const resolvedAddress = await this.resolveAddress();
         await this.initializeClient(resolvedAddress);
@@ -618,6 +653,104 @@ export class MilvusVectorDatabase implements VectorDatabase {
         });
     }
 
+    async createBgeM3Collection(collectionName: string, dimension: number, description?: string): Promise<void> {
+        await this.ensureInitialized();
+
+        if (!this.client) {
+            throw new Error('MilvusClient is not initialized. Call ensureInitialized() first.');
+        }
+
+        const schema = [
+            {
+                name: 'id',
+                description: 'Document ID',
+                data_type: DataType.VarChar,
+                max_length: 512,
+                is_primary_key: true,
+            },
+            {
+                name: 'content',
+                description: 'Full text content for storage',
+                data_type: DataType.VarChar,
+                max_length: 65535,
+            },
+            {
+                name: 'dense_vector',
+                description: 'BGE-M3 dense vector embedding',
+                data_type: DataType.FloatVector,
+                dim: dimension,
+            },
+            {
+                name: 'sparse_vector',
+                description: 'BGE-M3 model-generated sparse lexical weights',
+                data_type: DataType.SparseFloatVector,
+            },
+            {
+                name: 'colbert_vectors',
+                description: 'BGE-M3 ColBERT token vectors serialized as JSON',
+                data_type: DataType.VarChar,
+                max_length: 65535,
+            },
+            {
+                name: 'relativePath',
+                description: 'Relative path to the codebase',
+                data_type: DataType.VarChar,
+                max_length: 1024,
+            },
+            {
+                name: 'startLine',
+                description: 'Start line number of the chunk',
+                data_type: DataType.Int64,
+            },
+            {
+                name: 'endLine',
+                description: 'End line number of the chunk',
+                data_type: DataType.Int64,
+            },
+            {
+                name: 'fileExtension',
+                description: 'File extension',
+                data_type: DataType.VarChar,
+                max_length: 32,
+            },
+            {
+                name: 'metadata',
+                description: 'Additional document metadata as JSON string',
+                data_type: DataType.VarChar,
+                max_length: 65535,
+            },
+        ];
+
+        await this.client.createCollection({
+            collection_name: collectionName,
+            description: description || `BGE-M3 code context collection: ${collectionName}`,
+            fields: schema,
+        });
+
+        await this.client.createIndex({
+            collection_name: collectionName,
+            field_name: 'dense_vector',
+            index_name: 'dense_vector_index',
+            index_type: 'AUTOINDEX',
+            metric_type: MetricType.COSINE,
+        });
+        await this.waitForIndexReady(collectionName, 'dense_vector');
+
+        await this.client.createIndex({
+            collection_name: collectionName,
+            field_name: 'sparse_vector',
+            index_name: 'sparse_vector_index',
+            index_type: 'SPARSE_INVERTED_INDEX',
+            metric_type: MetricType.IP,
+        });
+        await this.waitForIndexReady(collectionName, 'sparse_vector');
+
+        await this.loadCollectionWithRetry(collectionName);
+        await this.client.describeCollection({
+            collection_name: collectionName,
+        });
+    }
+
     async insertHybrid(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.ensureInitialized();
         await this.ensureLoaded(collectionName);
@@ -640,6 +773,43 @@ export class MilvusVectorDatabase implements VectorDatabase {
         await this.client.insert({
             collection_name: collectionName,
             data: data,
+        });
+    }
+
+    async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        if (!this.client) {
+            throw new Error('MilvusClient is not initialized after ensureInitialized().');
+        }
+
+        const data = documents.map(doc => ({
+            id: doc.id,
+            content: doc.content,
+            dense_vector: doc.vector,
+            sparse_vector: this.toSparseVectorPayload(doc),
+            colbert_vectors: JSON.stringify(doc.colbertVectors || []),
+            relativePath: doc.relativePath,
+            startLine: doc.startLine,
+            endLine: doc.endLine,
+            fileExtension: doc.fileExtension,
+            metadata: JSON.stringify(doc.metadata),
+        }));
+
+        const insertResult = await this.client.insert({
+            collection_name: collectionName,
+            data,
+        });
+
+        if ((insertResult as any).status?.error_code !== 'Success') {
+            throw new Error(
+                `Failed to insert BGE-M3 documents into '${collectionName}': ${(insertResult as any).status?.reason || 'unknown Milvus error'}`,
+            );
+        }
+
+        await this.client.flushSync({
+            collection_names: [collectionName],
         });
     }
 
@@ -752,6 +922,79 @@ export class MilvusVectorDatabase implements VectorDatabase {
 
         } catch (error) {
             console.error(`[MilvusDB] ❌ Failed to perform hybrid search on collection '${collectionName}':`, error);
+            throw error;
+        }
+    }
+
+    async bgeM3HybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]> {
+        await this.ensureInitialized();
+        await this.ensureLoaded(collectionName);
+
+        if (!this.client) {
+            throw new Error('MilvusClient is not initialized after ensureInitialized().');
+        }
+
+        try {
+            const denseSearch = searchRequests[0];
+            const sparseSearch = searchRequests[1];
+            const searchParams: any = {
+                collection_name: collectionName,
+                data: [
+                    {
+                        data: Array.isArray(denseSearch.data) ? denseSearch.data : [denseSearch.data],
+                        anns_field: denseSearch.anns_field,
+                        param: denseSearch.param,
+                        limit: denseSearch.limit,
+                    },
+                    {
+                        data: this.searchSparsePayload(sparseSearch.data),
+                        anns_field: sparseSearch.anns_field,
+                        param: sparseSearch.param,
+                        limit: sparseSearch.limit,
+                    },
+                ],
+                limit: options?.limit || denseSearch.limit || 100,
+                rerank: options?.rerank || {
+                    strategy: "rrf",
+                    params: { k: 100 },
+                },
+                output_fields: ['id', 'content', 'relativePath', 'startLine', 'endLine', 'fileExtension', 'metadata', 'colbert_vectors'],
+            };
+
+            if (options?.filterExpr && options.filterExpr.trim().length > 0) {
+                searchParams.expr = options.filterExpr;
+            }
+
+            const searchResult = await this.client.search(searchParams);
+            if (!searchResult.results || searchResult.results.length === 0) {
+                return [];
+            }
+
+            return searchResult.results.map((result: any) => {
+                let metadata = {};
+                try {
+                    metadata = JSON.parse(result.metadata || '{}');
+                } catch (error) {
+                    console.warn(`[MilvusDB] Failed to parse metadata for item ${result.id}:`, error);
+                }
+
+                return {
+                    document: {
+                        id: result.id,
+                        content: result.content,
+                        vector: [],
+                        colbertVectors: this.parseColbertVectors(result.colbert_vectors, result.id),
+                        relativePath: result.relativePath,
+                        startLine: result.startLine,
+                        endLine: result.endLine,
+                        fileExtension: result.fileExtension,
+                        metadata,
+                    },
+                    score: result.score,
+                };
+            });
+        } catch (error) {
+            console.error(`[MilvusDB] ❌ Failed to perform BGE-M3 hybrid search on collection '${collectionName}':`, error);
             throw error;
         }
     }

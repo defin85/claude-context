@@ -63,7 +63,9 @@ export class CodebaseConfigManager {
                 const trimmed = ext.trim();
                 return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
             }).filter((ext: string) => ext.length > 1))],
-            customIgnorePatterns: [...new Set((config.customIgnorePatterns || []).map((pattern: string) => pattern.trim()).filter(Boolean))]
+            customIgnorePatterns: [...new Set((config.customIgnorePatterns || []).map((pattern: string) => pattern.trim()).filter(Boolean))],
+            ...(config.retrievalMode && { retrievalMode: config.retrievalMode }),
+            ...(typeof config.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: config.retrievalSchemaVersion })
         };
     }
 
@@ -111,7 +113,9 @@ export class CodebaseConfigManager {
             codebasePath: normalizedPath,
             lastUpdated: new Date().toISOString(),
             customExtensions: normalizedConfig.customExtensions || [],
-            customIgnorePatterns: normalizedConfig.customIgnorePatterns || []
+            customIgnorePatterns: normalizedConfig.customIgnorePatterns || [],
+            ...(normalizedConfig.retrievalMode && { retrievalMode: normalizedConfig.retrievalMode }),
+            ...(typeof normalizedConfig.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: normalizedConfig.retrievalSchemaVersion })
         };
 
         await fs.promises.writeFile(tempPath, JSON.stringify(payload, null, 2));

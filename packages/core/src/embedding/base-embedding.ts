@@ -4,6 +4,28 @@ export interface EmbeddingVector {
     dimension: number;
 }
 
+export interface DenseEmbeddingVector {
+    vector: number[];
+    dimension: number;
+}
+
+export interface SparseEmbeddingVector {
+    indices: number[];
+    values: number[];
+}
+
+export interface ColbertEmbeddingVector {
+    vectors: number[][];
+    dimension: number;
+    tokenCount: number;
+}
+
+export interface MultiVectorEmbedding {
+    dense: DenseEmbeddingVector;
+    sparse?: SparseEmbeddingVector;
+    colbert?: ColbertEmbeddingVector;
+}
+
 /**
  * Abstract base class for embedding implementations
  */

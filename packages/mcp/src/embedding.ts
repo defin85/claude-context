@@ -1,8 +1,10 @@
-import { OpenAIEmbedding, VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding } from "@zilliz/claude-context-core";
+import { OpenAIEmbedding, VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding, BgeM3Embedding } from "@zilliz/claude-context-core";
 import { ContextMcpConfig } from "./config.js";
 
+type SupportedEmbedding = OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding | BgeM3Embedding;
+
 // Helper function to create embedding instance based on provider
-export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding {
+export function createEmbeddingInstance(config: ContextMcpConfig): SupportedEmbedding {
     console.log(`[EMBEDDING] Creating ${config.embeddingProvider} embedding instance...`);
 
     switch (config.embeddingProvider) {
@@ -58,13 +60,28 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
             console.log(`[EMBEDDING] ✅ Ollama embedding instance created successfully`);
             return ollamaEmbedding;
 
+        case 'BGE_M3':
+            if (!config.bgeM3Endpoint) {
+                console.error(`[EMBEDDING] ❌ BGE_M3_ENDPOINT is required but not provided`);
+                throw new Error('BGE_M3_ENDPOINT is required for BGE-M3 embedding provider');
+            }
+            console.log(`[EMBEDDING] 🔧 Configuring BGE-M3 with model: ${config.embeddingModel}, endpoint: ${config.bgeM3Endpoint}, mode: ${config.bgeM3Mode}`);
+            const bgeM3Embedding = new BgeM3Embedding({
+                endpoint: config.bgeM3Endpoint,
+                model: config.embeddingModel,
+                mode: config.bgeM3Mode,
+                dimension: config.ollamaDimension
+            });
+            console.log(`[EMBEDDING] ✅ BGE-M3 embedding instance created successfully (${bgeM3Embedding.getRetrievalMode()})`);
+            return bgeM3Embedding;
+
         default:
             console.error(`[EMBEDDING] ❌ Unsupported embedding provider: ${config.embeddingProvider}`);
             throw new Error(`Unsupported embedding provider: ${config.embeddingProvider}`);
     }
 }
 
-export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding): void {
+export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: SupportedEmbedding): void {
     console.log(`[EMBEDDING] ✅ Successfully initialized ${config.embeddingProvider} embedding provider`);
     console.log(`[EMBEDDING] Provider details - Model: ${config.embeddingModel}, Dimension: ${embedding.getDimension()}`);
 
@@ -81,6 +98,9 @@ export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: Op
             break;
         case 'Ollama':
             console.log(`[EMBEDDING] Ollama configuration - Host: ${config.ollamaHost || 'http://127.0.0.1:11434'}, Model: ${config.embeddingModel}${config.ollamaDimension ? `, Dimension: ${config.ollamaDimension}` : ''}`);
+            break;
+        case 'BGE_M3':
+            console.log(`[EMBEDDING] BGE-M3 configuration - Endpoint: ${config.bgeM3Endpoint}, Mode: ${config.bgeM3Mode === 'full' ? 'full dense+sparse+ColBERT' : 'dense-only'}, Model: ${config.embeddingModel}`);
             break;
     }
 }
