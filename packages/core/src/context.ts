@@ -550,10 +550,10 @@ export class Context {
     /**
      * Public wrapper for prepareCollection private method
      */
-    async getPreparedCollection(codebasePath: string): Promise<void> {
+    async getPreparedCollection(codebasePath: string, forceReindex: boolean = false): Promise<void> {
         codebasePath = normalizeCodebasePath(codebasePath);
         this.getOrCreateCodebaseSession(codebasePath);
-        return this.prepareCollection(codebasePath);
+        return this.prepareCollection(codebasePath, forceReindex);
     }
 
     /**

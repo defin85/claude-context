@@ -808,7 +808,7 @@ export class ToolHandlers {
             throwIfCancelled();
 
             // Store synchronizer in the context (let context manage collection names)
-            await this.context.getPreparedCollection(absolutePath);
+            await this.context.getPreparedCollection(absolutePath, forceReindex);
             const collectionName = this.context.getCollectionName(absolutePath);
             this.context.setSynchronizerForCodebase(absolutePath, synchronizer);
             if (contextForThisTask !== this.context) {

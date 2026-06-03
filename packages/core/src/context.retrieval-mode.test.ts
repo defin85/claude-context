@@ -204,6 +204,26 @@ describe('Context retrieval modes', () => {
         );
     });
 
+    it('allows force preparation when switching from BM25 hybrid to BGE-M3 full mode', async () => {
+        process.env.HYBRID_MODE = 'true';
+        const vectorDatabase = new TestVectorDatabase();
+        const denseContext = new Context({
+            embedding: new DenseEmbedding(),
+            vectorDatabase,
+        });
+        vectorDatabase.collections.add(denseContext.getCollectionName('/tmp/example'));
+
+        const bgeContext = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase,
+        });
+
+        await bgeContext.getPreparedCollection('/tmp/example', true);
+
+        expect(vectorDatabase.bgeM3Collections).toHaveLength(1);
+        expect(vectorDatabase.bgeM3Collections[0].collectionName).toMatch(/^bge_m3_code_chunks_/);
+    });
+
     it('creates and inserts BGE-M3 full documents with model sparse and ColBERT vectors', async () => {
         const codebasePath = await fs.mkdtemp(path.join(os.tmpdir(), 'bge-m3-context-'));
         await fs.writeFile(path.join(codebasePath, 'index.ts'), 'export const answer = 42;\n');
