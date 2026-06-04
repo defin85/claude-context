@@ -159,6 +159,7 @@ describe('BgeM3Embedding', () => {
     });
 
     it('retries failed batches on another healthy worker', async () => {
+        let retryCount = 0;
         const fetchMock = jest.fn((url: string, init: RequestInit) => {
             if (url.endsWith('/metadata')) {
                 return Promise.resolve(jsonResponse(fullMetadata));
@@ -182,9 +183,12 @@ describe('BgeM3Embedding', () => {
             fetch: fetchMock,
         });
 
-        const [result] = await embedding.embedMultiBatchWithWorkerPool(['query text']);
+        const [result] = await embedding.embedMultiBatchWithWorkerPool(['query text'], () => {
+            retryCount++;
+        });
 
         expect(result.dense.vector).toEqual([0.1, 0.2, 0.3]);
+        expect(retryCount).toBe(1);
         expect(fetchMock).toHaveBeenCalledWith(
             'http://127.0.0.1:8001/embed_batch',
             expect.objectContaining({ method: 'POST' }),

@@ -46,6 +46,7 @@ export interface ContextMcpConfig {
     acceleratorWorkerStartTimeoutMs: number;
     acceleratorWorkerStopDebounceMs: number;
     acceleratorWorkerIdleTimeoutMs: number;
+    acceleratorWorkerPressureCheckMs: number;
     bgeM3SidecarPython: string;
     bgeM3SidecarScript: string;
     bgeM3Device?: string;
@@ -286,6 +287,7 @@ export function createMcpConfig(): ContextMcpConfig {
         acceleratorWorkerStartTimeoutMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_START_TIMEOUT_MS', 180000),
         acceleratorWorkerStopDebounceMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_STOP_DEBOUNCE_MS', 15000),
         acceleratorWorkerIdleTimeoutMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_IDLE_TIMEOUT_MS', 300000),
+        acceleratorWorkerPressureCheckMs: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_WORKER_PRESSURE_CHECK_MS', 15000),
         bgeM3SidecarPython: envManager.get('BGE_M3_SIDECAR_PYTHON') || 'python3',
         bgeM3SidecarScript: envManager.get('BGE_M3_SIDECAR_SCRIPT') || path.resolve(process.cwd(), 'python', 'bge_m3_sidecar.py'),
         bgeM3Device: envManager.get('BGE_M3_DEVICE'),
@@ -585,6 +587,7 @@ export function logAcceleratorConfiguration(config: ContextMcpConfig): void {
         console.log(`[MCP]   Accelerator Worker Start Timeout: ${config.acceleratorWorkerStartTimeoutMs}ms`);
         console.log(`[MCP]   Accelerator Worker Stop Debounce: ${config.acceleratorWorkerStopDebounceMs}ms`);
         console.log(`[MCP]   Accelerator Worker Idle Timeout: ${config.acceleratorWorkerIdleTimeoutMs}ms`);
+        console.log(`[MCP]   Accelerator Worker Pressure Check: ${config.acceleratorWorkerPressureCheckMs}ms`);
         console.log(`[MCP]   Accelerator Allow Unmeasured VRAM: ${config.acceleratorAllowUnmeasuredVram ? 'true' : 'false'}`);
         console.log(`[MCP]   BGE-M3 Sidecar Script: ${config.bgeM3SidecarScript}`);
     }
@@ -660,6 +663,7 @@ Environment Variables:
   BGE_M3_ACCELERATOR_START_PORT First managed sidecar loopback port (default: 8001)
   BGE_M3_ACCELERATOR_ALLOW_UNMEASURED_VRAM Allow managed startup without nvidia-smi metrics (default: false)
   BGE_M3_ACCELERATOR_WORKER_START_TIMEOUT_MS Health wait timeout for managed workers (default: 180000)
+  BGE_M3_ACCELERATOR_WORKER_PRESSURE_CHECK_MS Runtime VRAM pressure check interval for managed workers (default: 15000)
   BGE_M3_SIDECAR_PYTHON  Python executable for managed sidecars (default: python3)
   BGE_M3_SIDECAR_SCRIPT  Sidecar script path (default: ./python/bge_m3_sidecar.py)
   

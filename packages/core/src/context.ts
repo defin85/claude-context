@@ -23,6 +23,10 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
 import {
+    PreIndexTraversalResult,
+    traversePreIndex,
+} from "./sync/preindex-traversal";
+import {
     AsyncLimiter,
     IndexingBatchMetadata,
     IndexingAcceleratorRuntime,
@@ -241,6 +245,7 @@ interface ProcessFileListOptions {
     abortSignal?: AbortSignal;
     allowAcceleration?: boolean;
     isBackgroundSync?: boolean;
+    preIndexTraversal?: PreIndexTraversalResult;
 }
 
 interface CodebaseSessionState {
@@ -256,7 +261,10 @@ interface CodebaseSessionState {
 type MultiVectorEmbeddingProvider = Embedding & {
     embedMulti(text: string): Promise<MultiVectorEmbedding>;
     embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]>;
-    embedMultiBatchWithWorkerPool?(texts: string[]): Promise<MultiVectorEmbedding[]>;
+    embedMultiBatchWithWorkerPool?(
+        texts: string[],
+        onRetry?: (workerEndpoint: string, error: Error) => void,
+    ): Promise<MultiVectorEmbedding[]>;
 };
 
 type WorkerSnapshotProvider = Embedding & {
@@ -356,6 +364,47 @@ export class Context {
             workers.filter((worker) => worker.healthy).length,
             workers.filter((worker) => worker.rejectedReason).length,
         );
+    }
+
+    private resetAcceleratorSnapshotForPreIndex(
+        preIndexTraversal: PreIndexTraversalResult,
+        options: { allowAcceleration: boolean; isBackgroundSync: boolean },
+    ): void {
+        const acceleratorConfig = getIndexingAcceleratorConfig();
+        const accelerationDecision = shouldAccelerateIndexing(acceleratorConfig, {
+            isInitialOrForce: options.allowAcceleration,
+            isBackgroundSync: options.isBackgroundSync,
+        });
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            acceleratorConfig,
+            accelerationDecision.active,
+            accelerationDecision.fallbackReason,
+        );
+        acceleratorRuntime.recordPreIndex({
+            ...preIndexTraversal.timings,
+            selectedFileCount: preIndexTraversal.selectedFileCount,
+            hashedFileCount: preIndexTraversal.hashedFileCount,
+        });
+        this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+        this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+    }
+
+    private resetAcceleratorSnapshotForPreIndexStart(
+        options: { allowAcceleration: boolean; isBackgroundSync: boolean },
+    ): void {
+        const acceleratorConfig = getIndexingAcceleratorConfig();
+        const accelerationDecision = shouldAccelerateIndexing(acceleratorConfig, {
+            isInitialOrForce: options.allowAcceleration,
+            isBackgroundSync: options.isBackgroundSync,
+        });
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            acceleratorConfig,
+            accelerationDecision.active,
+            accelerationDecision.fallbackReason,
+        );
+        acceleratorRuntime.recordPreIndexStart();
+        this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+        this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
     }
 
     private normalizeExtensionsList(extensions: string[] = []): string[] {
@@ -915,19 +964,42 @@ export class Context {
         await this.prepareCollection(codebasePath, forceReindex);
         throwIfOperationAborted(abortSignal);
 
+        this.resetAcceleratorSnapshotForPreIndexStart({
+            allowAcceleration: true,
+            isBackgroundSync: false,
+        });
+
         // 3. Recursively traverse codebase to get all supported files
         progressCallback?.({
-            phase: "Scanning files...",
+            phase: "Pre-index traversal...",
             current: 5,
             total: 100,
             percentage: 5,
         });
-        const codeFiles = await this.getCodeFiles(
-            codebasePath,
-            session,
+        const preIndexTraversal = await traversePreIndex(codebasePath, {
+            ignorePatterns: session.effectiveIgnorePatterns,
+            supportedExtensions: session.effectiveExtensions,
+            includeHashes: true,
             abortSignal,
-        );
+        });
+        const codeFiles = preIndexTraversal.files.map((file) => file.absolutePath);
         console.log(`[Context] 📁 Found ${codeFiles.length} code files`);
+        console.log(
+            `[Context] ⏱️ Pre-index traversal: totalMs=${preIndexTraversal.timings.totalMs}, scanMs=${preIndexTraversal.timings.scanMs}, hashMs=${preIndexTraversal.timings.hashMs}, fileListMs=${preIndexTraversal.timings.fileListMs}, selectedFiles=${preIndexTraversal.selectedFileCount}, hashedFiles=${preIndexTraversal.hashedFileCount}, concurrency=${preIndexTraversal.concurrency}`,
+        );
+        this.resetAcceleratorSnapshotForPreIndex(preIndexTraversal, {
+            allowAcceleration: true,
+            isBackgroundSync: false,
+        });
+
+        const synchronizer = new FileSynchronizer(
+            codebasePath,
+            session.effectiveIgnorePatterns,
+            session.effectiveExtensions,
+        );
+        await synchronizer.initialize(preIndexTraversal);
+        session.synchronizer = synchronizer;
+        this.synchronizers.set(this.getCollectionName(codebasePath), synchronizer);
 
         if (codeFiles.length === 0) {
             progressCallback?.({
@@ -968,6 +1040,7 @@ export class Context {
                 abortSignal,
                 allowAcceleration: forceReindex || codeFiles.length > 0,
                 isBackgroundSync: false,
+                preIndexTraversal,
             },
         );
 
@@ -1681,40 +1754,14 @@ export class Context {
         abortSignal?: AbortSignal,
     ): Promise<string[]> {
         const files: string[] = [];
-
-        const traverseDirectory = async (currentPath: string) => {
-            throwIfOperationAborted(abortSignal);
-            const entries = await fs.promises.readdir(currentPath, {
-                withFileTypes: true,
-            });
-
-            for (const entry of entries) {
-                throwIfOperationAborted(abortSignal);
-                const fullPath = path.join(currentPath, entry.name);
-
-                // Check if path matches ignore patterns
-                if (
-                    this.matchesIgnorePattern(
-                        fullPath,
-                        codebasePath,
-                        session.effectiveIgnorePatterns,
-                    )
-                ) {
-                    continue;
-                }
-
-                if (entry.isDirectory()) {
-                    await traverseDirectory(fullPath);
-                } else if (entry.isFile()) {
-                    const ext = path.extname(entry.name);
-                    if (session.effectiveExtensions.includes(ext)) {
-                        files.push(fullPath);
-                    }
-                }
-            }
-        };
-
-        await traverseDirectory(codebasePath);
+        const traversal = await traversePreIndex(codebasePath, {
+            ignorePatterns: session.effectiveIgnorePatterns,
+            supportedExtensions: session.effectiveExtensions,
+            includeHashes: false,
+            abortSignal,
+            concurrency: 1,
+        });
+        files.push(...traversal.files.map((file) => file.absolutePath));
         return files;
     }
 
@@ -1756,6 +1803,13 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        if (options.preIndexTraversal) {
+            acceleratorRuntime.recordPreIndex({
+                ...options.preIndexTraversal.timings,
+                selectedFileCount: options.preIndexTraversal.selectedFileCount,
+                hashedFileCount: options.preIndexTraversal.hashedFileCount,
+            });
+        }
         const embeddingLimiter = new AsyncLimiter(
             accelerationDecision.active ? acceleratorConfig.embeddingConcurrency : 1,
         );
@@ -1926,7 +1980,7 @@ export class Context {
         await Promise.all(submittedBatches);
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
-            `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
+            `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, preIndexMs=${this.lastAcceleratorSnapshot.preIndexTotalMs}, preIndexScanMs=${this.lastAcceleratorSnapshot.preIndexScanMs}, preIndexHashMs=${this.lastAcceleratorSnapshot.preIndexHashMs}, preIndexFileListMs=${this.lastAcceleratorSnapshot.preIndexFileListMs}, preIndexSelectedFiles=${this.lastAcceleratorSnapshot.preIndexSelectedFileCount}, preIndexHashedFiles=${this.lastAcceleratorSnapshot.preIndexHashedFileCount}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
         );
 
         return {
@@ -2001,7 +2055,10 @@ export class Context {
             let embeddings: MultiVectorEmbedding[];
             try {
                 embeddings = acceleratorRuntime?.getSnapshot().active && multiVectorEmbedding.embedMultiBatchWithWorkerPool
-                    ? await acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(chunkContents))
+                    ? await acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(
+                        chunkContents,
+                        () => acceleratorRuntime.recordBatchRetried(batchId),
+                    ))
                     : await multiVectorEmbedding.embedMultiBatch(chunkContents);
             } catch (error) {
                 throw this.createBatchStageError("embedding", batchId, error);

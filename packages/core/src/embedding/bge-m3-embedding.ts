@@ -152,13 +152,16 @@ export class BgeM3Embedding extends Embedding {
         return this.parseMultiVectorBatchResponse(response, processedTexts.length);
     }
 
-    async embedMultiBatchWithWorkerPool(texts: string[]): Promise<MultiVectorEmbedding[]> {
+    async embedMultiBatchWithWorkerPool(
+        texts: string[],
+        onRetry?: (workerEndpoint: string, error: Error) => void,
+    ): Promise<MultiVectorEmbedding[]> {
         const processedTexts = this.preprocessTexts(texts);
         const response = await this.withWorkerRetry((worker) => this.post(worker, '/embed_batch', {
                 inputs: processedTexts,
                 model: this.model,
                 mode: this.mode,
-            }));
+            }), onRetry);
 
         return this.parseMultiVectorBatchResponse(response, processedTexts.length);
     }
@@ -237,7 +240,10 @@ export class BgeM3Embedding extends Embedding {
         return response.json();
     }
 
-    private async withWorkerRetry(run: (worker: BgeM3Worker) => Promise<unknown>): Promise<unknown> {
+    private async withWorkerRetry(
+        run: (worker: BgeM3Worker) => Promise<unknown>,
+        onRetry?: (workerEndpoint: string, error: Error) => void,
+    ): Promise<unknown> {
         let lastError: unknown;
         const attempts = Math.max(1, this.retryBudget + 1);
         for (let attempt = 0; attempt < attempts; attempt++) {
@@ -248,6 +254,12 @@ export class BgeM3Embedding extends Embedding {
                 lastError = error;
                 worker.healthy = false;
                 worker.rejectedReason = error instanceof Error ? error.message : String(error);
+                if (attempt < attempts - 1) {
+                    onRetry?.(
+                        worker.endpoint,
+                        error instanceof Error ? error : new Error(String(error)),
+                    );
+                }
             }
         }
 

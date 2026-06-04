@@ -5,4 +5,5 @@ export * from './types';
 export * from './context';
 export * from './indexing-accelerator';
 export * from './sync/synchronizer';
+export * from './sync/preindex-traversal';
 export * from './utils';

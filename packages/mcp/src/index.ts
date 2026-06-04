@@ -583,6 +583,10 @@ This tool is versatile and can be used before completing various tasks to retrie
             ).catch(() => undefined);
         }
 
+        if (cancellation.active.length > 0) {
+            await this.workloadManager.waitForCodebaseIndexingIdle(accessDecision.absolutePath);
+        }
+
         await this.runtimeStatusManager.refresh('daemon-admin-cancel-workload');
 
         const text = cancellation.queued.length === 0 && cancellation.active.length === 0

@@ -3,6 +3,11 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { MerkleDAG } from './merkle';
 import * as os from 'os';
+import {
+    PreIndexIgnoreMatcher,
+    PreIndexTraversalResult,
+    traversePreIndex,
+} from './preindex-traversal';
 
 export class FileSynchronizer {
     private fileHashes: Map<string, string>;
@@ -11,6 +16,7 @@ export class FileSynchronizer {
     private snapshotPath: string;
     private ignorePatterns: string[];
     private supportedExtensions: string[];
+    private ignoreMatcher: PreIndexIgnoreMatcher;
 
     constructor(rootDir: string, ignorePatterns: string[] = [], supportedExtensions: string[] = []) {
         this.rootDir = rootDir;
@@ -19,10 +25,12 @@ export class FileSynchronizer {
         this.merkleDAG = new MerkleDAG();
         this.ignorePatterns = ignorePatterns;
         this.supportedExtensions = this.normalizeExtensions(supportedExtensions);
+        this.ignoreMatcher = new PreIndexIgnoreMatcher(ignorePatterns);
     }
 
     public updateIgnorePatterns(ignorePatterns: string[]): void {
         this.ignorePatterns = [...ignorePatterns];
+        this.ignoreMatcher = new PreIndexIgnoreMatcher(this.ignorePatterns);
     }
 
     public updateSupportedExtensions(supportedExtensions: string[]): void {
@@ -60,107 +68,19 @@ export class FileSynchronizer {
         return crypto.createHash('sha256').update(content).digest('hex');
     }
 
-    private async generateFileHashes(dir: string): Promise<Map<string, string>> {
-        const fileHashes = new Map<string, string>();
-
-        let entries;
-        try {
-            entries = await fs.readdir(dir, { withFileTypes: true });
-        } catch (error: any) {
-            console.warn(`[Synchronizer] Cannot read directory ${dir}: ${error.message}`);
-            return fileHashes;
-        }
-
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            const relativePath = path.relative(this.rootDir, fullPath);
-
-            // Check if this path should be ignored BEFORE any file system operations
-            if (this.shouldIgnore(relativePath, entry.isDirectory())) {
-                continue; // Skip completely - no access at all
-            }
-
-            // Double-check with fs.stat to be absolutely sure about file type
-            let stat;
-            try {
-                stat = await fs.stat(fullPath);
-            } catch (error: any) {
-                console.warn(`[Synchronizer] Cannot stat ${fullPath}: ${error.message}`);
-                continue;
-            }
-
-            if (stat.isDirectory()) {
-                // Verify it's really a directory and not ignored
-                if (!this.shouldIgnore(relativePath, true)) {
-                    const subHashes = await this.generateFileHashes(fullPath);
-                    const entries = Array.from(subHashes.entries());
-                    for (let i = 0; i < entries.length; i++) {
-                        const [p, h] = entries[i];
-                        fileHashes.set(p, h);
-                    }
-                }
-            } else if (stat.isFile()) {
-                // Verify it's really a file and not ignored
-                if (!this.shouldIgnore(relativePath, false)) {
-                    const ext = path.extname(entry.name);
-                    if (this.supportedExtensions.length > 0 && !this.supportedExtensions.includes(ext)) {
-                        continue;
-                    }
-                    try {
-                        const hash = await this.hashFile(fullPath);
-                        fileHashes.set(relativePath, hash);
-                    } catch (error: any) {
-                        console.warn(`[Synchronizer] Cannot hash file ${fullPath}: ${error.message}`);
-                        continue;
-                    }
-                }
-            }
-            // Skip other types (symlinks, etc.)
-        }
-        return fileHashes;
+    private async generateFileHashes(dir: string, concurrency?: number): Promise<Map<string, string>> {
+        const traversal = await traversePreIndex(dir, {
+            ignorePatterns: this.ignorePatterns,
+            supportedExtensions: this.supportedExtensions,
+            includeHashes: true,
+            concurrency,
+        });
+        return this.fileHashesFromTraversal(traversal);
     }
 
     private shouldIgnore(relativePath: string, isDirectory: boolean = false): boolean {
         // Always ignore hidden files and directories (starting with .)
-        const pathParts = relativePath.split(path.sep);
-        if (pathParts.some(part => part.startsWith('.'))) {
-            return true;
-        }
-
-        if (this.ignorePatterns.length === 0) {
-            return false;
-        }
-
-        // Normalize path separators and remove leading/trailing slashes
-        const normalizedPath = relativePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-
-        if (!normalizedPath) {
-            return false; // Don't ignore root
-        }
-
-        // Check direct pattern matches first
-        for (const pattern of this.ignorePatterns) {
-            if (this.matchPattern(normalizedPath, pattern, isDirectory)) {
-                return true;
-            }
-        }
-
-        // Check if any parent directory is ignored
-        const normalizedPathParts = normalizedPath.split('/');
-        for (let i = 0; i < normalizedPathParts.length; i++) {
-            const partialPath = normalizedPathParts.slice(0, i + 1).join('/');
-            for (const pattern of this.ignorePatterns) {
-                if (this.matchPattern(partialPath, pattern, true)) {
-                    return true;
-                }
-
-                if (!pattern.includes('/') && this.simpleGlobMatch(normalizedPathParts[i], pattern)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        return this.ignoreMatcher.shouldIgnore(relativePath, isDirectory);
     }
 
     private matchPattern(filePath: string, pattern: string, isDirectory: boolean = false): boolean {
@@ -247,17 +167,23 @@ export class FileSynchronizer {
         return dag;
     }
 
-    public async initialize() {
+    public async initialize(preIndexResult?: PreIndexTraversalResult) {
         console.log(`Initializing file synchronizer for ${this.rootDir}`);
-        await this.loadSnapshot();
+        await this.loadSnapshot(preIndexResult);
         this.merkleDAG = this.buildMerkleDAG(this.fileHashes);
         console.log(`[Synchronizer] File synchronizer initialized. Loaded ${this.fileHashes.size} file hashes.`);
+    }
+
+    public async initializeFromTraversal(preIndexResult: PreIndexTraversalResult): Promise<void> {
+        this.fileHashes = this.fileHashesFromTraversal(preIndexResult);
+        this.merkleDAG = this.buildMerkleDAG(this.fileHashes);
+        await this.saveSnapshot();
     }
 
     public async checkForChanges(): Promise<{ added: string[], removed: string[], modified: string[] }> {
         console.log('[Synchronizer] Checking for file changes...');
 
-        const newFileHashes = await this.generateFileHashes(this.rootDir);
+        const newFileHashes = await this.generateFileHashes(this.rootDir, 1);
         const newMerkleDAG = this.buildMerkleDAG(newFileHashes);
 
         // Compare the DAGs
@@ -329,7 +255,17 @@ export class FileSynchronizer {
         console.log(`Saved snapshot to ${this.snapshotPath}`);
     }
 
-    private async loadSnapshot(): Promise<void> {
+    private fileHashesFromTraversal(preIndexResult: PreIndexTraversalResult): Map<string, string> {
+        const fileHashes = new Map<string, string>();
+        for (const file of preIndexResult.files) {
+            if (file.hash) {
+                fileHashes.set(file.relativePath, file.hash);
+            }
+        }
+        return fileHashes;
+    }
+
+    private async loadSnapshot(preIndexResult?: PreIndexTraversalResult): Promise<void> {
         try {
             const data = await fs.readFile(this.snapshotPath, 'utf-8');
             const obj = JSON.parse(data);
@@ -347,7 +283,9 @@ export class FileSynchronizer {
         } catch (error: any) {
             if (error.code === 'ENOENT') {
                 console.log(`Snapshot file not found at ${this.snapshotPath}. Generating new one.`);
-                this.fileHashes = await this.generateFileHashes(this.rootDir);
+                this.fileHashes = preIndexResult
+                    ? this.fileHashesFromTraversal(preIndexResult)
+                    : await this.generateFileHashes(this.rootDir);
                 this.merkleDAG = this.buildMerkleDAG(this.fileHashes);
                 await this.saveSnapshot();
             } else {

@@ -37,7 +37,7 @@
 - [x] 5.2 Extend indexing status with scanning, embedding, insertion, and accelerator progress fields.
 - [x] 5.3 Ensure `cancel_codebase_workload` cancels queued accelerated batches and retires managed extra workers safely.
 - [x] 5.4 Keep search workload concurrency independent from accelerated indexing settings.
-- [ ] 5.5 Investigate and fix stale daemon workload `activeCount` after a cancelled indexing job has already transitioned the codebase snapshot to `indexfailed`.
+- [x] 5.5 Investigate and fix stale daemon workload `activeCount` after a cancelled indexing job has already transitioned the codebase snapshot to `indexfailed`.
 
 ## 6. Tests and Verification
 

@@ -4,6 +4,7 @@ import {
     getIndexingAcceleratorConfig,
     shouldAccelerateIndexing,
 } from './indexing-accelerator';
+import { getPreIndexTraversalConcurrency } from './sync/preindex-traversal';
 
 describe('indexing accelerator configuration', () => {
     let getSpy: jest.SpyInstance<string | undefined, [name: string]>;
@@ -89,6 +90,19 @@ describe('indexing accelerator configuration', () => {
         expect(config.vramLimitPercent).toBe(100);
         expect(config.retryBudget).toBe(1);
         expect(config.accelerateBackgroundSync).toBe(false);
+    });
+
+    it('parses and bounds pre-index traversal concurrency', () => {
+        mockEnv({ PREINDEX_TRAVERSAL_CONCURRENCY: '4' });
+        expect(getPreIndexTraversalConcurrency()).toBe(4);
+
+        mockEnv({ PREINDEX_TRAVERSAL_CONCURRENCY: '500' });
+        expect(getPreIndexTraversalConcurrency()).toBe(64);
+
+        mockEnv({ PREINDEX_TRAVERSAL_CONCURRENCY: 'bad' });
+        expect(getPreIndexTraversalConcurrency()).toBeGreaterThanOrEqual(1);
+
+        expect(getPreIndexTraversalConcurrency(1)).toBe(1);
     });
 
     it('bounds async work to the configured limit', async () => {

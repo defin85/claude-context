@@ -28,6 +28,7 @@ function createConfig(overrides: Partial<ContextMcpConfig> = {}): ContextMcpConf
         acceleratorWorkerStartTimeoutMs: 1000,
         acceleratorWorkerStopDebounceMs: 10,
         acceleratorWorkerIdleTimeoutMs: 100,
+        acceleratorWorkerPressureCheckMs: 1000,
         bgeM3SidecarPython: 'python3',
         bgeM3SidecarScript: '/repo/python/bge_m3_sidecar.py',
         bgeM3UseFp16: true,
@@ -98,4 +99,34 @@ test('managed worker manager exposes planned endpoints without starting workers 
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(stopped, 1);
     assert.equal(manager.workers.length, 0);
+});
+
+test('managed worker manager retires workers when runtime VRAM pressure exceeds the configured limit', async () => {
+    let reads = 0;
+    let stopped = 0;
+    const manager = await createManagedBgeM3WorkerManager(createConfig({
+        acceleratorMaxBgeM3Workers: 2,
+        acceleratorWorkerPressureCheckMs: 10,
+    }), {
+        isSystemdUserAvailable: async () => true,
+        isPortAvailable: async () => true,
+        readVram: async () => {
+            reads++;
+            return reads <= 2
+                ? { usedMiB: 1000, totalMiB: 10000, percentUsed: 10 }
+                : { usedMiB: 9000, totalMiB: 10000, percentUsed: 90 };
+        },
+        startWorker: async (_config, port) => ({ endpoint: `http://127.0.0.1:${port}`, port }),
+        stopWorker: async () => {
+            stopped++;
+        },
+    });
+
+    await manager.ensureStarted('test');
+    assert.equal(manager.workers.length, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(stopped, 1);
+    assert.equal(manager.workers.length, 0);
+    assert.match(manager.fallbackReason || '', /exceeded limit/);
 });

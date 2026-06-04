@@ -59,6 +59,7 @@ class DelayedBgeM3Embedding extends Embedding {
     protected maxTokens = 8192;
     private active = 0;
     maxActive = 0;
+    shouldRetryWorkerPool = false;
 
     constructor(private readonly delayMs: number) {
         super();
@@ -98,6 +99,17 @@ class DelayedBgeM3Embedding extends Embedding {
         } finally {
             this.active--;
         }
+    }
+
+    async embedMultiBatchWithWorkerPool(
+        texts: string[],
+        onRetry?: () => void,
+    ): Promise<MultiVectorEmbedding[]> {
+        if (this.shouldRetryWorkerPool) {
+            this.shouldRetryWorkerPool = false;
+            onRetry?.();
+        }
+        return this.embedMultiBatch(texts);
     }
 
     getDimension(): number {
@@ -294,6 +306,55 @@ describe('Context accelerated batch pipeline', () => {
         expect(snapshot.fallbackReason).toBe('accelerator disabled');
     });
 
+    it('resets accelerator status during pre-index before an empty run returns', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        const populatedCodebase = await createCodebase();
+        const emptyCodebase = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-context-accelerator-empty-'));
+
+        await context.indexCodebase(populatedCodebase);
+        const populatedSnapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(populatedSnapshot.submittedBatches).toBeGreaterThan(0);
+
+        await context.indexCodebase(emptyCodebase);
+
+        const emptySnapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(emptySnapshot.submittedBatches).toBe(0);
+        expect(emptySnapshot.completedBatches).toBe(0);
+        expect(emptySnapshot.preIndexSelectedFileCount).toBe(0);
+        expect(emptySnapshot.preIndexHashedFileCount).toBe(0);
+    });
+
+    it('exposes pre-index status before traversal completes', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        const populatedCodebase = await createCodebase();
+        const blockedCodebase = await createCodebase();
+        await context.indexCodebase(populatedCodebase);
+        expect((context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot).submittedBatches).toBeGreaterThan(0);
+
+        let preIndexSnapshot: IndexingAcceleratorSnapshot | undefined;
+        await context.indexCodebase(blockedCodebase, (progress) => {
+            if (progress.phase === 'Pre-index traversal...') {
+                preIndexSnapshot = context.getLastAcceleratorSnapshot();
+            }
+        });
+
+        expect(preIndexSnapshot?.submittedBatches).toBe(0);
+        expect(preIndexSnapshot?.preIndexActive).toBe(true);
+        expect(preIndexSnapshot?.preIndexPhase).toBe('traversal');
+    });
+
     it('preserves stable document IDs when accelerated batches complete out of order', async () => {
         process.env.INDEX_ACCELERATOR_MODE = 'auto';
         process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
@@ -366,5 +427,22 @@ describe('Context accelerated batch pipeline', () => {
             expect(document.metadata.retrievalMode).toBe('bge_m3_full');
             expect(document.metadata.retrievalSchemaVersion).toBe(1);
         }
+    });
+
+    it('reports BGE-M3 worker-pool retries in accelerator status', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const codebasePath = await createCodebase();
+        const embedding = new DelayedBgeM3Embedding(1);
+        embedding.shouldRetryWorkerPool = true;
+
+        const context = new Context({
+            embedding,
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        await context.indexCodebase(codebasePath);
+
+        expect(context.getLastAcceleratorSnapshot()?.retriedBatches).toBe(1);
     });
 });

@@ -22,6 +22,7 @@
         "example:basic": "pnpm --filter claude-context-basic-example start",
         "benchmark": "node scripts/build-benchmark.js",
         "benchmark:daemon-idle": "node scripts/daemon-idle-benchmark.js",
+        "benchmark:preindex": "node scripts/preindex-diagnostic.js",
         "verify:ast-splitters": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-ast-splitters.ts",
         "verify:upstream-merge": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-upstream-merge.ts"
     },

@@ -267,6 +267,23 @@ The file synchronization system uses a **Merkle tree-based approach** combined w
 - Remove entries for deleted files
 - Add entries for new files
 
+### Pre-index Traversal Diagnostics
+
+Initial and force indexing use a bounded pre-index traversal for file selection and snapshot hashing. The traversal concurrency defaults to a conservative CPU-bounded value and can be overridden with:
+
+- `PREINDEX_TRAVERSAL_CONCURRENCY`
+- `INDEX_PREINDEX_CONCURRENCY` as a legacy-compatible alias
+
+The value is clamped to `1..64`; use `1` for sequential-equivalent rollback behavior.
+
+After building core, run a pre-index diagnostic scan with:
+
+```bash
+pnpm build:core
+pnpm benchmark:preindex -- /path/to/codebase --concurrency 8
+```
+
+The diagnostic output reports selected file count, hashed file count, and pre-index scan/hash/file-list timings. Full indexing logs include those pre-index timings alongside split, embedding, and insert timings.
 
 ## Contributing
 

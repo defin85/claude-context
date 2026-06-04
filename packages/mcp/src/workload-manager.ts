@@ -379,6 +379,23 @@ export class WorkloadManager {
         return { queued, active };
     }
 
+    public async waitForCodebaseIndexingIdle(
+        codebasePath: string,
+        timeoutMs: number = 15000
+    ): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const hasQueued = this.indexingQueue.some((job) => job.codebasePath === codebasePath);
+            const hasActive = Array.from(this.activeIndexingJobs.values()).some((job) => job.codebasePath === codebasePath);
+            if (!hasQueued && !hasActive) {
+                return true;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        return false;
+    }
+
     public cancelAllWork(reason: string = 'Cancelled by daemon shutdown.'): CancelledWorkloadSummary {
         const cancellationError = new WorkloadCancelledError(reason);
         const queued: CancelledWorkloadSummary['queued'] = [];

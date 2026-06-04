@@ -1,6 +1,7 @@
 import { envManager } from './utils/env-manager';
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
+export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
 
 export interface IndexingAcceleratorConfig {
     mode: IndexingAcceleratorMode;
@@ -32,6 +33,14 @@ export interface IndexingAcceleratorSnapshot {
     rejectedWorkers?: number;
     batches: IndexingBatchSnapshot[];
     scanningMs: number;
+    preIndexActive: boolean;
+    preIndexPhase: PreIndexPhase;
+    preIndexScanMs: number;
+    preIndexHashMs: number;
+    preIndexFileListMs: number;
+    preIndexTotalMs: number;
+    preIndexSelectedFileCount: number;
+    preIndexHashedFileCount: number;
     splittingMs: number;
     embeddingMs: number;
     insertMs: number;
@@ -74,6 +83,14 @@ export class IndexingAcceleratorRuntime {
             rejectedWorkers: undefined,
             batches: [],
             scanningMs: 0,
+            preIndexActive: false,
+            preIndexPhase: 'idle',
+            preIndexScanMs: 0,
+            preIndexHashMs: 0,
+            preIndexFileListMs: 0,
+            preIndexTotalMs: 0,
+            preIndexSelectedFileCount: 0,
+            preIndexHashedFileCount: 0,
             splittingMs: 0,
             embeddingMs: 0,
             insertMs: 0,
@@ -89,6 +106,35 @@ export class IndexingAcceleratorRuntime {
 
     recordScan(durationMs: number): void {
         this.snapshot.scanningMs += durationMs;
+    }
+
+    recordPreIndexStart(): void {
+        this.snapshot.preIndexActive = true;
+        this.snapshot.preIndexPhase = 'traversal';
+        this.snapshot.preIndexScanMs = 0;
+        this.snapshot.preIndexHashMs = 0;
+        this.snapshot.preIndexFileListMs = 0;
+        this.snapshot.preIndexTotalMs = 0;
+        this.snapshot.preIndexSelectedFileCount = 0;
+        this.snapshot.preIndexHashedFileCount = 0;
+    }
+
+    recordPreIndex(metrics: {
+        scanMs: number;
+        hashMs: number;
+        fileListMs: number;
+        totalMs: number;
+        selectedFileCount: number;
+        hashedFileCount: number;
+    }): void {
+        this.snapshot.preIndexActive = false;
+        this.snapshot.preIndexPhase = 'complete';
+        this.snapshot.preIndexScanMs += metrics.scanMs;
+        this.snapshot.preIndexHashMs += metrics.hashMs;
+        this.snapshot.preIndexFileListMs += metrics.fileListMs;
+        this.snapshot.preIndexTotalMs += metrics.totalMs;
+        this.snapshot.preIndexSelectedFileCount = metrics.selectedFileCount;
+        this.snapshot.preIndexHashedFileCount = metrics.hashedFileCount;
     }
 
     recordSplit(durationMs: number): void {
