@@ -23,6 +23,7 @@ export interface BgeM3EmbeddingConfig {
     maxTokens?: number;
     retryBudget?: number;
     expectedProfile?: Partial<BgeM3WorkerProfile>;
+    workerRecoveryCooldownMs?: number;
 }
 
 export interface BgeM3WorkerProfile {
@@ -43,6 +44,24 @@ interface BgeM3Worker {
     healthy: boolean;
     rejectedReason?: string;
     profile?: BgeM3WorkerProfile;
+    lastFailureAt?: string;
+    lastSuccessAt?: string;
+    recoveryAttempts: number;
+    lastRecoveryAttemptAt?: string;
+    recoveryEligibleAt?: number;
+    recovering: boolean;
+}
+
+export interface BgeM3WorkerSnapshot {
+    endpoint: string;
+    healthy: boolean;
+    inFlight: number;
+    rejectedReason?: string;
+    lastFailureAt?: string;
+    lastSuccessAt?: string;
+    recoveryAttempts: number;
+    lastRecoveryAttemptAt?: string;
+    poolState: 'accepted' | 'rejected' | 'recovering';
 }
 
 interface ParsedBgeM3Response {
@@ -78,8 +97,10 @@ export class BgeM3Embedding extends Embedding {
     private readonly mode: BgeM3Mode;
     private readonly fetchImpl: FetchLike;
     private readonly retryBudget: number;
+    private readonly workerRecoveryCooldownMs: number;
     private readonly expectedProfile?: Partial<BgeM3WorkerProfile>;
     private workersInitialized = false;
+    private workersInitializationPromise?: Promise<void>;
     private primaryProfile?: BgeM3WorkerProfile;
     private dimension: number;
     protected maxTokens: number = 8192;
@@ -95,11 +116,14 @@ export class BgeM3Embedding extends Embedding {
             endpoint,
             inFlight: 0,
             healthy: endpoint === this.endpoint,
+            recoveryAttempts: 0,
+            recovering: false,
         }));
         this.model = config.model || 'BAAI/bge-m3';
         this.mode = config.mode || 'full';
         this.fetchImpl = config.fetch || (globalThis.fetch as unknown as FetchLike);
         this.retryBudget = Math.max(0, Math.floor(config.retryBudget ?? 1));
+        this.workerRecoveryCooldownMs = Math.max(0, Math.floor(config.workerRecoveryCooldownMs ?? 30000));
         this.expectedProfile = config.expectedProfile;
         this.dimension = config.dimension || 1024;
         if (config.maxTokens) {
@@ -192,12 +216,17 @@ export class BgeM3Embedding extends Embedding {
         return this.mode;
     }
 
-    getWorkerSnapshot(): Array<{ endpoint: string; healthy: boolean; inFlight: number; rejectedReason?: string }> {
+    getWorkerSnapshot(): BgeM3WorkerSnapshot[] {
         return this.workers.map((worker) => ({
             endpoint: worker.endpoint,
             healthy: worker.healthy,
             inFlight: worker.inFlight,
             rejectedReason: worker.rejectedReason,
+            lastFailureAt: worker.lastFailureAt,
+            lastSuccessAt: worker.lastSuccessAt,
+            recoveryAttempts: worker.recoveryAttempts,
+            lastRecoveryAttemptAt: worker.lastRecoveryAttemptAt,
+            poolState: worker.recovering ? 'recovering' : worker.healthy ? 'accepted' : 'rejected',
         }));
     }
 
@@ -219,7 +248,9 @@ export class BgeM3Embedding extends Embedding {
                 );
             }
 
-            return response.json();
+            const result = await response.json();
+            this.recordWorkerSuccess(worker);
+            return result;
         } finally {
             worker.inFlight = Math.max(0, worker.inFlight - 1);
         }
@@ -252,8 +283,7 @@ export class BgeM3Embedding extends Embedding {
                 return await run(worker);
             } catch (error) {
                 lastError = error;
-                worker.healthy = false;
-                worker.rejectedReason = error instanceof Error ? error.message : String(error);
+                this.rejectWorker(worker, error);
                 if (attempt < attempts - 1) {
                     onRetry?.(
                         worker.endpoint,
@@ -274,11 +304,13 @@ export class BgeM3Embedding extends Embedding {
 
     private async selectWorker(): Promise<BgeM3Worker> {
         await this.initializeWorkers();
+        await this.revalidateRejectedWorkers();
         const healthyWorkers = this.workers.filter((worker) => worker.healthy);
         if (healthyWorkers.length === 0) {
             const primary = this.getPrimaryWorker();
             primary.healthy = true;
             primary.rejectedReason = undefined;
+            primary.recovering = false;
             primary.inFlight++;
             return primary;
         }
@@ -289,10 +321,21 @@ export class BgeM3Embedding extends Embedding {
     }
 
     private async initializeWorkers(): Promise<void> {
+        if (this.workersInitializationPromise) {
+            await this.workersInitializationPromise;
+            return;
+        }
         if (this.workersInitialized) {
             return;
         }
 
+        this.workersInitializationPromise = this.initializeWorkersOnce().finally(() => {
+            this.workersInitializationPromise = undefined;
+        });
+        await this.workersInitializationPromise;
+    }
+
+    private async initializeWorkersOnce(): Promise<void> {
         this.workersInitialized = true;
         for (const worker of this.workers) {
             try {
@@ -310,14 +353,73 @@ export class BgeM3Embedding extends Embedding {
                 worker.profile = profile;
                 worker.healthy = true;
                 worker.rejectedReason = undefined;
+                worker.lastSuccessAt = new Date().toISOString();
+                worker.recovering = false;
             } catch (error) {
                 if (worker.endpoint === this.endpoint) {
                     worker.healthy = true;
                     worker.rejectedReason = error instanceof Error ? `metadata unavailable: ${error.message}` : 'metadata unavailable';
+                    worker.lastFailureAt = new Date().toISOString();
                 } else {
-                    worker.healthy = false;
-                    worker.rejectedReason = error instanceof Error ? error.message : String(error);
+                    this.rejectWorker(worker, error);
                 }
+            }
+        }
+    }
+
+    private rejectWorker(worker: BgeM3Worker, error: unknown): void {
+        const reason = error instanceof Error ? error.message : String(error);
+        worker.healthy = false;
+        worker.rejectedReason = reason;
+        worker.lastFailureAt = new Date().toISOString();
+        worker.recoveryEligibleAt = Date.now() + this.workerRecoveryCooldownMs;
+        worker.recovering = false;
+        console.warn(`[BGE-M3] Rejected worker ${worker.endpoint}: ${reason}`);
+    }
+
+    private recordWorkerSuccess(worker: BgeM3Worker): void {
+        worker.lastSuccessAt = new Date().toISOString();
+        if (!worker.healthy || worker.rejectedReason) {
+            console.log(`[BGE-M3] Worker ${worker.endpoint} recovered and returned to the embedding pool.`);
+        }
+        worker.healthy = true;
+        worker.rejectedReason = undefined;
+        worker.recoveryEligibleAt = undefined;
+        worker.recovering = false;
+    }
+
+    private async revalidateRejectedWorkers(): Promise<void> {
+        const now = Date.now();
+        const rejectedWorkers = this.workers.filter((worker) => (
+            worker.endpoint !== this.endpoint &&
+            !worker.healthy &&
+            !worker.recovering &&
+            (worker.recoveryEligibleAt ?? 0) <= now
+        ));
+
+        for (const worker of rejectedWorkers) {
+            worker.recovering = true;
+            worker.recoveryAttempts++;
+            worker.lastRecoveryAttemptAt = new Date().toISOString();
+            try {
+                await this.get(worker, '/health');
+                const rawProfile = await this.get(worker, '/metadata');
+                const profile = this.parseWorkerProfile(rawProfile);
+                this.validateWorkerProfile(profile);
+                if (!this.primaryProfile) {
+                    throw new Error('BGE-M3 primary worker metadata unavailable; strict worker validation cannot prove equivalence');
+                }
+                this.validateEquivalentProfile(profile, this.primaryProfile);
+                worker.profile = profile;
+                this.recordWorkerSuccess(worker);
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                worker.recovering = false;
+                worker.healthy = false;
+                worker.rejectedReason = reason;
+                worker.lastFailureAt = new Date().toISOString();
+                worker.recoveryEligibleAt = Date.now() + this.workerRecoveryCooldownMs;
+                console.warn(`[BGE-M3] Worker ${worker.endpoint} recovery failed: ${reason}`);
             }
         }
     }
@@ -370,8 +472,8 @@ export class BgeM3Embedding extends Embedding {
                 }
             }
         }
-        if (profile.denseDimension && profile.denseDimension !== this.dimension) {
-            throw new Error(`BGE-M3 worker dimension mismatch: expected ${this.dimension}, got ${profile.denseDimension}`);
+        if (this.expectedProfile?.denseDimension && profile.denseDimension !== this.expectedProfile.denseDimension) {
+            throw new Error(`BGE-M3 worker dimension mismatch: expected ${this.expectedProfile.denseDimension}, got ${profile.denseDimension || 'unknown'}`);
         }
         if (this.expectedProfile?.modelRevision && profile.modelRevision !== this.expectedProfile.modelRevision) {
             throw new Error(`BGE-M3 worker model revision mismatch: expected ${this.expectedProfile.modelRevision}, got ${profile.modelRevision || 'unknown'}`);
@@ -388,6 +490,20 @@ export class BgeM3Embedding extends Embedding {
     }
 
     private validateEquivalentProfile(profile: BgeM3WorkerProfile, primaryProfile: BgeM3WorkerProfile): void {
+        if (profile.model !== primaryProfile.model) {
+            throw new Error(`BGE-M3 worker model mismatch: expected ${primaryProfile.model}, got ${profile.model}`);
+        }
+        if (profile.defaultMode !== primaryProfile.defaultMode) {
+            throw new Error(`BGE-M3 worker mode mismatch: expected ${primaryProfile.defaultMode}, got ${profile.defaultMode}`);
+        }
+        if (profile.denseDimension !== primaryProfile.denseDimension) {
+            throw new Error(`BGE-M3 worker dimension mismatch: expected ${primaryProfile.denseDimension || 'unknown'}, got ${profile.denseDimension || 'unknown'}`);
+        }
+        for (const output of primaryProfile.outputs) {
+            if (!profile.outputs.includes(output)) {
+                throw new Error(`BGE-M3 worker is missing ${output} output`);
+            }
+        }
         if (profile.modelRevision !== primaryProfile.modelRevision) {
             throw new Error(`BGE-M3 worker model revision mismatch: expected ${primaryProfile.modelRevision || 'unknown'}, got ${profile.modelRevision || 'unknown'}`);
         }

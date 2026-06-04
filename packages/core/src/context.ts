@@ -31,6 +31,7 @@ import {
     IndexingBatchMetadata,
     IndexingAcceleratorRuntime,
     IndexingAcceleratorSnapshot,
+    IndexingAcceleratorWorkerSnapshot,
     getIndexingAcceleratorConfig,
     shouldAccelerateIndexing,
 } from "./indexing-accelerator";
@@ -81,8 +82,7 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
     );
 }
 
-function getCodeChunkLimit(): number {
-    const rawLimit = envManager.get("CODE_CHUNK_LIMIT");
+export function parseCodeChunkLimit(rawLimit?: string): number {
     if (!rawLimit) {
         return DEFAULT_CODE_CHUNK_LIMIT;
     }
@@ -97,6 +97,10 @@ function getCodeChunkLimit(): number {
             `Using default ${DEFAULT_CODE_CHUNK_LIMIT}.`,
     );
     return DEFAULT_CODE_CHUNK_LIMIT;
+}
+
+export function getCodeChunkLimit(): number {
+    return parseCodeChunkLimit(envManager.get("CODE_CHUNK_LIMIT"));
 }
 
 function throwIfOperationAborted(abortSignal?: AbortSignal): void {
@@ -268,7 +272,7 @@ type MultiVectorEmbeddingProvider = Embedding & {
 };
 
 type WorkerSnapshotProvider = Embedding & {
-    getWorkerSnapshot(): Array<{ healthy: boolean; rejectedReason?: string }>;
+    getWorkerSnapshot(): IndexingAcceleratorWorkerSnapshot[];
 };
 
 export class Context {
@@ -363,6 +367,7 @@ export class Context {
         acceleratorRuntime.updateWorkerCounts(
             workers.filter((worker) => worker.healthy).length,
             workers.filter((worker) => worker.rejectedReason).length,
+            workers,
         );
     }
 
@@ -936,6 +941,7 @@ export class Context {
         indexedFiles: number;
         totalChunks: number;
         status: "completed" | "limit_reached";
+        codeChunkLimit: number;
     }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
@@ -1002,13 +1008,14 @@ export class Context {
         this.synchronizers.set(this.getCollectionName(codebasePath), synchronizer);
 
         if (codeFiles.length === 0) {
+            const codeChunkLimit = getCodeChunkLimit();
             progressCallback?.({
                 phase: "No files to index",
                 current: 100,
                 total: 100,
                 percentage: 100,
             });
-            return { indexedFiles: 0, totalChunks: 0, status: "completed" };
+            return { indexedFiles: 0, totalChunks: 0, status: "completed", codeChunkLimit };
         }
 
         // 3. Process each file with streaming chunk processing
@@ -1059,6 +1066,7 @@ export class Context {
             indexedFiles: result.processedFiles,
             totalChunks: result.totalChunks,
             status: result.status,
+            codeChunkLimit: result.codeChunkLimit,
         };
     }
 
@@ -1785,6 +1793,7 @@ export class Context {
         processedFiles: number;
         totalChunks: number;
         status: "completed" | "limit_reached";
+        codeChunkLimit: number;
     }> {
         const abortSignal = options.abortSignal;
         const isHybrid = this.getIsHybrid();
@@ -1803,6 +1812,7 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        acceleratorRuntime.recordChunkLimit(CODE_CHUNK_LIMIT);
         if (options.preIndexTraversal) {
             acceleratorRuntime.recordPreIndex({
                 ...options.preIndexTraversal.timings,
@@ -1917,7 +1927,7 @@ export class Context {
                         // Check if chunk limit is reached
                         if (totalChunks >= CODE_CHUNK_LIMIT) {
                             console.warn(
-                                `[Context] ⚠️  Chunk limit of ${CODE_CHUNK_LIMIT} reached. Stopping indexing.`,
+                                `[Context] ⚠️  CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT} reached after ${totalChunks} chunks and ${processedFiles + 1} processed files. Stopping indexing with a partial searchable index.`,
                             );
                             limitReached = true;
                             break; // Exit the inner loop (over chunks)
@@ -1978,15 +1988,25 @@ export class Context {
         }
 
         await Promise.all(submittedBatches);
+        if (limitReached) {
+            acceleratorRuntime.recordLimitReached({ totalChunks, processedFiles });
+        }
+        this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
             `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, preIndexMs=${this.lastAcceleratorSnapshot.preIndexTotalMs}, preIndexScanMs=${this.lastAcceleratorSnapshot.preIndexScanMs}, preIndexHashMs=${this.lastAcceleratorSnapshot.preIndexHashMs}, preIndexFileListMs=${this.lastAcceleratorSnapshot.preIndexFileListMs}, preIndexSelectedFiles=${this.lastAcceleratorSnapshot.preIndexSelectedFileCount}, preIndexHashedFiles=${this.lastAcceleratorSnapshot.preIndexHashedFileCount}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
         );
+        if (limitReached) {
+            console.warn(
+                `[Context] ⚠️  Indexing completed with status=limit_reached. Indexed ${processedFiles} files and ${totalChunks} chunks before CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT}; search remains available but results may be incomplete. Raise CODE_CHUNK_LIMIT and run a force reindex to include chunks skipped by this run.`,
+            );
+        }
 
         return {
             processedFiles,
             totalChunks,
             status: limitReached ? "limit_reached" : "completed",
+            codeChunkLimit: CODE_CHUNK_LIMIT,
         };
     }
 

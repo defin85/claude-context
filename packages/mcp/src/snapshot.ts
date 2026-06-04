@@ -1233,7 +1233,7 @@ export class SnapshotManager {
      */
     public setCodebaseIndexed(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number }
     ): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
         this.pendingDeletes.delete(codebasePath);
@@ -1253,6 +1253,7 @@ export class SnapshotManager {
             status: 'indexed',
             indexedFiles: stats.indexedFiles,
             totalChunks: stats.totalChunks,
+            codeChunkLimit: stats.codeChunkLimit,
             indexStatus: stats.status,
             statsState: 'known',
             lastUpdated: new Date().toISOString()
@@ -1307,7 +1308,7 @@ export class SnapshotManager {
 
     public async restoreIndexedCodebaseFromCloud(
         codebasePath: string,
-        stats?: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' },
+        stats?: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number },
         indexStatus: 'completed' | 'limit_reached' = 'completed'
     ): Promise<'restored-with-stats' | 'restored-without-stats' | 'skipped-live-owner'> {
         const normalizedPath = this.normalizeCodebasePath(codebasePath);
@@ -1329,6 +1330,7 @@ export class SnapshotManager {
                     status: 'indexed',
                     indexedFiles: stats.indexedFiles,
                     totalChunks: stats.totalChunks,
+                    codeChunkLimit: stats.codeChunkLimit,
                     indexStatus: stats.status,
                     statsState: 'known',
                     lastUpdated: new Date().toISOString()
@@ -1582,7 +1584,7 @@ export class SnapshotManager {
 
     public async completeIndexingOwnership(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number }
     ): Promise<boolean> {
         const normalizedPath = this.normalizeCodebasePath(codebasePath);
 
@@ -1602,6 +1604,7 @@ export class SnapshotManager {
                 status: 'indexed',
                 indexedFiles: stats.indexedFiles,
                 totalChunks: stats.totalChunks,
+                codeChunkLimit: stats.codeChunkLimit,
                 indexStatus: stats.status,
                 statsState: 'known',
                 lastUpdated: new Date().toISOString()

@@ -31,6 +31,11 @@ export interface IndexingAcceleratorSnapshot {
     retriedBatches: number;
     activeWorkers?: number;
     rejectedWorkers?: number;
+    workers?: IndexingAcceleratorWorkerSnapshot[];
+    codeChunkLimit?: number;
+    limitReached?: boolean;
+    limitReachedChunks?: number;
+    limitReachedProcessedFiles?: number;
     batches: IndexingBatchSnapshot[];
     scanningMs: number;
     preIndexActive: boolean;
@@ -44,6 +49,18 @@ export interface IndexingAcceleratorSnapshot {
     splittingMs: number;
     embeddingMs: number;
     insertMs: number;
+}
+
+export interface IndexingAcceleratorWorkerSnapshot {
+    endpoint: string;
+    healthy: boolean;
+    inFlight: number;
+    rejectedReason?: string;
+    lastFailureAt?: string;
+    lastSuccessAt?: string;
+    recoveryAttempts: number;
+    lastRecoveryAttemptAt?: string;
+    poolState: 'accepted' | 'rejected' | 'recovering';
 }
 
 export interface IndexingBatchMetadata {
@@ -81,6 +98,11 @@ export class IndexingAcceleratorRuntime {
             retriedBatches: 0,
             activeWorkers: undefined,
             rejectedWorkers: undefined,
+            workers: undefined,
+            codeChunkLimit: undefined,
+            limitReached: undefined,
+            limitReachedChunks: undefined,
+            limitReachedProcessedFiles: undefined,
             batches: [],
             scanningMs: 0,
             preIndexActive: false,
@@ -100,6 +122,7 @@ export class IndexingAcceleratorRuntime {
     getSnapshot(): IndexingAcceleratorSnapshot {
         return {
             ...this.snapshot,
+            workers: this.snapshot.workers?.map((worker) => ({ ...worker })),
             batches: [...this.batches.values()].map((batch) => ({ ...batch })),
         };
     }
@@ -180,9 +203,25 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
-    updateWorkerCounts(activeWorkers: number, rejectedWorkers: number): void {
+    updateWorkerCounts(
+        activeWorkers: number,
+        rejectedWorkers: number,
+        workers?: IndexingAcceleratorWorkerSnapshot[],
+    ): void {
         this.snapshot.activeWorkers = activeWorkers;
         this.snapshot.rejectedWorkers = rejectedWorkers;
+        this.snapshot.workers = workers?.map((worker) => ({ ...worker }));
+    }
+
+    recordChunkLimit(codeChunkLimit: number): void {
+        this.snapshot.codeChunkLimit = codeChunkLimit;
+        this.snapshot.limitReached = false;
+    }
+
+    recordLimitReached(metrics: { totalChunks: number; processedFiles: number }): void {
+        this.snapshot.limitReached = true;
+        this.snapshot.limitReachedChunks = metrics.totalChunks;
+        this.snapshot.limitReachedProcessedFiles = metrics.processedFiles;
     }
 
     async trackEmbedding<T>(run: () => Promise<T>): Promise<T> {

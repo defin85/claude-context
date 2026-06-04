@@ -74,7 +74,7 @@ export class ToolHandlers {
         this.managedBgeM3WorkerManager?.scheduleStopWhenIdle(reason, () => this.isIndexingWorkloadIdle());
     }
 
-    private hasKnownIndexStats(info: unknown): info is { indexedFiles: number; totalChunks: number; indexStatus: 'completed' | 'limit_reached'; lastUpdated: string; statsState?: 'known' | 'unknown' } {
+    private hasKnownIndexStats(info: unknown): info is { indexedFiles: number; totalChunks: number; codeChunkLimit?: number; indexStatus: 'completed' | 'limit_reached'; lastUpdated: string; statsState?: 'known' | 'unknown' } {
         if (typeof info !== 'object' || info === null) {
             return false;
         }
@@ -194,7 +194,7 @@ export class ToolHandlers {
     private async tryRecoverIndexStats(
         codebasePath: string,
         indexStatus: 'completed' | 'limit_reached' = 'completed'
-    ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' } | null> {
+    ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number } | null> {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const indexedFiles = this.getIndexedFileCountFromMerkle(normalizedPath);
         const totalChunks = await this.getTotalChunkCountFromCollection(normalizedPath);
@@ -906,7 +906,7 @@ export class ToolHandlers {
 
             let message = `Background indexing completed for '${absolutePath}' using ${splitterType.toUpperCase()} splitter.\nIndexed ${stats.indexedFiles} files, ${stats.totalChunks} chunks.`;
             if (stats.status === 'limit_reached') {
-                message += `\n⚠️  Warning: Indexing stopped because the configured chunk limit (${stats.totalChunks}) was reached. The index may be incomplete.`;
+                message += `\n⚠️  Warning: Indexing stopped because CODE_CHUNK_LIMIT=${stats.codeChunkLimit ?? 'unknown'} was reached after ${stats.totalChunks} chunks and ${stats.indexedFiles} files. The partial index remains searchable, but results may be incomplete. Raise CODE_CHUNK_LIMIT and run force reindex to include chunks skipped by this run.`;
             }
 
             console.log(`[BACKGROUND-INDEX] ${message}`);
@@ -1430,11 +1430,18 @@ export class ToolHandlers {
                     if (this.hasKnownIndexStats(info)) {
                         structuredStatus.indexedFiles = info.indexedFiles;
                         structuredStatus.totalChunks = info.totalChunks;
+                        structuredStatus.codeChunkLimit = info.codeChunkLimit;
                         structuredStatus.indexStatus = info.indexStatus;
                         structuredStatus.lastUpdated = info.lastUpdated;
                         statusMessage = `✅ Codebase '${absolutePath}' is fully indexed and ready for search.`;
                         statusMessage += `\n📊 Statistics: ${info.indexedFiles} files, ${info.totalChunks} chunks`;
+                        if (info.codeChunkLimit !== undefined) {
+                            statusMessage += `\n🔢 CODE_CHUNK_LIMIT: ${info.codeChunkLimit}`;
+                        }
                         statusMessage += `\n📅 Status: ${info.indexStatus}`;
+                        if (info.indexStatus === 'limit_reached') {
+                            statusMessage += `\n⚠️ Results may be incomplete because indexing stopped at the configured chunk limit. Raise CODE_CHUNK_LIMIT and run force reindex to include previously skipped chunks.`;
+                        }
                         if (persistedSyncConfig?.retrievalMode) {
                             statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
                             if (persistedSyncConfig.retrievalSchemaVersion) {

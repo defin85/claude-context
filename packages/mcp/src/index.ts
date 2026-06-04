@@ -498,6 +498,7 @@ This tool is versatile and can be used before completing various tasks to retrie
     private async handleGetDaemonStatusTool() {
         const operatorStatus = await readDaemonOperatorStatus();
         const accelerator = this.context.getLastAcceleratorSnapshot();
+        const managedBgeM3Workers = this.managedBgeM3WorkerManager?.getSnapshot();
         const textLines = [
             `Daemon runtimes: ${operatorStatus.runtimes.length}`
         ];
@@ -516,6 +517,13 @@ This tool is versatile and can be used before completing various tasks to retrie
                 `${accelerator.fallbackReason ? ` fallback=${accelerator.fallbackReason}` : ''}`
             );
         }
+        if (managedBgeM3Workers) {
+            textLines.push(
+                `Managed BGE-M3 workers: planned=${managedBgeM3Workers.plannedEndpoints.length} ` +
+                `running=${managedBgeM3Workers.runningWorkers.length}` +
+                `${managedBgeM3Workers.fallbackReason ? ` fallback=${managedBgeM3Workers.fallbackReason}` : ''}`
+            );
+        }
 
         return {
             content: [{
@@ -524,7 +532,8 @@ This tool is versatile and can be used before completing various tasks to retrie
             }],
             structuredContent: {
                 ...operatorStatus,
-                accelerator
+                accelerator,
+                managedBgeM3Workers
             }
         };
     }

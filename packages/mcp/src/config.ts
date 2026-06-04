@@ -119,6 +119,7 @@ export interface CodebaseInfoIndexed extends CodebaseInfoBase {
     status: 'indexed';
     indexedFiles?: number;       // Number of files indexed when known
     totalChunks?: number;        // Total number of chunks generated when known
+    codeChunkLimit?: number;     // CODE_CHUNK_LIMIT used by the indexing run when known
     indexStatus: 'completed' | 'limit_reached';  // Status from indexing result
     statsState?: 'known' | 'unknown';  // Whether file/chunk statistics are available locally
 }

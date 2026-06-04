@@ -14,6 +14,11 @@ export interface ManagedBgeM3WorkerManager {
     endpoints: string[];
     fallbackReason?: string;
     workers: ManagedBgeM3Worker[];
+    getSnapshot(): {
+        plannedEndpoints: string[];
+        runningWorkers: Array<{ endpoint: string; port: number; unitName?: string; lifecycle: 'systemd' | 'child' }>;
+        fallbackReason?: string;
+    };
     ensureStarted(reason?: string): Promise<string[]>;
     scheduleStopWhenIdle(reason: string, isIdle: () => boolean): void;
     cancelScheduledStop(): void;
@@ -366,6 +371,18 @@ export async function createManagedBgeM3WorkerManager(
         workers,
         get fallbackReason() {
             return fallbackReason;
+        },
+        getSnapshot() {
+            return {
+                plannedEndpoints: [...plannedEndpoints],
+                runningWorkers: workers.map((worker) => ({
+                    endpoint: worker.endpoint,
+                    port: worker.port,
+                    unitName: worker.unitName,
+                    lifecycle: config.acceleratorManagedWorkerLifecycle,
+                })),
+                fallbackReason,
+            };
         },
         async ensureStarted(reason?: string): Promise<string[]> {
             clearStopTimers();

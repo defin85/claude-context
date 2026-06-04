@@ -15,6 +15,8 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    getCodeChunkLimit,
+    parseCodeChunkLimit,
 } from './index';
 
 class TestEmbedding extends Embedding {
@@ -244,9 +246,30 @@ describe('Context per-codebase options and ignore handling', () => {
 
         expect(stats.status).toBe('limit_reached');
         expect(stats.totalChunks).toBe(2);
+        expect(stats.codeChunkLimit).toBe(2);
+        expect(context.getLastAcceleratorSnapshot()).toEqual(expect.objectContaining({
+            codeChunkLimit: 2,
+            limitReached: true,
+            limitReachedChunks: 2,
+            limitReachedProcessedFiles: 2,
+        }));
         expect(
             vectorDatabase.documents.get(context.getCollectionName(project)) || [],
         ).toHaveLength(2);
+    });
+
+    test('CODE_CHUNK_LIMIT parser accepts valid values and falls back for default or invalid values', () => {
+        expect(parseCodeChunkLimit()).toBe(450000);
+
+        expect(parseCodeChunkLimit('7')).toBe(7);
+
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(parseCodeChunkLimit('invalid')).toBe(450000);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid CODE_CHUNK_LIMIT'));
+        warnSpy.mockRestore();
+
+        process.env.CODE_CHUNK_LIMIT = '11';
+        expect(getCodeChunkLimit()).toBe(11);
     });
 
     test('root anchored directory ignore patterns only match the codebase root', async () => {

@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { Context, IndexAbortError } from './context';
 import { Embedding, EmbeddingVector, MultiVectorEmbedding } from './embedding';
-import { IndexingAcceleratorSnapshot } from './indexing-accelerator';
+import { IndexingAcceleratorSnapshot, IndexingAcceleratorWorkerSnapshot } from './indexing-accelerator';
 import { Splitter, CodeChunk } from './splitter';
 import {
     VectorDatabase,
@@ -60,6 +60,16 @@ class DelayedBgeM3Embedding extends Embedding {
     private active = 0;
     maxActive = 0;
     shouldRetryWorkerPool = false;
+    workerSnapshots: IndexingAcceleratorWorkerSnapshot[] = [
+        {
+            endpoint: 'http://127.0.0.1:8000',
+            healthy: true,
+            inFlight: 0,
+            lastSuccessAt: '2026-06-04T00:00:00.000Z',
+            recoveryAttempts: 0,
+            poolState: 'accepted' as const,
+        },
+    ];
 
     constructor(private readonly delayMs: number) {
         super();
@@ -122,6 +132,10 @@ class DelayedBgeM3Embedding extends Embedding {
 
     getMode(): string {
         return 'full';
+    }
+
+    getWorkerSnapshot() {
+        return this.workerSnapshots;
     }
 }
 
@@ -444,5 +458,46 @@ describe('Context accelerated batch pipeline', () => {
         await context.indexCodebase(codebasePath);
 
         expect(context.getLastAcceleratorSnapshot()?.retriedBatches).toBe(1);
+    });
+
+    it('reports detailed BGE-M3 worker diagnostics in accelerator status', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const codebasePath = await createCodebase();
+        const embedding = new DelayedBgeM3Embedding(1);
+        embedding.workerSnapshots = [
+            {
+                endpoint: 'http://127.0.0.1:8000',
+                healthy: true,
+                inFlight: 0,
+                lastSuccessAt: '2026-06-04T00:00:00.000Z',
+                recoveryAttempts: 0,
+                poolState: 'accepted',
+            },
+            {
+                endpoint: 'http://127.0.0.1:8001',
+                healthy: true,
+                inFlight: 0,
+                rejectedReason: undefined,
+                lastFailureAt: '2026-06-04T00:00:01.000Z',
+                lastSuccessAt: '2026-06-04T00:00:31.000Z',
+                recoveryAttempts: 1,
+                lastRecoveryAttemptAt: '2026-06-04T00:00:30.000Z',
+                poolState: 'accepted',
+            },
+        ];
+
+        const context = new Context({
+            embedding,
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        await context.indexCodebase(codebasePath);
+
+        expect(context.getLastAcceleratorSnapshot()).toEqual(expect.objectContaining({
+            activeWorkers: 2,
+            rejectedWorkers: 0,
+            workers: embedding.workerSnapshots,
+        }));
     });
 });
