@@ -90,6 +90,10 @@ function getProperty(source: Record<string, unknown>, names: string[]): unknown 
     return undefined;
 }
 
+function normalizeEndpoint(endpoint: string): string {
+    return endpoint.trim().replace(/\/+$/, '');
+}
+
 export class BgeM3Embedding extends Embedding {
     private readonly endpoint: string;
     private readonly workers: BgeM3Worker[];
@@ -107,11 +111,11 @@ export class BgeM3Embedding extends Embedding {
 
     constructor(config: BgeM3EmbeddingConfig) {
         super();
-        this.endpoint = config.endpoint.replace(/\/+$/, '');
+        this.endpoint = normalizeEndpoint(config.endpoint);
         const endpoints = [
             this.endpoint,
             ...(config.workerEndpoints || []),
-        ].map((endpoint) => endpoint.replace(/\/+$/, ''));
+        ].map(normalizeEndpoint);
         this.workers = [...new Set(endpoints)].map((endpoint) => ({
             endpoint,
             inFlight: 0,
@@ -230,8 +234,30 @@ export class BgeM3Embedding extends Embedding {
         }));
     }
 
+    getWorkerPoolSize(): number {
+        return this.workers.length;
+    }
+
     getRetrievalMode(): string {
         return this.mode === 'full' ? 'BGE-M3 full' : 'BGE-M3 dense-only';
+    }
+
+    registerWorkerEndpoints(endpoints: string[]): void {
+        const knownEndpoints = new Set(this.workers.map((worker) => worker.endpoint));
+        for (const endpoint of endpoints.map(normalizeEndpoint).filter(Boolean)) {
+            if (knownEndpoints.has(endpoint)) {
+                continue;
+            }
+            knownEndpoints.add(endpoint);
+            this.workers.push({
+                endpoint,
+                inFlight: 0,
+                healthy: true,
+                recoveryAttempts: 0,
+                recovering: false,
+                recoveryEligibleAt: 0,
+            });
+        }
     }
 
     private async post(worker: BgeM3Worker, path: string, body: Record<string, unknown>): Promise<unknown> {

@@ -1,0 +1,58 @@
+## 1. Search Pipeline Baseline
+
+- [ ] 1.1 Add focused regression fixtures for BSL chunks containing `ПараметрыЗаполненияЗаписейСкладскогоЖурнала`, related `ЗаписьСкладскогоЖурнала` chunks, and module/path distractors.
+- [ ] 1.2 Add a failing core search test proving exact-symbol queries currently miss or under-rank the exact BSL declaration.
+- [ ] 1.3 Add baseline assertions that broad semantic queries still return vector-search results.
+
+## 2. No-Reindex Lexical Candidate Layer
+
+- [ ] 2.1 Add query tokenization helpers for code identifiers, Cyrillic BSL identifiers, path fragments, and quoted/exact terms.
+- [ ] 2.2 Add a bounded lexical candidate fetch path using existing stored fields: `content`, `relativePath`, `fileExtension`, and current metadata.
+- [ ] 2.3 Make lexical candidate fetching backend-safe: cap candidate count, handle unsupported backend filters, and fall back to semantic-only results on lexical fetch failure.
+- [ ] 2.4 Run vector retrieval and lexical candidate retrieval in parallel where possible without changing the public `search_code` contract.
+
+## 3. Code-Symbol Provider Contract
+
+- [ ] 3.1 Define a core-side `CodeSymbolProvider` abstraction for availability checks, symbol/path candidate queries, timeouts, and diagnostics.
+- [ ] 3.2 Define normalized provider candidate fields: `providerName`, `providerStatus`, `relativePath`, optional line range, symbol name, declaration kind, module name, object kind, provider rank, and diagnostics.
+- [ ] 3.3 Define provider query budgets: max provider candidates, provider timeout, availability-check cache TTL, and behavior when budgets are exceeded.
+- [ ] 3.4 Add candidate-to-chunk mapping that matches by normalized `relativePath`, fetches bounded chunks from the vector collection, and prefers chunks covering provider line ranges when available.
+- [ ] 3.5 Ensure unmapped provider candidates are reported in diagnostics but do not appear in results and do not affect ranking.
+- [ ] 3.6 Run vector retrieval, provider retrieval, and no-reindex lexical retrieval in parallel where possible without changing the public `search_code` contract.
+- [ ] 3.7 Make provider failures fail open to semantic retrieval plus no-reindex lexical fallback.
+- [ ] 3.8 Add configuration or discovery hooks for enabling symbol providers without requiring agents to coordinate multiple tools manually.
+
+## 4. rlm-tools-bsl Provider Adapter
+
+- [ ] 4.1 Audit viable `rlm-tools-bsl` integration transports: direct local API, CLI/subprocess, daemon endpoint, or MCP-to-MCP if locally supported.
+- [ ] 4.2 Select the least invasive v1 transport and document why it avoids duplicating the BSL index inside `claude-context`.
+- [ ] 4.3 Require the selected v1 transport to return machine-readable structured results; keep the provider disabled if only human-readable output is available.
+- [ ] 4.4 If using subprocess/CLI transport, invoke it with argv arrays and never shell-interpolated query/path strings.
+- [ ] 4.5 Implement provider availability/staleness detection for the requested codebase.
+- [ ] 4.6 Implement provider root translation for equal-root and nested-root cases, such as `src/cf` indexed by `rlm-tools-bsl` under a repository root indexed by `claude-context`.
+- [ ] 4.7 Query `rlm-tools-bsl` method/object/path search for BSL symbol and module candidates.
+- [ ] 4.8 Normalize `rlm-tools-bsl` results into `CodeSymbolProvider` candidates with path, line range, symbol metadata, and provider rank.
+- [ ] 4.9 Ensure the adapter never auto-builds, updates, or drops `rlm-tools-bsl` indexes during search.
+- [ ] 4.10 Add recorded provider fixtures or fakes so core tests do not require a live `rlm-tools-bsl` runtime.
+- [ ] 4.11 Document that a generic local sidecar is deferred to a separate future change unless provider integration proves insufficient for non-BSL repositories.
+
+## 5. Fusion and Diagnostics
+
+- [ ] 5.1 Implement deterministic fusion that combines semantic score, provider lexical score, no-reindex lexical score, exact-symbol boost, module/path boost, and stable tie-breakers.
+- [ ] 5.2 Ensure exact provider declaration matches rank above semantically related chunks that do not contain the searched symbol.
+- [ ] 5.3 Make the fusion layer prefer provider/metadata-based boosts when available, while preserving no-reindex fallback behavior.
+- [ ] 5.4 Attach optional result diagnostics such as `retrievalSources`, `symbolProvider`, `providerStatus`, `semanticScore`, `lexicalScore`, and `fusionScore`.
+- [ ] 5.5 Keep semantic-only behavior unchanged when there are no lexical matches or lexical retrieval is unavailable.
+
+## 6. Validation
+
+- [ ] 6.1 Verify `ПараметрыЗаполненияЗаписейСкладскогоЖурнала` returns `src/cf/CommonModules/ЗаполнениеДокументовВЕТИС/Ext/Module.bsl` in the top 3 on fixture data.
+- [ ] 6.2 Verify a fake or recorded `rlm-tools-bsl` provider result maps to the BSL symbol row with path, module, object kind, declaration kind, export flag, and line metadata.
+- [ ] 6.3 Verify `ЗаполнениеДокументовВЕТИС` boosts chunks from the matching common module.
+- [ ] 6.4 Verify natural-language semantic queries still return relevant BGE-M3 full retrieval results.
+- [ ] 6.5 Verify missing/stale/busy/error provider states fail open to semantic retrieval plus no-reindex lexical fallback.
+- [ ] 6.6 Verify unmapped provider candidates are excluded from results and reported only in diagnostics.
+- [ ] 6.7 Verify provider root translation for equal-root and nested-root `src/cf` cases.
+- [ ] 6.8 Verify subprocess/CLI adapter tests cover spaces and Cyrillic characters without shell interpolation if that transport is selected.
+- [ ] 6.9 Run targeted core tests and typecheck: `pnpm --filter @zilliz/claude-context-core test -- <relevant-test> --runInBand` and `pnpm --filter @zilliz/claude-context-core typecheck`.
+- [ ] 6.10 If MCP structured diagnostics are touched, run `pnpm --filter @zilliz/claude-context-mcp typecheck` and relevant MCP tests.

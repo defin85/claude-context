@@ -10,7 +10,8 @@ import {
     CodebaseInfoIndexing,
     CodebaseInfoIndexed,
     CodebaseInfoIndexFailed,
-    IndexingOwnerInfo
+    IndexingOwnerInfo,
+    IndexingProgressDetails
 } from "./config.js";
 import {
     getErrorCode,
@@ -248,6 +249,23 @@ export class SnapshotManager {
         }
 
         return `runtime=${owner.runtimeId} pid=${owner.pid} heartbeat=${owner.heartbeatAt}`;
+    }
+
+    private normalizeProgressDetails(progressDetails: IndexingProgressDetails | undefined): IndexingProgressDetails | undefined {
+        if (!progressDetails) {
+            return undefined;
+        }
+
+        const current = Number.isFinite(progressDetails.current) ? progressDetails.current : 0;
+        const total = Number.isFinite(progressDetails.total) ? progressDetails.total : 0;
+        const percentage = Number.isFinite(progressDetails.percentage) ? progressDetails.percentage : 0;
+
+        return {
+            phase: progressDetails.phase || 'Indexing',
+            current,
+            total,
+            percentage
+        };
     }
 
     private createInterruptedIndexingFailure(info: CodebaseInfoIndexing, reason: string): CodebaseInfoIndexFailed {
@@ -672,6 +690,7 @@ export class SnapshotManager {
             return {
                 status: info.status,
                 indexingPercentage: info.indexingPercentage,
+                progressDetails: info.progressDetails,
                 owner: info.owner,
                 lastUpdated: info.lastUpdated
             };
@@ -1206,7 +1225,11 @@ export class SnapshotManager {
     /**
      * Set codebase to indexing status
      */
-    public setCodebaseIndexing(codebasePath: string, progress: number = 0): void {
+    public setCodebaseIndexing(
+        codebasePath: string,
+        progress: number = 0,
+        progressDetails?: IndexingProgressDetails
+    ): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
         const existingInfo = this.codebaseInfoMap.get(codebasePath);
         this.indexingCodebases.set(codebasePath, progress);
@@ -1220,6 +1243,8 @@ export class SnapshotManager {
         const info: CodebaseInfoIndexing = {
             status: 'indexing',
             indexingPercentage: progress,
+            progressDetails: this.normalizeProgressDetails(progressDetails)
+                || (existingInfo?.status === 'indexing' ? existingInfo.progressDetails : undefined),
             lastUpdated: new Date().toISOString(),
             ...(existingInfo?.status === 'indexing' && existingInfo.owner
                 ? { owner: this.buildOwnerInfo(existingInfo.owner) }

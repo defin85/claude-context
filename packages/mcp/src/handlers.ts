@@ -74,6 +74,20 @@ export class ToolHandlers {
         this.managedBgeM3WorkerManager?.scheduleStopWhenIdle(reason, () => this.isIndexingWorkloadIdle());
     }
 
+    private registerManagedBgeM3WorkerEndpoints(endpoints: string[]): void {
+        if (endpoints.length === 0) {
+            return;
+        }
+        const embedding = this.context.getEmbedding() as {
+            registerWorkerEndpoints?: (workerEndpoints: string[]) => void;
+        };
+        if (typeof embedding.registerWorkerEndpoints !== 'function') {
+            console.warn('[MCP] Managed BGE-M3 workers started, but embedding provider does not support dynamic worker registration.');
+            return;
+        }
+        embedding.registerWorkerEndpoints(endpoints);
+    }
+
     private hasKnownIndexStats(info: unknown): info is { indexedFiles: number; totalChunks: number; codeChunkLimit?: number; indexStatus: 'completed' | 'limit_reached'; lastUpdated: string; statsState?: 'known' | 'unknown' } {
         if (typeof info !== 'object' || info === null) {
             return false;
@@ -718,7 +732,8 @@ export class ToolHandlers {
             const ownershipHeartbeat = this.startOwnershipHeartbeat(absolutePath);
             const runIndexingJob = async (signal: AbortSignal) => {
                 try {
-                    await this.managedBgeM3WorkerManager?.ensureStarted(`interactive indexing for ${absolutePath}`);
+                    const managedEndpoints = await this.managedBgeM3WorkerManager?.ensureStarted(`interactive indexing for ${absolutePath}`) || [];
+                    this.registerManagedBgeM3WorkerEndpoints(managedEndpoints);
                     await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, signal);
                 } finally {
                     ownershipHeartbeat.stop();
@@ -879,7 +894,7 @@ export class ToolHandlers {
             const stats = await contextForThisTask.indexCodebase(absolutePath, (progress) => {
                 throwIfCancelled();
                 // Update progress in snapshot manager using new method
-                this.snapshotManager.setCodebaseIndexing(absolutePath, progress.percentage);
+                this.snapshotManager.setCodebaseIndexing(absolutePath, progress.percentage, progress);
 
                 // Coalesce disk writes: persist only meaningful progress jumps.
                 const shouldPersistProgress =
@@ -1479,11 +1494,16 @@ export class ToolHandlers {
                     if (info && info.status === 'indexing') {
                         const progressPercentage = info.indexingPercentage || 0;
                         structuredStatus.progressPercentage = progressPercentage;
+                        if (info.progressDetails) {
+                            structuredStatus.progressDetails = info.progressDetails;
+                        }
                         structuredStatus.lastUpdated = info.lastUpdated;
                         statusMessage = `🔄 Codebase '${absolutePath}' is currently being indexed. Progress: ${progressPercentage.toFixed(1)}%`;
 
-                        // Add more detailed status based on progress
-                        if (progressPercentage < 10) {
+                        if (info.progressDetails) {
+                            const { phase, current, total } = info.progressDetails;
+                            statusMessage += `\n📍 Phase: ${phase} (${current}/${total})`;
+                        } else if (progressPercentage < 10) {
                             statusMessage += ' (Preparing and scanning files...)';
                         } else if (progressPercentage < 100) {
                             statusMessage += ' (Processing files and generating embeddings...)';

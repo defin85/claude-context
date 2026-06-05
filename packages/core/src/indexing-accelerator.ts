@@ -1,4 +1,5 @@
 import { envManager } from './utils/env-manager';
+import type { PreIndexTraversalDiagnostics } from './sync/preindex-traversal';
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
 export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
@@ -46,6 +47,7 @@ export interface IndexingAcceleratorSnapshot {
     preIndexTotalMs: number;
     preIndexSelectedFileCount: number;
     preIndexHashedFileCount: number;
+    preIndexDiagnostics?: PreIndexTraversalDiagnostics;
     splittingMs: number;
     embeddingMs: number;
     insertMs: number;
@@ -113,6 +115,7 @@ export class IndexingAcceleratorRuntime {
             preIndexTotalMs: 0,
             preIndexSelectedFileCount: 0,
             preIndexHashedFileCount: 0,
+            preIndexDiagnostics: undefined,
             splittingMs: 0,
             embeddingMs: 0,
             insertMs: 0,
@@ -122,6 +125,15 @@ export class IndexingAcceleratorRuntime {
     getSnapshot(): IndexingAcceleratorSnapshot {
         return {
             ...this.snapshot,
+            preIndexDiagnostics: this.snapshot.preIndexDiagnostics
+                ? {
+                    ...this.snapshot.preIndexDiagnostics,
+                    unsupportedFilesByExtension: {
+                        ...this.snapshot.preIndexDiagnostics.unsupportedFilesByExtension,
+                    },
+                    timings: { ...this.snapshot.preIndexDiagnostics.timings },
+                }
+                : undefined,
             workers: this.snapshot.workers?.map((worker) => ({ ...worker })),
             batches: [...this.batches.values()].map((batch) => ({ ...batch })),
         };
@@ -140,6 +152,7 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.preIndexTotalMs = 0;
         this.snapshot.preIndexSelectedFileCount = 0;
         this.snapshot.preIndexHashedFileCount = 0;
+        this.snapshot.preIndexDiagnostics = undefined;
     }
 
     recordPreIndex(metrics: {
@@ -149,6 +162,7 @@ export class IndexingAcceleratorRuntime {
         totalMs: number;
         selectedFileCount: number;
         hashedFileCount: number;
+        diagnostics?: PreIndexTraversalDiagnostics;
     }): void {
         this.snapshot.preIndexActive = false;
         this.snapshot.preIndexPhase = 'complete';
@@ -158,6 +172,7 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.preIndexTotalMs += metrics.totalMs;
         this.snapshot.preIndexSelectedFileCount = metrics.selectedFileCount;
         this.snapshot.preIndexHashedFileCount = metrics.hashedFileCount;
+        this.snapshot.preIndexDiagnostics = metrics.diagnostics;
     }
 
     recordSplit(durationMs: number): void {

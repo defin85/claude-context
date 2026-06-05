@@ -211,6 +211,45 @@ describe('BgeM3Embedding', () => {
         ]);
     });
 
+    it('registers managed worker endpoints after construction without duplicating the primary endpoint', async () => {
+        const fetchMock = jest.fn((url: string) => {
+            if (url.endsWith('/health')) {
+                return Promise.resolve(jsonResponse({ ok: true }));
+            }
+            if (url.endsWith('/metadata')) {
+                return Promise.resolve(jsonResponse(fullMetadata));
+            }
+            return Promise.resolve(jsonResponse([fullEmbedding]));
+        });
+
+        const embedding = new BgeM3Embedding({
+            endpoint: 'http://127.0.0.1:8000/',
+            mode: 'full',
+            fetch: fetchMock,
+        });
+
+        embedding.registerWorkerEndpoints([
+            'http://127.0.0.1:8000',
+            'http://127.0.0.1:8001/',
+            'http://127.0.0.1:8001',
+        ]);
+
+        expect(embedding.getWorkerSnapshot().map((worker) => ({
+            endpoint: worker.endpoint,
+            healthy: worker.healthy,
+        }))).toEqual([
+            { endpoint: 'http://127.0.0.1:8000', healthy: true },
+            { endpoint: 'http://127.0.0.1:8001', healthy: true },
+        ]);
+
+        await Promise.all([
+            embedding.embedMultiBatchWithWorkerPool(['first']),
+            embedding.embedMultiBatchWithWorkerPool(['second']),
+        ]);
+
+        expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8001/embed_batch', expect.objectContaining({ method: 'POST' }));
+    });
+
     it('recovers a rejected extra worker and routes embedding batches to it again', async () => {
         let extraFailuresRemaining = 1;
         let extraEmbedBatchCalls = 0;

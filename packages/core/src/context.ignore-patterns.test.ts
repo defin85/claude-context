@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import {
     Context,
     Embedding,
@@ -169,6 +170,158 @@ async function writeFixtureFile(root: string, relativePath: string, content: str
     const fullPath = path.join(root, relativePath);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.writeFile(fullPath, content);
+}
+
+interface BaselineIgnorePattern {
+    cleanPattern: string;
+    isRootAnchored: boolean;
+    isDirectoryPattern: boolean;
+    hasPathSeparator: boolean;
+    matchesBasename: boolean;
+    regex: RegExp;
+}
+
+function baselineGlobToRegex(pattern: string): RegExp {
+    const regexPattern = pattern
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*');
+    return new RegExp(`^${regexPattern}$`);
+}
+
+function compileBaselineIgnorePatterns(ignorePatterns: string[]): BaselineIgnorePattern[] {
+    return ignorePatterns
+        .map((pattern) => pattern.trim())
+        .filter((pattern) => pattern.length > 0)
+        .map((pattern) => {
+            const normalizedPattern = pattern.replace(/\\/g, '/');
+            const cleanPattern = normalizedPattern.replace(/^\/+|\/+$/g, '');
+            return {
+                cleanPattern,
+                isRootAnchored: normalizedPattern.startsWith('/'),
+                isDirectoryPattern: normalizedPattern.endsWith('/'),
+                hasPathSeparator: cleanPattern.includes('/'),
+                matchesBasename: !normalizedPattern.includes('/'),
+                regex: baselineGlobToRegex(cleanPattern),
+            };
+        })
+        .filter((pattern) => pattern.cleanPattern.length > 0);
+}
+
+function baselineMatchesDirectoryPattern(filePath: string, pattern: BaselineIgnorePattern): boolean {
+    const pathParts = filePath.split('/');
+    const dirPartCount = pattern.cleanPattern.split('/').length;
+
+    for (let i = 0; i <= pathParts.length - dirPartCount; i++) {
+        const candidate = pathParts.slice(i, i + dirPartCount).join('/');
+        if (pattern.regex.test(candidate)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function baselineMatchesPattern(filePath: string, pattern: BaselineIgnorePattern, isDirectory: boolean): boolean {
+    if (pattern.isDirectoryPattern) {
+        if (!isDirectory) {
+            return false;
+        }
+        if (pattern.isRootAnchored) {
+            return pattern.regex.test(filePath);
+        }
+        return baselineMatchesDirectoryPattern(filePath, pattern);
+    }
+
+    if (pattern.isRootAnchored) {
+        return pattern.regex.test(filePath);
+    }
+
+    if (pattern.hasPathSeparator) {
+        return pattern.regex.test(filePath);
+    }
+
+    return pattern.regex.test(path.basename(filePath));
+}
+
+function baselineShouldIgnore(
+    relativePath: string,
+    isDirectory: boolean,
+    patterns: BaselineIgnorePattern[],
+): boolean {
+    const normalizedPath = relativePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!normalizedPath) {
+        return false;
+    }
+
+    const pathParts = normalizedPath.split('/');
+    if (pathParts.some((part) => part.startsWith('.'))) {
+        return true;
+    }
+
+    for (const pattern of patterns) {
+        if (baselineMatchesPattern(normalizedPath, pattern, isDirectory)) {
+            return true;
+        }
+    }
+
+    for (let i = 0; i < pathParts.length; i++) {
+        const partialPath = pathParts.slice(0, i + 1).join('/');
+        for (const pattern of patterns) {
+            if (baselineMatchesPattern(partialPath, pattern, true)) {
+                return true;
+            }
+            if (pattern.matchesBasename && pattern.regex.test(pathParts[i])) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+async function baselineTraverseFiles(
+    root: string,
+    ignorePatterns: string[],
+    supportedExtensions: string[],
+): Promise<Map<string, string>> {
+    const compiledPatterns = compileBaselineIgnorePatterns(ignorePatterns);
+    const supportedExtensionSet = new Set(supportedExtensions);
+    const selected = new Map<string, string>();
+    const directories = [root];
+
+    while (directories.length > 0) {
+        const currentPath = directories.shift()!;
+        const entries = await fs.readdir(currentPath, { withFileTypes: true });
+        for (const entry of entries) {
+            const absolutePath = path.join(currentPath, entry.name);
+            const relativePath = path.relative(root, absolutePath).replace(/\\/g, '/');
+            if (baselineShouldIgnore(relativePath, entry.isDirectory(), compiledPatterns)) {
+                continue;
+            }
+            if (entry.isDirectory()) {
+                directories.push(absolutePath);
+                continue;
+            }
+            if (!entry.isFile() || !supportedExtensionSet.has(path.extname(entry.name))) {
+                continue;
+            }
+            const content = await fs.readFile(absolutePath, 'utf-8');
+            selected.set(
+                relativePath,
+                crypto.createHash('sha256').update(content).digest('hex'),
+            );
+        }
+    }
+
+    return new Map([...selected.entries()].sort(([left], [right]) => {
+        if (left < right) {
+            return -1;
+        }
+        if (left > right) {
+            return 1;
+        }
+        return 0;
+    }));
 }
 
 describe('Context per-codebase options and ignore handling', () => {
@@ -355,6 +508,120 @@ describe('Context per-codebase options and ignore handling', () => {
         });
 
         expect(new Map(traversal.files.map((file) => [file.relativePath, file.hash]))).toEqual(sequentialHashes);
+    });
+
+    test('optimized pre-index traversal matches baseline ignore semantics on fixture coverage', async () => {
+        const project = await makeTempDir();
+        await writeFixtureFile(project, 'src/a.ts', 'a');
+        await writeFixtureFile(project, 'src/z.ts', 'z');
+        await writeFixtureFile(project, 'src/nested/b.js', 'b');
+        await writeFixtureFile(project, 'src/nested/b.spec.ts', 'spec');
+        await writeFixtureFile(project, 'src/generated/drop.ts', 'drop');
+        await writeFixtureFile(project, 'src/generated/keep.ts', 'keep');
+        await writeFixtureFile(project, 'Library/root.ts', 'root library');
+        await writeFixtureFile(project, 'src/Library/nested.ts', 'nested library');
+        await writeFixtureFile(project, '.hidden/secret.ts', 'secret');
+        await writeFixtureFile(project, 'tmp/c.ts', 'tmp');
+        await writeFixtureFile(project, 'notes.xml', '<xml />');
+
+        const ignorePatterns = [
+            '/Library/',
+            'tmp/',
+            '*.spec.ts',
+            'src/generated/**',
+            '!src/generated/keep.ts',
+        ];
+        const supportedExtensions = ['.ts', '.js'];
+        const baseline = await baselineTraverseFiles(project, ignorePatterns, supportedExtensions);
+        const optimized = await traversePreIndex(project, {
+            ignorePatterns,
+            supportedExtensions,
+            includeHashes: true,
+            concurrency: 2,
+            diagnostics: true,
+        });
+
+        expect(optimized.files.map((file) => file.relativePath)).toEqual([...baseline.keys()]);
+        expect(new Map(optimized.files.map((file) => [file.relativePath, file.hash]))).toEqual(baseline);
+        expect(optimized.diagnostics?.unsupportedFilesByExtension['.xml']).toBe(1);
+        expect(optimized.diagnostics?.matcherCacheHits).toBeGreaterThan(0);
+        expect(optimized.files.map((file) => file.order)).toEqual([0, 1, 2, 3]);
+    });
+
+    test('pre-index diagnostics preserve selected paths and hashes', async () => {
+        const project = await makeTempDir();
+        await writeFixtureFile(project, 'src/a.ts', 'a');
+        await writeFixtureFile(project, 'src/b.js', 'b');
+        await writeFixtureFile(project, 'src/b.spec.ts', 'ignored');
+        await writeFixtureFile(project, 'src/schema.xml', '<xml />');
+        await writeFixtureFile(project, 'tmp/c.ts', 'ignored dir');
+
+        const options = {
+            ignorePatterns: ['tmp/', '*.spec.ts'],
+            supportedExtensions: ['.ts', '.js'],
+            includeHashes: true,
+            concurrency: 2,
+        };
+        const withoutDiagnostics = await traversePreIndex(project, options);
+        const withDiagnostics = await traversePreIndex(project, {
+            ...options,
+            diagnostics: true,
+        });
+
+        expect(withDiagnostics.files.map((file) => file.relativePath)).toEqual(
+            withoutDiagnostics.files.map((file) => file.relativePath),
+        );
+        expect(withDiagnostics.files.map((file) => file.hash)).toEqual(
+            withoutDiagnostics.files.map((file) => file.hash),
+        );
+        expect(withDiagnostics.diagnostics?.selectedFiles).toBe(withoutDiagnostics.selectedFileCount);
+        expect(withDiagnostics.diagnostics?.hashedFiles).toBe(withoutDiagnostics.hashedFileCount);
+        expect(withDiagnostics.diagnostics?.selectedPathFingerprint).toMatch(/^[a-f0-9]{64}$/);
+        expect(withDiagnostics.diagnostics?.selectedPathHashFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    test('pre-index diagnostics count unsupported extensions and serialize as JSON', async () => {
+        const project = await makeTempDir();
+        await writeFixtureFile(project, 'src/a.ts', 'a');
+        await writeFixtureFile(project, 'src/schema.xml', '<xml />');
+        await writeFixtureFile(project, 'src/UPPER.XML', '<xml />');
+        await writeFixtureFile(project, 'README', 'no extension');
+        await writeFixtureFile(project, 'ignored/hidden.xml', '<xml />');
+
+        const traversal = await traversePreIndex(project, {
+            supportedExtensions: ['.ts'],
+            ignorePatterns: ['ignored/'],
+            includeHashes: false,
+            concurrency: 1,
+            diagnostics: true,
+        });
+
+        expect(traversal.selectedFileCount).toBe(1);
+        expect(traversal.hashedFileCount).toBe(0);
+        expect(traversal.diagnostics?.filesSeen).toBe(4);
+        expect(traversal.diagnostics?.ignoredFiles).toBe(0);
+        expect(traversal.diagnostics?.ignoredDirectories).toBe(1);
+        expect(traversal.diagnostics?.unsupportedFilesByExtension['.xml']).toBe(2);
+        expect(traversal.diagnostics?.unsupportedFilesByExtension['<none>']).toBe(1);
+        expect(JSON.parse(JSON.stringify(traversal.diagnostics)).selectedFiles).toBe(1);
+    });
+
+    test('pre-index traversal reports native engine fallback to TypeScript', async () => {
+        const project = await makeTempDir();
+        await writeFixtureFile(project, 'src/a.ts', 'a');
+
+        const traversal = await traversePreIndex(project, {
+            supportedExtensions: ['.ts'],
+            includeHashes: false,
+            concurrency: 1,
+            diagnostics: true,
+            engine: 'native',
+        });
+
+        expect(traversal.diagnostics?.requestedEngine).toBe('native');
+        expect(traversal.diagnostics?.engine).toBe('ts');
+        expect(traversal.diagnostics?.engineFallbackReason).toContain('Native pre-index traversal is not available');
+        expect(traversal.files.map((file) => file.relativePath)).toEqual(['src/a.ts']);
     });
 
     test('pre-index traversal bounds concurrent file hashing within one directory', async () => {

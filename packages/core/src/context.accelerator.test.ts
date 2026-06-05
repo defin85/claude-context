@@ -247,6 +247,7 @@ describe('Context accelerated batch pipeline', () => {
         'INDEX_EMBEDDING_CONCURRENCY',
         'INDEX_INSERT_CONCURRENCY',
         'INDEX_ACCELERATE_BACKGROUND_SYNC',
+        'BGE_M3_ACCELERATOR_MAX_WORKERS',
     ];
 
     beforeEach(() => {
@@ -255,8 +256,10 @@ describe('Context accelerated batch pipeline', () => {
         }
         process.env.HYBRID_MODE = 'false';
         process.env.EMBEDDING_BATCH_SIZE = '1';
+        delete process.env.INDEX_EMBEDDING_CONCURRENCY;
         process.env.INDEX_INSERT_CONCURRENCY = '1';
         process.env.INDEX_ACCELERATE_BACKGROUND_SYNC = 'false';
+        delete process.env.BGE_M3_ACCELERATOR_MAX_WORKERS;
     });
 
     afterEach(() => {
@@ -299,6 +302,55 @@ describe('Context accelerated batch pipeline', () => {
         expect(snapshot.submittedBatches).toBe(4);
         expect(snapshot.completedBatches).toBe(4);
         expect(vectorDatabase.allDocuments()).toHaveLength(4);
+    });
+
+    it('does not report 100 percent progress before accelerated batches drain', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const context = new Context({
+            embedding: new DelayedEmbedding(20),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        const codebasePath = await createCodebase();
+        const progressEvents: Array<{ phase: string; percentage: number }> = [];
+
+        await context.indexCodebase(codebasePath, (progress) => {
+            progressEvents.push({
+                phase: progress.phase,
+                percentage: progress.percentage,
+            });
+        });
+
+        const finalEventIndex = progressEvents.findIndex((event) => event.phase === 'Indexing complete!');
+        expect(finalEventIndex).toBeGreaterThan(-1);
+        expect(progressEvents.slice(0, finalEventIndex).some((event) => event.percentage >= 100)).toBe(false);
+        expect(progressEvents.some((event) => event.phase.startsWith('Processing embedding batches'))).toBe(true);
+        expect(progressEvents[finalEventIndex].percentage).toBe(100);
+    });
+
+    it('does not report embedding drain progress before file production completes', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const context = new Context({
+            embedding: new DelayedEmbedding(20),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        const codebasePath = await createCodebase();
+        const progressEvents: Array<{ phase: string; percentage: number }> = [];
+
+        await context.indexCodebase(codebasePath, (progress) => {
+            progressEvents.push({
+                phase: progress.phase,
+                percentage: progress.percentage,
+            });
+        });
+
+        const finalFileEventIndex = progressEvents.findIndex((event) => event.phase === 'Processing files (4/4)...');
+        expect(finalFileEventIndex).toBeGreaterThan(-1);
+        expect(progressEvents.slice(0, finalFileEventIndex).some((event) => event.phase.startsWith('Processing embedding batches'))).toBe(false);
+        expect(progressEvents.slice(finalFileEventIndex + 1).some((event) => event.phase.startsWith('Processing embedding batches'))).toBe(true);
     });
 
     it('keeps sequential behavior when acceleration is disabled', async () => {
@@ -441,6 +493,33 @@ describe('Context accelerated batch pipeline', () => {
             expect(document.metadata.retrievalMode).toBe('bge_m3_full');
             expect(document.metadata.retrievalSchemaVersion).toBe(1);
         }
+    });
+
+    it('uses accepted BGE-M3 worker count as default embedding concurrency', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.BGE_M3_ACCELERATOR_MAX_WORKERS = '4';
+        const codebasePath = await createCodebase();
+        const embedding = new DelayedBgeM3Embedding(20);
+        embedding.workerSnapshots = [0, 1, 2, 3].map((index) => ({
+            endpoint: `http://127.0.0.1:800${index}`,
+            healthy: true,
+            inFlight: 0,
+            lastSuccessAt: '2026-06-04T00:00:00.000Z',
+            recoveryAttempts: 0,
+            poolState: 'accepted' as const,
+        }));
+
+        const context = new Context({
+            embedding,
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+        await context.indexCodebase(codebasePath);
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(embedding.maxActive).toBe(4);
+        expect(snapshot.embeddingConcurrency).toBe(4);
+        expect(snapshot.activeWorkers).toBe(4);
     });
 
     it('reports BGE-M3 worker-pool retries in accelerator status', async () => {

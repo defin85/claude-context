@@ -1,7 +1,14 @@
 import { spawn, ChildProcess } from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import * as net from 'node:net';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ContextMcpConfig } from './config.js';
+
+const DEFAULT_BGE_M3_WORKER_VRAM_ESTIMATE_MIB = 2048;
+const MIN_VALID_BGE_M3_WORKER_VRAM_DELTA_MIB = 256;
+const CALIBRATION_CACHE_PATH = path.join(os.homedir(), '.context', 'mcp', 'bge-m3-worker-vram.json');
 
 export interface ManagedBgeM3Worker {
     endpoint: string;
@@ -15,9 +22,14 @@ export interface ManagedBgeM3WorkerManager {
     fallbackReason?: string;
     workers: ManagedBgeM3Worker[];
     getSnapshot(): {
+        primaryEndpoint?: string;
+        configuredEndpoints: string[];
+        totalPoolEndpoints: string[];
+        managedEndpoints: string[];
         plannedEndpoints: string[];
         runningWorkers: Array<{ endpoint: string; port: number; unitName?: string; lifecycle: 'systemd' | 'child' }>;
         fallbackReason?: string;
+        vramPlanning?: VramWorkerPlanningSnapshot;
     };
     ensureStarted(reason?: string): Promise<string[]>;
     scheduleStopWhenIdle(reason: string, isIdle: () => boolean): void;
@@ -37,12 +49,42 @@ interface VramSnapshot {
     percentUsed: number;
 }
 
+export type VramCalibrationSource = 'cache' | 'default' | 'measured' | 'unmeasured';
+
+export interface VramWorkerPlanningSnapshot {
+    profileKey: string;
+    totalMiB?: number;
+    usedBeforeMiB?: number;
+    budgetMiB?: number;
+    freeBudgetMiB?: number;
+    safetyMarginMiB: number;
+    estimatedWorkerMiB: number;
+    calibrationSource: VramCalibrationSource;
+    managedWorkerLimit: number;
+    plannedWorkers: number;
+    startedWorkers: number;
+    stopReason?: string;
+}
+
+interface VramCalibrationEntry {
+    profileKey: string;
+    workerMiB: number;
+    measuredAt: string;
+    samples: number;
+}
+
+interface VramCalibrationCache {
+    formatVersion: 1;
+    profiles: Record<string, VramCalibrationEntry>;
+}
+
 interface ManagedBgeM3WorkerManagerDeps {
     isSystemdUserAvailable?: () => Promise<boolean>;
     isPortAvailable?: (port: number) => Promise<boolean>;
     readVram?: () => Promise<VramSnapshot | undefined>;
     startWorker?: (config: ContextMcpConfig, port: number) => Promise<ManagedBgeM3Worker | undefined>;
     stopWorker?: (worker: ManagedBgeM3Worker) => Promise<void>;
+    calibrationPath?: string;
 }
 
 function runCommand(command: string, args: string[], timeoutMs: number = 30000): Promise<CommandResult> {
@@ -109,6 +151,78 @@ async function readVram(): Promise<VramSnapshot | undefined> {
     }
 
     return parseNvidiaSmiMemory(result.stdout);
+}
+
+function createWorkerProfileKey(config: ContextMcpConfig): string {
+    return [
+        config.embeddingModel,
+        config.bgeM3Mode,
+        config.bgeM3UseFp16 ? 'fp16' : 'fp32',
+        config.bgeM3Device || 'default-device',
+        config.acceleratorManagedWorkerLifecycle,
+    ].join('|');
+}
+
+async function loadCalibrationCache(cachePath: string): Promise<VramCalibrationCache> {
+    try {
+        const raw = await fs.readFile(cachePath, 'utf-8');
+        const parsed = JSON.parse(raw) as Partial<VramCalibrationCache>;
+        if (parsed.formatVersion !== 1 || !parsed.profiles || typeof parsed.profiles !== 'object') {
+            return { formatVersion: 1, profiles: {} };
+        }
+        return {
+            formatVersion: 1,
+            profiles: parsed.profiles,
+        };
+    } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ENOENT') {
+            return { formatVersion: 1, profiles: {} };
+        }
+        console.warn(`[MCP] Failed to load BGE-M3 worker VRAM calibration: ${error instanceof Error ? error.message : String(error)}`);
+        return { formatVersion: 1, profiles: {} };
+    }
+}
+
+async function saveCalibrationCache(cachePath: string, cache: VramCalibrationCache): Promise<void> {
+    try {
+        await fs.mkdir(path.dirname(cachePath), { recursive: true });
+        await fs.writeFile(cachePath, `${JSON.stringify(cache, null, 2)}\n`, 'utf-8');
+    } catch (error) {
+        console.warn(`[MCP] Failed to save BGE-M3 worker VRAM calibration: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+function getCalibratedEstimate(cache: VramCalibrationCache, profileKey: string): {
+    workerMiB: number;
+    source: VramCalibrationSource;
+} {
+    const entry = cache.profiles[profileKey];
+    if (entry && Number.isFinite(entry.workerMiB) && entry.workerMiB >= MIN_VALID_BGE_M3_WORKER_VRAM_DELTA_MIB) {
+        return {
+            workerMiB: Math.ceil(entry.workerMiB),
+            source: 'cache',
+        };
+    }
+
+    return {
+        workerMiB: DEFAULT_BGE_M3_WORKER_VRAM_ESTIMATE_MIB,
+        source: 'default',
+    };
+}
+
+function updateCalibration(cache: VramCalibrationCache, profileKey: string, measuredWorkerMiB: number): boolean {
+    if (!Number.isFinite(measuredWorkerMiB) || measuredWorkerMiB < MIN_VALID_BGE_M3_WORKER_VRAM_DELTA_MIB) {
+        return false;
+    }
+    const rounded = Math.ceil(measuredWorkerMiB);
+    const existing = cache.profiles[profileKey];
+    cache.profiles[profileKey] = {
+        profileKey,
+        workerMiB: rounded,
+        measuredAt: new Date().toISOString(),
+        samples: (existing?.samples || 0) + 1,
+    };
+    return true;
 }
 
 async function isSystemdUserAvailable(): Promise<boolean> {
@@ -263,6 +377,7 @@ export async function createManagedBgeM3WorkerManager(
     const workers: ManagedBgeM3Worker[] = [];
     const plannedEndpoints: string[] = [];
     let fallbackReason: string | undefined;
+    let vramPlanning: VramWorkerPlanningSnapshot | undefined;
     let startPromise: Promise<string[]> | undefined;
     let stopDebounceTimer: ReturnType<typeof setTimeout> | undefined;
     let idleFallbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -272,6 +387,7 @@ export async function createManagedBgeM3WorkerManager(
     const checkSystemdUserAvailable = deps.isSystemdUserAvailable || isSystemdUserAvailable;
     const checkPortAvailable = deps.isPortAvailable || isPortAvailable;
     const stopManagedWorker = deps.stopWorker || stopWorker;
+    const calibrationPath = deps.calibrationPath || CALIBRATION_CACHE_PATH;
     const startManagedWorker = deps.startWorker || (async (workerConfig, port) => workerConfig.acceleratorManagedWorkerLifecycle === 'systemd'
         ? startSystemdWorker(workerConfig, port)
         : startChildWorker(workerConfig, port));
@@ -320,46 +436,171 @@ export async function createManagedBgeM3WorkerManager(
     };
 
     const startPlannedWorkers = async (reason?: string): Promise<string[]> => {
-        if (!config.acceleratorManagedBgeM3Workers || plannedEndpoints.length === 0) {
+        if (!config.acceleratorManagedBgeM3Workers) {
             return [];
         }
         if (workers.length > 0) {
             return plannedEndpoints;
         }
 
-        console.log(`[MCP] Starting managed BGE-M3 worker(s)${reason ? `: ${reason}` : ''}.`);
-        for (const endpoint of plannedEndpoints) {
-            const port = Number(new URL(endpoint).port);
+        plannedEndpoints.length = 0;
+        const profileKey = createWorkerProfileKey(config);
+        const managedWorkerLimit = Math.max(
+            0,
+            config.acceleratorMaxBgeM3Workers - 1 - config.bgeM3WorkerEndpoints.length,
+        );
+        if (managedWorkerLimit <= 0) {
+            fallbackReason = 'max BGE-M3 workers already satisfied by primary/configured endpoints';
+            vramPlanning = {
+                profileKey,
+                safetyMarginMiB: config.acceleratorWorkerVramSafetyMarginMiB,
+                estimatedWorkerMiB: DEFAULT_BGE_M3_WORKER_VRAM_ESTIMATE_MIB,
+                calibrationSource: 'default',
+                managedWorkerLimit,
+                plannedWorkers: 0,
+                startedWorkers: 0,
+                stopReason: fallbackReason,
+            };
+            return [];
+        }
+
+        const calibration = await loadCalibrationCache(calibrationPath);
+        let estimate = getCalibratedEstimate(calibration, profileKey);
+        let beforeVram = await readVramSnapshot();
+        if (!beforeVram && !config.acceleratorAllowUnmeasuredVram) {
+            fallbackReason = 'VRAM metrics unavailable';
+            vramPlanning = {
+                profileKey,
+                safetyMarginMiB: config.acceleratorWorkerVramSafetyMarginMiB,
+                estimatedWorkerMiB: estimate.workerMiB,
+                calibrationSource: estimate.source,
+                managedWorkerLimit,
+                plannedWorkers: 0,
+                startedWorkers: 0,
+                stopReason: fallbackReason,
+            };
+            return [];
+        }
+
+        let budgetMiB = beforeVram
+            ? Math.floor(beforeVram.totalMiB * config.acceleratorVramLimitPercent / 100)
+            : undefined;
+        let freeBudgetMiB = beforeVram
+            ? budgetMiB! - beforeVram.usedMiB - config.acceleratorWorkerVramSafetyMarginMiB
+            : undefined;
+        let plannedWorkers = beforeVram
+            ? Math.max(0, Math.min(managedWorkerLimit, Math.floor((freeBudgetMiB || 0) / estimate.workerMiB)))
+            : managedWorkerLimit;
+
+        vramPlanning = {
+            profileKey,
+            totalMiB: beforeVram?.totalMiB,
+            usedBeforeMiB: beforeVram?.usedMiB,
+            budgetMiB,
+            freeBudgetMiB,
+            safetyMarginMiB: config.acceleratorWorkerVramSafetyMarginMiB,
+            estimatedWorkerMiB: estimate.workerMiB,
+            calibrationSource: beforeVram ? estimate.source : 'unmeasured',
+            managedWorkerLimit,
+            plannedWorkers,
+            startedWorkers: 0,
+        };
+
+        if (beforeVram && beforeVram.percentUsed >= config.acceleratorVramLimitPercent) {
+            fallbackReason = `VRAM usage ${beforeVram.percentUsed.toFixed(1)}% is at or above limit ${config.acceleratorVramLimitPercent}%`;
+            vramPlanning.stopReason = fallbackReason;
+            vramPlanning.plannedWorkers = 0;
+            return [];
+        }
+
+        if (plannedWorkers <= 0) {
+            fallbackReason = beforeVram
+                ? `VRAM budget cannot fit an estimated ${estimate.workerMiB}MiB worker after ${config.acceleratorWorkerVramSafetyMarginMiB}MiB safety margin`
+                : undefined;
+            vramPlanning.stopReason = fallbackReason;
+            console.log(`[MCP] Managed BGE-M3 worker planner selected 0 workers${fallbackReason ? `: ${fallbackReason}` : ''}.`);
+            return [];
+        }
+
+        console.log(
+            `[MCP] Starting up to ${plannedWorkers} managed BGE-M3 worker(s)${reason ? `: ${reason}` : ''}. ` +
+            `VRAM budget=${budgetMiB ?? 'unmeasured'}MiB used=${beforeVram?.usedMiB ?? 'unmeasured'}MiB ` +
+            `estimate=${estimate.workerMiB}MiB safety=${config.acceleratorWorkerVramSafetyMarginMiB}MiB source=${estimate.source}.`,
+        );
+
+        for (let index = 0; index < plannedWorkers && workers.length < managedWorkerLimit; index++) {
+            const port = config.acceleratorManagedWorkerStartPort + index;
+            const endpoint = `http://127.0.0.1:${port}`;
             if (!await checkPortAvailable(port)) {
                 console.warn(`[MCP] Skipping managed BGE-M3 worker port ${port}: port is already in use.`);
                 continue;
             }
 
-            const beforeVram = await readVramSnapshot();
-            if (!beforeVram && !config.acceleratorAllowUnmeasuredVram) {
-                fallbackReason = 'VRAM metrics unavailable';
-                break;
-            }
-            if (beforeVram && beforeVram.percentUsed >= config.acceleratorVramLimitPercent) {
-                fallbackReason = `VRAM usage ${beforeVram.percentUsed.toFixed(1)}% is at or above limit ${config.acceleratorVramLimitPercent}%`;
-                break;
+            if (beforeVram) {
+                budgetMiB = Math.floor(beforeVram.totalMiB * config.acceleratorVramLimitPercent / 100);
+                freeBudgetMiB = budgetMiB - beforeVram.usedMiB - config.acceleratorWorkerVramSafetyMarginMiB;
+                if (beforeVram.percentUsed >= config.acceleratorVramLimitPercent || freeBudgetMiB < estimate.workerMiB) {
+                    fallbackReason = `VRAM budget cannot fit another estimated ${estimate.workerMiB}MiB worker`;
+                    vramPlanning.stopReason = fallbackReason;
+                    break;
+                }
             }
 
+            const workerVramBefore = beforeVram;
             const worker = await startManagedWorker(config, port);
             if (!worker) {
                 fallbackReason = fallbackReason || `managed worker on port ${port} failed to start`;
+                vramPlanning.stopReason = fallbackReason;
                 break;
             }
 
             const afterVram = await readVramSnapshot();
+            if (!afterVram && !config.acceleratorAllowUnmeasuredVram) {
+                fallbackReason = 'VRAM metrics unavailable after worker startup';
+                vramPlanning.stopReason = fallbackReason;
+                await stopManagedWorker(worker);
+                break;
+            }
+
             if (afterVram && afterVram.percentUsed > config.acceleratorVramLimitPercent) {
                 fallbackReason = `VRAM usage ${afterVram.percentUsed.toFixed(1)}% exceeded limit ${config.acceleratorVramLimitPercent}% after worker startup`;
+                vramPlanning.stopReason = fallbackReason;
                 await stopManagedWorker(worker);
                 break;
             }
 
             workers.push(worker);
+            plannedEndpoints.push(worker.endpoint);
+            vramPlanning.startedWorkers = workers.length;
             console.log(`[MCP] Managed BGE-M3 worker ready at ${worker.endpoint}${worker.unitName ? ` (${worker.unitName})` : ''}.`);
+
+            if (workerVramBefore && afterVram) {
+                const measuredWorkerMiB = Math.max(1, afterVram.usedMiB - workerVramBefore.usedMiB);
+                if (updateCalibration(calibration, profileKey, measuredWorkerMiB)) {
+                    await saveCalibrationCache(calibrationPath, calibration);
+                    estimate = {
+                        workerMiB: Math.ceil(measuredWorkerMiB),
+                        source: 'measured',
+                    };
+                } else {
+                    console.warn(
+                        `[MCP] Ignoring implausibly small BGE-M3 worker VRAM delta (${measuredWorkerMiB}MiB); ` +
+                        `keeping ${estimate.source} estimate ${estimate.workerMiB}MiB.`,
+                    );
+                }
+                beforeVram = afterVram;
+                budgetMiB = Math.floor(afterVram.totalMiB * config.acceleratorVramLimitPercent / 100);
+                freeBudgetMiB = budgetMiB - afterVram.usedMiB - config.acceleratorWorkerVramSafetyMarginMiB;
+                const remainingCapacity = managedWorkerLimit - workers.length;
+                const additionalWorkers = Math.max(0, Math.min(remainingCapacity, Math.floor(freeBudgetMiB / estimate.workerMiB)));
+                plannedWorkers = workers.length + additionalWorkers;
+                vramPlanning.totalMiB = afterVram.totalMiB;
+                vramPlanning.budgetMiB = budgetMiB;
+                vramPlanning.freeBudgetMiB = freeBudgetMiB;
+                vramPlanning.estimatedWorkerMiB = Math.ceil(estimate.workerMiB);
+                vramPlanning.calibrationSource = estimate.source;
+                vramPlanning.plannedWorkers = Math.max(vramPlanning.plannedWorkers, plannedWorkers);
+            }
         }
 
         startPressureMonitor();
@@ -373,8 +614,20 @@ export async function createManagedBgeM3WorkerManager(
             return fallbackReason;
         },
         getSnapshot() {
+            const configuredEndpoints = [...new Set(config.bgeM3WorkerEndpoints)];
+            const managedEndpoints = [...plannedEndpoints];
             return {
-                plannedEndpoints: [...plannedEndpoints],
+                primaryEndpoint: config.bgeM3Endpoint,
+                configuredEndpoints,
+                totalPoolEndpoints: [
+                    ...new Set([
+                        config.bgeM3Endpoint,
+                        ...configuredEndpoints,
+                        ...managedEndpoints,
+                    ].filter((endpoint): endpoint is string => Boolean(endpoint))),
+                ],
+                managedEndpoints,
+                plannedEndpoints: managedEndpoints,
                 runningWorkers: workers.map((worker) => ({
                     endpoint: worker.endpoint,
                     port: worker.port,
@@ -382,6 +635,7 @@ export async function createManagedBgeM3WorkerManager(
                     lifecycle: config.acceleratorManagedWorkerLifecycle,
                 })),
                 fallbackReason,
+                vramPlanning: vramPlanning ? { ...vramPlanning } : undefined,
             };
         },
         async ensureStarted(reason?: string): Promise<string[]> {
@@ -436,21 +690,9 @@ export async function createManagedBgeM3WorkerManager(
         return manager;
     }
 
-    const existingWorkerCount = 1 + config.bgeM3WorkerEndpoints.length;
-    const desiredManagedWorkers = Math.max(0, config.acceleratorMaxBgeM3Workers - existingWorkerCount);
-    if (desiredManagedWorkers <= 0) {
-        fallbackReason = 'max BGE-M3 workers already satisfied by primary/configured endpoints';
-        return manager;
-    }
-
     if (config.acceleratorManagedWorkerLifecycle === 'systemd' && !await checkSystemdUserAvailable()) {
         fallbackReason = 'systemd --user is unavailable';
         return manager;
-    }
-
-    for (let index = 0; index < desiredManagedWorkers; index++) {
-        const port = config.acceleratorManagedWorkerStartPort + index;
-        plannedEndpoints.push(`http://127.0.0.1:${port}`);
     }
 
     return manager;

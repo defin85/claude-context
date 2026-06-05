@@ -22,6 +22,40 @@ export interface PreIndexTraversalTimings {
     totalMs: number;
 }
 
+export interface PreIndexTraversalDiagnostics {
+    engine: 'ts';
+    requestedEngine: PreIndexTraversalEngine;
+    engineFallbackReason?: string;
+    directoriesVisited: number;
+    directoryEntriesVisited: number;
+    directoryReadErrors: number;
+    filesSeen: number;
+    unsupportedFilesByExtension: Record<string, number>;
+    ignoredDirectories: number;
+    ignoredFiles: number;
+    selectedFiles: number;
+    hashedFiles: number;
+    hashBytes: number;
+    matcherCalls: number;
+    matcherMs: number;
+    matcherCacheHits: number;
+    matcherCacheMisses: number;
+    matcherPatternEvaluations: number;
+    enqueuedDirectories: number;
+    enqueuedFiles: number;
+    enqueuedTasks: number;
+    completedTasks: number;
+    maxQueueLength: number;
+    maxActiveTasks: number;
+    selectedPathFingerprint: string;
+    selectedPathHashFingerprint: string;
+    timings: PreIndexTraversalTimings & {
+        matcherMs: number;
+    };
+}
+
+export type PreIndexTraversalEngine = 'ts' | 'native' | 'auto';
+
 export interface PreIndexTraversalResult {
     rootDir: string;
     files: PreIndexTraversalFile[];
@@ -29,6 +63,7 @@ export interface PreIndexTraversalResult {
     hashedFileCount: number;
     concurrency: number;
     timings: PreIndexTraversalTimings;
+    diagnostics?: PreIndexTraversalDiagnostics;
 }
 
 export interface PreIndexTraversalOptions {
@@ -36,18 +71,36 @@ export interface PreIndexTraversalOptions {
     ignorePatterns?: string[];
     includeHashes?: boolean;
     concurrency?: number;
+    engine?: PreIndexTraversalEngine;
+    diagnostics?: boolean;
     abortSignal?: AbortSignal;
     readFile?: (filePath: string) => Promise<string>;
+    progress?: (progress: {
+        phase: 'traversal' | 'hashing';
+        directoriesVisited: number;
+        filesSeen: number;
+        selectedFiles: number;
+        hashedFiles: number;
+        activeTasks: number;
+        queuedTasks: number;
+    }) => void;
 }
 
 interface CompiledIgnorePattern {
     raw: string;
     cleanPattern: string;
+    cleanPartCount: number;
     isRootAnchored: boolean;
     isDirectoryPattern: boolean;
     hasPathSeparator: boolean;
     matchesBasename: boolean;
     regex: RegExp;
+}
+
+export interface PreIndexIgnoreMatcherStats {
+    cacheHits: number;
+    cacheMisses: number;
+    patternEvaluations: number;
 }
 
 function throwIfAborted(abortSignal?: AbortSignal): void {
@@ -90,6 +143,7 @@ function compileIgnorePatterns(ignorePatterns: string[] = []): CompiledIgnorePat
             return {
                 raw: normalizedPattern,
                 cleanPattern,
+                cleanPartCount: cleanPattern.split('/').length,
                 isRootAnchored: normalizedPattern.startsWith('/'),
                 isDirectoryPattern: normalizedPattern.endsWith('/'),
                 hasPathSeparator: cleanPattern.includes('/'),
@@ -100,11 +154,26 @@ function compileIgnorePatterns(ignorePatterns: string[] = []): CompiledIgnorePat
         .filter((pattern) => pattern.cleanPattern.length > 0);
 }
 
+function getLastPathPart(filePath: string): string {
+    const separatorIndex = filePath.lastIndexOf('/');
+    return separatorIndex === -1 ? filePath : filePath.slice(separatorIndex + 1);
+}
+
 export class PreIndexIgnoreMatcher {
     private readonly patterns: CompiledIgnorePattern[];
+    private readonly nonDirectoryPatterns: CompiledIgnorePattern[];
+    private readonly directoryPatterns: CompiledIgnorePattern[];
+    private readonly directoryDecisionCache = new Map<string, boolean>();
+    private stats: PreIndexIgnoreMatcherStats = {
+        cacheHits: 0,
+        cacheMisses: 0,
+        patternEvaluations: 0,
+    };
 
     constructor(ignorePatterns: string[] = []) {
         this.patterns = compileIgnorePatterns(ignorePatterns);
+        this.nonDirectoryPatterns = this.patterns.filter((pattern) => !pattern.isDirectoryPattern);
+        this.directoryPatterns = this.patterns.filter((pattern) => pattern.isDirectoryPattern);
     }
 
     shouldIgnore(relativePath: string, isDirectory: boolean = false): boolean {
@@ -114,29 +183,68 @@ export class PreIndexIgnoreMatcher {
         }
 
         const pathParts = normalizedPath.split('/');
-        if (pathParts.some((part) => part.startsWith('.'))) {
-            return true;
-        }
-
-        for (const pattern of this.patterns) {
-            if (this.matchesPattern(normalizedPath, pattern, isDirectory)) {
+        for (const part of pathParts) {
+            if (part.startsWith('.')) {
                 return true;
             }
         }
 
-        for (let i = 0; i < pathParts.length; i++) {
-            const partialPath = pathParts.slice(0, i + 1).join('/');
-            for (const pattern of this.patterns) {
-                if (this.matchesPattern(partialPath, pattern, true)) {
-                    return true;
-                }
-                if (pattern.matchesBasename && pattern.regex.test(pathParts[i])) {
-                    return true;
-                }
+        if (this.matchesAnyPattern(normalizedPath, isDirectory)) {
+            return true;
+        }
+
+        let partialPath = '';
+        const directoryPrefixLimit = isDirectory
+            ? pathParts.length - 1
+            : pathParts.length - 1;
+        for (let i = 0; i < directoryPrefixLimit; i++) {
+            partialPath = partialPath ? `${partialPath}/${pathParts[i]}` : pathParts[i];
+            if (this.matchesDirectoryPrefix(partialPath)) {
+                return true;
+            }
+        }
+
+        return !isDirectory && this.matchesPatterns(normalizedPath, this.directoryPatterns, true);
+    }
+
+    getStats(): PreIndexIgnoreMatcherStats {
+        return { ...this.stats };
+    }
+
+    private matchesAnyPattern(filePath: string, isDirectory: boolean): boolean {
+        return this.matchesPatterns(
+            filePath,
+            isDirectory ? this.patterns : this.nonDirectoryPatterns,
+            isDirectory,
+        );
+    }
+
+    private matchesPatterns(
+        filePath: string,
+        patterns: CompiledIgnorePattern[],
+        isDirectory: boolean,
+    ): boolean {
+        for (const pattern of patterns) {
+            this.stats.patternEvaluations++;
+            if (this.matchesPattern(filePath, pattern, isDirectory)) {
+                return true;
             }
         }
 
         return false;
+    }
+
+    private matchesDirectoryPrefix(partialPath: string): boolean {
+        const cached = this.directoryDecisionCache.get(partialPath);
+        if (cached !== undefined) {
+            this.stats.cacheHits++;
+            return cached;
+        }
+
+        this.stats.cacheMisses++;
+        const result = this.matchesPatterns(partialPath, this.patterns, true);
+        this.directoryDecisionCache.set(partialPath, result);
+        return result;
     }
 
     private matchesPattern(filePath: string, pattern: CompiledIgnorePattern, isDirectory: boolean): boolean {
@@ -158,12 +266,12 @@ export class PreIndexIgnoreMatcher {
             return pattern.regex.test(filePath);
         }
 
-        return pattern.regex.test(path.basename(filePath));
+        return pattern.regex.test(getLastPathPart(filePath));
     }
 
     private matchesDirectoryPattern(filePath: string, pattern: CompiledIgnorePattern): boolean {
         const pathParts = filePath.split('/');
-        const dirPartCount = pattern.cleanPattern.split('/').length;
+        const dirPartCount = pattern.cleanPartCount;
 
         for (let i = 0; i <= pathParts.length - dirPartCount; i++) {
             const candidate = pathParts.slice(i, i + dirPartCount).join('/');
@@ -197,6 +305,66 @@ export function getPreIndexTraversalConcurrency(explicitConcurrency?: number): n
     return DEFAULT_PREINDEX_CONCURRENCY;
 }
 
+function isTruthy(value: string | undefined): boolean {
+    return value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'json';
+}
+
+export function isPreIndexTraversalDiagnosticsEnabled(): boolean {
+    return isTruthy(envManager.get('PREINDEX_TRAVERSAL_DIAGNOSTICS'));
+}
+
+function getPreIndexTraversalEngine(explicitEngine?: PreIndexTraversalEngine): {
+    requestedEngine: PreIndexTraversalEngine;
+    engine: 'ts';
+    fallbackReason?: string;
+} {
+    const rawEngine = explicitEngine || envManager.get('PREINDEX_TRAVERSAL_ENGINE') || 'ts';
+    if (rawEngine === 'ts') {
+        return { requestedEngine: 'ts', engine: 'ts' };
+    }
+    if (rawEngine === 'auto' || rawEngine === 'native') {
+        return {
+            requestedEngine: rawEngine,
+            engine: 'ts',
+            fallbackReason: 'Native pre-index traversal is not available; using TypeScript traversal.',
+        };
+    }
+
+    console.warn(
+        `[PreIndexTraversal] Ignoring invalid PREINDEX_TRAVERSAL_ENGINE='${rawEngine}'. ` +
+            'Using TypeScript traversal.',
+    );
+    return { requestedEngine: 'ts', engine: 'ts' };
+}
+
+function createPreIndexFingerprint(files: PreIndexTraversalFile[], includeHashes: boolean): {
+    selectedPathFingerprint: string;
+    selectedPathHashFingerprint: string;
+} {
+    const pathHash = crypto.createHash('sha256');
+    const pathAndContentHash = crypto.createHash('sha256');
+
+    for (const file of files) {
+        pathHash.update(file.relativePath);
+        pathHash.update('\0');
+        pathAndContentHash.update(file.relativePath);
+        pathAndContentHash.update('\0');
+        if (includeHashes && file.hash) {
+            pathAndContentHash.update(file.hash);
+        }
+        pathAndContentHash.update('\0');
+    }
+
+    return {
+        selectedPathFingerprint: pathHash.digest('hex'),
+        selectedPathHashFingerprint: pathAndContentHash.digest('hex'),
+    };
+}
+
+function createUnsupportedExtensionKey(extension: string): string {
+    return extension.toLowerCase() || '<none>';
+}
+
 export async function traversePreIndex(
     rootDir: string,
     options: PreIndexTraversalOptions,
@@ -206,12 +374,45 @@ export async function traversePreIndex(
     const supportedExtensionSet = new Set(supportedExtensions);
     const matcher = new PreIndexIgnoreMatcher(options.ignorePatterns || []);
     const concurrency = getPreIndexTraversalConcurrency(options.concurrency);
+    const engineSelection = getPreIndexTraversalEngine(options.engine);
     const includeHashes = options.includeHashes === true;
+    const collectDiagnostics = options.diagnostics === true || isPreIndexTraversalDiagnosticsEnabled();
     const directories = [normalizedRoot];
     const files: PreIndexTraversalFile[] = [];
     const startedAt = Date.now();
     let scanMs = 0;
     let hashMs = 0;
+    let directoriesVisited = 0;
+    let filesSeen = 0;
+    let selectedFiles = 0;
+    let hashedFiles = 0;
+    let activeTasks = 0;
+    let queuedTaskCount = 0;
+    let lastProgressAt = 0;
+    const diagnostics: Omit<PreIndexTraversalDiagnostics, 'selectedFiles' | 'hashedFiles' | 'selectedPathFingerprint' | 'selectedPathHashFingerprint' | 'timings'> = {
+        engine: engineSelection.engine,
+        requestedEngine: engineSelection.requestedEngine,
+        engineFallbackReason: engineSelection.fallbackReason,
+        directoriesVisited: 0,
+        directoryEntriesVisited: 0,
+        directoryReadErrors: 0,
+        filesSeen: 0,
+        unsupportedFilesByExtension: {},
+        ignoredDirectories: 0,
+        ignoredFiles: 0,
+        hashBytes: 0,
+        matcherCalls: 0,
+        matcherMs: 0,
+        matcherCacheHits: 0,
+        matcherCacheMisses: 0,
+        matcherPatternEvaluations: 0,
+        enqueuedDirectories: 0,
+        enqueuedFiles: 0,
+        enqueuedTasks: 0,
+        completedTasks: 0,
+        maxQueueLength: 0,
+        maxActiveTasks: 0,
+    };
 
     const hashFile = async (filePath: string): Promise<string> => {
         const hashStartedAt = Date.now();
@@ -219,10 +420,36 @@ export async function traversePreIndex(
             const content = options.readFile
                 ? await options.readFile(filePath)
                 : await fs.readFile(filePath, 'utf-8');
+            if (collectDiagnostics) {
+                diagnostics.hashBytes += Buffer.byteLength(content, 'utf-8');
+            }
             return crypto.createHash('sha256').update(content).digest('hex');
         } finally {
+            hashedFiles++;
             hashMs += Date.now() - hashStartedAt;
+            emitProgress('hashing');
         }
+    };
+
+    const emitProgress = (phase: 'traversal' | 'hashing', force: boolean = false) => {
+        if (!options.progress) {
+            return;
+        }
+
+        const now = Date.now();
+        if (!force && now - lastProgressAt < 1000) {
+            return;
+        }
+        lastProgressAt = now;
+        options.progress({
+            phase,
+            directoriesVisited,
+            filesSeen,
+            selectedFiles,
+            hashedFiles,
+            activeTasks,
+            queuedTasks: queuedTaskCount,
+        });
     };
 
     const processDirectory = async (
@@ -237,31 +464,66 @@ export async function traversePreIndex(
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error: any) {
             console.warn(`[PreIndexTraversal] Cannot read directory ${currentPath}: ${error.message}`);
+            if (collectDiagnostics) {
+                diagnostics.directoryReadErrors++;
+            }
             scanMs += Date.now() - scanStartedAt;
             return;
         }
         scanMs += Date.now() - scanStartedAt;
+        directoriesVisited++;
+        if (collectDiagnostics) {
+            diagnostics.directoriesVisited++;
+            diagnostics.directoryEntriesVisited += entries.length;
+        }
 
         for (const entry of entries) {
             throwIfAborted(options.abortSignal);
             const absolutePath = path.join(currentPath, entry.name);
             const relativePath = path.relative(normalizedRoot, absolutePath).replace(/\\/g, '/');
+            const isDirectory = entry.isDirectory();
+            const isFile = entry.isFile();
 
-            if (matcher.shouldIgnore(relativePath, entry.isDirectory())) {
+            if (collectDiagnostics && isFile) {
+                diagnostics.filesSeen++;
+            }
+            if (isFile) {
+                filesSeen++;
+            }
+
+            const matcherStartedAt = collectDiagnostics ? Date.now() : 0;
+            const ignored = matcher.shouldIgnore(relativePath, isDirectory);
+            if (collectDiagnostics) {
+                diagnostics.matcherCalls++;
+                diagnostics.matcherMs += Date.now() - matcherStartedAt;
+            }
+            if (ignored) {
+                if (collectDiagnostics) {
+                    if (isDirectory) {
+                        diagnostics.ignoredDirectories++;
+                    } else if (isFile) {
+                        diagnostics.ignoredFiles++;
+                    }
+                }
                 continue;
             }
 
-            if (entry.isDirectory()) {
+            if (isDirectory) {
                 enqueueDirectory(absolutePath);
                 continue;
             }
 
-            if (!entry.isFile()) {
+            if (!isFile) {
                 continue;
             }
 
             const extension = path.extname(entry.name);
             if (supportedExtensionSet.size > 0 && !supportedExtensionSet.has(extension)) {
+                if (collectDiagnostics) {
+                    const extensionKey = createUnsupportedExtensionKey(extension);
+                    diagnostics.unsupportedFilesByExtension[extensionKey] =
+                        (diagnostics.unsupportedFilesByExtension[extensionKey] || 0) + 1;
+                }
                 continue;
             }
 
@@ -270,7 +532,9 @@ export async function traversePreIndex(
                 absolutePath,
                 extension,
             });
+            selectedFiles++;
         }
+        emitProgress('traversal');
     };
 
     const processFile = async (file: Omit<PreIndexTraversalFile, 'hash' | 'order'>): Promise<void> => {
@@ -299,11 +563,23 @@ export async function traversePreIndex(
 
         const enqueueDirectory = (dir: string) => {
             queuedTasks.push(() => processDirectory(dir, enqueueDirectory, enqueueFile));
+            queuedTaskCount = queuedTasks.length;
+            if (collectDiagnostics) {
+                diagnostics.enqueuedDirectories++;
+                diagnostics.enqueuedTasks++;
+                diagnostics.maxQueueLength = Math.max(diagnostics.maxQueueLength, queuedTasks.length);
+            }
             pump();
         };
 
         const enqueueFile = (file: Omit<PreIndexTraversalFile, 'hash' | 'order'>) => {
             queuedTasks.push(() => processFile(file));
+            queuedTaskCount = queuedTasks.length;
+            if (collectDiagnostics) {
+                diagnostics.enqueuedFiles++;
+                diagnostics.enqueuedTasks++;
+                diagnostics.maxQueueLength = Math.max(diagnostics.maxQueueLength, queuedTasks.length);
+            }
             pump();
         };
 
@@ -314,9 +590,19 @@ export async function traversePreIndex(
             while (active < concurrency && queuedTasks.length > 0) {
                 const task = queuedTasks.shift()!;
                 active++;
+                activeTasks = active;
+                queuedTaskCount = queuedTasks.length;
+                if (collectDiagnostics) {
+                    diagnostics.maxActiveTasks = Math.max(diagnostics.maxActiveTasks, active);
+                }
                 task()
                     .then(() => {
                         active--;
+                        activeTasks = active;
+                        queuedTaskCount = queuedTasks.length;
+                        if (collectDiagnostics) {
+                            diagnostics.completedTasks++;
+                        }
                         pump();
                         finishIfIdle();
                     })
@@ -332,6 +618,12 @@ export async function traversePreIndex(
 
         for (const dir of directories) {
             queuedTasks.push(() => processDirectory(dir, enqueueDirectory, enqueueFile));
+            queuedTaskCount = queuedTasks.length;
+            if (collectDiagnostics) {
+                diagnostics.enqueuedDirectories++;
+                diagnostics.enqueuedTasks++;
+                diagnostics.maxQueueLength = Math.max(diagnostics.maxQueueLength, queuedTasks.length);
+            }
         }
         directories.length = 0;
         pump();
@@ -351,18 +643,44 @@ export async function traversePreIndex(
         file.order = index;
     });
     const fileListMs = Date.now() - fileListStartedAt;
+    const totalMs = Date.now() - startedAt;
+    const hashedFileCount = includeHashes ? files.filter((file) => typeof file.hash === 'string').length : 0;
+    emitProgress(includeHashes ? 'hashing' : 'traversal', true);
+    const fingerprints = collectDiagnostics
+        ? createPreIndexFingerprint(files, includeHashes)
+        : undefined;
 
-    return {
+    const result: PreIndexTraversalResult = {
         rootDir: normalizedRoot,
         files,
         selectedFileCount: files.length,
-        hashedFileCount: includeHashes ? files.filter((file) => typeof file.hash === 'string').length : 0,
+        hashedFileCount,
         concurrency,
         timings: {
             scanMs,
             hashMs,
             fileListMs,
-            totalMs: Date.now() - startedAt,
+            totalMs,
         },
     };
+
+    if (collectDiagnostics && fingerprints) {
+        const matcherStats = matcher.getStats();
+        result.diagnostics = {
+            ...diagnostics,
+            matcherCacheHits: matcherStats.cacheHits,
+            matcherCacheMisses: matcherStats.cacheMisses,
+            matcherPatternEvaluations: matcherStats.patternEvaluations,
+            selectedFiles: files.length,
+            hashedFiles: hashedFileCount,
+            selectedPathFingerprint: fingerprints.selectedPathFingerprint,
+            selectedPathHashFingerprint: fingerprints.selectedPathHashFingerprint,
+            timings: {
+                ...result.timings,
+                matcherMs: diagnostics.matcherMs,
+            },
+        };
+    }
+
+    return result;
 }

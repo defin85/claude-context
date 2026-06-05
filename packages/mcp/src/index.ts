@@ -51,6 +51,10 @@ import { RuntimeStatusManager } from './runtime-status.js';
 import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
 import { getErrorMessage } from './utils.js';
+import {
+    createDaemonStatusResult,
+    GET_DAEMON_STATUS_TOOL_DESCRIPTION
+} from './worker-planning-policy.js';
 import { WorkloadManager } from './workload-manager.js';
 
 type ToolArgs = Record<string, unknown>;
@@ -386,7 +390,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                 },
                 {
                     name: 'get_indexing_status',
-                    description: 'Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.',
+                    description: 'Get the current indexing status of a codebase. Shows progress percentage plus progressDetails {phase,current,total,percentage} for active indexing, and completion status for indexed codebases.',
                     inputSchema: {
                         type: 'object',
                         properties: {
@@ -404,7 +408,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                 tools.push(
                     {
                         name: 'get_daemon_status',
-                        description: 'Inspect daemon runtime metadata, known repositories, and active workload state.',
+                        description: GET_DAEMON_STATUS_TOOL_DESCRIPTION,
                         inputSchema: {
                             type: 'object',
                             properties: {},
@@ -499,43 +503,7 @@ This tool is versatile and can be used before completing various tasks to retrie
         const operatorStatus = await readDaemonOperatorStatus();
         const accelerator = this.context.getLastAcceleratorSnapshot();
         const managedBgeM3Workers = this.managedBgeM3WorkerManager?.getSnapshot();
-        const textLines = [
-            `Daemon runtimes: ${operatorStatus.runtimes.length}`
-        ];
-
-        for (const runtime of operatorStatus.runtimes) {
-            const knownCodebasesCount = runtime.knownCodebases?.length || 0;
-            textLines.push(
-                `- ${runtime.runtimeId} pid=${runtime.pid} healthy=${runtime.healthy} ` +
-                `repos=${knownCodebasesCount} endpoint=${runtime.endpointUrl}`
-            );
-        }
-        if (accelerator) {
-            textLines.push(
-                `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
-                `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
-                `${accelerator.fallbackReason ? ` fallback=${accelerator.fallbackReason}` : ''}`
-            );
-        }
-        if (managedBgeM3Workers) {
-            textLines.push(
-                `Managed BGE-M3 workers: planned=${managedBgeM3Workers.plannedEndpoints.length} ` +
-                `running=${managedBgeM3Workers.runningWorkers.length}` +
-                `${managedBgeM3Workers.fallbackReason ? ` fallback=${managedBgeM3Workers.fallbackReason}` : ''}`
-            );
-        }
-
-        return {
-            content: [{
-                type: 'text',
-                text: textLines.join('\n')
-            }],
-            structuredContent: {
-                ...operatorStatus,
-                accelerator,
-                managedBgeM3Workers
-            }
-        };
+        return createDaemonStatusResult(operatorStatus, accelerator, managedBgeM3Workers);
     }
 
     private async handleCancelCodebaseWorkloadTool(args: ToolArgs) {
@@ -928,18 +896,9 @@ async function main() {
         process.exit(0);
     }
 
-    let config = createMcpConfig();
+    const config = createMcpConfig();
     const runtimeConfig = createMcpRuntimeConfig(args);
     const managedBgeM3WorkerManager = await createManagedBgeM3WorkerManager(config);
-    if (managedBgeM3WorkerManager.endpoints.length > 0) {
-        config = {
-            ...config,
-            bgeM3WorkerEndpoints: [
-                ...config.bgeM3WorkerEndpoints,
-                ...managedBgeM3WorkerManager.endpoints
-            ]
-        };
-    }
     if (managedBgeM3WorkerManager.fallbackReason) {
         console.warn(`[MCP] Managed BGE-M3 worker fallback: ${managedBgeM3WorkerManager.fallbackReason}`);
     }

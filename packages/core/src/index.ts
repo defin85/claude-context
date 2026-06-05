@@ -2,6 +2,7 @@ export * from './splitter';
 export * from './embedding';
 export * from './vectordb';
 export * from './types';
+export * from './config-defaults';
 export * from './context';
 export * from './indexing-accelerator';
 export * from './sync/synchronizer';

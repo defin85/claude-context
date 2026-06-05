@@ -17,18 +17,24 @@ import {
     RetrievalSchemaMetadata,
 } from "./vectordb";
 import { SemanticSearchResult } from "./types";
+import {
+    DEFAULT_IGNORE_PATTERNS,
+    DEFAULT_SUPPORTED_EXTENSIONS,
+} from "./config-defaults";
 import { envManager } from "./utils/env-manager";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
 import {
+    isPreIndexTraversalDiagnosticsEnabled,
     PreIndexTraversalResult,
     traversePreIndex,
 } from "./sync/preindex-traversal";
 import {
     AsyncLimiter,
     IndexingBatchMetadata,
+    IndexingAcceleratorConfig,
     IndexingAcceleratorRuntime,
     IndexingAcceleratorSnapshot,
     IndexingAcceleratorWorkerSnapshot,
@@ -127,106 +133,6 @@ export class IndexAbortError extends Error {
     }
 }
 
-const DEFAULT_SUPPORTED_EXTENSIONS = [
-    // Programming languages
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".py",
-    ".java",
-    ".cpp",
-    ".c",
-    ".h",
-    ".hpp",
-    ".cs",
-    ".go",
-    ".rs",
-    ".php",
-    ".rb",
-    ".swift",
-    ".kt",
-    ".scala",
-    ".m",
-    ".mm",
-    // 1C:Enterprise
-    ".bsl",
-    ".os",
-    // Text and markup files
-    ".md",
-    ".markdown",
-    ".ipynb",
-    // '.txt',  '.json', '.yaml', '.yml', '.xml', '.html', '.htm',
-    // '.css', '.scss', '.less', '.sql', '.sh', '.bash', '.env'
-];
-
-const DEFAULT_IGNORE_PATTERNS = [
-    // Common build output and dependency directories
-    "node_modules/**",
-    "dist/**",
-    "build/**",
-    "out/**",
-    "target/**",
-    "coverage/**",
-    ".nyc_output/**",
-
-    // IDE and editor files
-    ".vscode/**",
-    ".idea/**",
-    "*.swp",
-    "*.swo",
-
-    // Version control
-    ".git/**",
-    ".svn/**",
-    ".hg/**",
-
-    // Cache directories
-    ".cache/**",
-    "__pycache__/**",
-    ".pytest_cache/**",
-
-    // Logs and temporary files
-    "logs/**",
-    "tmp/**",
-    "temp/**",
-    "*.log",
-
-    // Environment and config files
-    ".env",
-    ".env.*",
-    "*.local",
-
-    // Minified and bundled files
-    "*.min.js",
-    "*.min.css",
-    "*.min.map",
-    "*.bundle.js",
-    "*.bundle.css",
-    "*.chunk.js",
-    "*.vendor.js",
-    "*.polyfills.js",
-    "*.runtime.js",
-    "*.map", // source map files
-    "node_modules",
-    ".git",
-    ".svn",
-    ".hg",
-    "build",
-    "dist",
-    "out",
-    "target",
-    ".vscode",
-    ".idea",
-    "__pycache__",
-    ".pytest_cache",
-    "coverage",
-    ".nyc_output",
-    "logs",
-    "tmp",
-    "temp",
-];
-
 export interface ContextConfig {
     embedding?: Embedding;
     vectorDatabase?: VectorDatabase;
@@ -250,6 +156,10 @@ interface ProcessFileListOptions {
     allowAcceleration?: boolean;
     isBackgroundSync?: boolean;
     preIndexTraversal?: PreIndexTraversalResult;
+    onBatchProgress?: (
+        snapshot: IndexingAcceleratorSnapshot,
+        state: { productionComplete: boolean },
+    ) => void;
 }
 
 interface CodebaseSessionState {
@@ -273,6 +183,10 @@ type MultiVectorEmbeddingProvider = Embedding & {
 
 type WorkerSnapshotProvider = Embedding & {
     getWorkerSnapshot(): IndexingAcceleratorWorkerSnapshot[];
+};
+
+type WorkerCapacityProvider = Embedding & {
+    getWorkerPoolSize(): number;
 };
 
 export class Context {
@@ -354,20 +268,79 @@ export class Context {
     }
 
     getLastAcceleratorSnapshot(): IndexingAcceleratorSnapshot | undefined {
-        return this.lastAcceleratorSnapshot ? { ...this.lastAcceleratorSnapshot } : undefined;
+        if (!this.lastAcceleratorSnapshot) {
+            return undefined;
+        }
+        const snapshot: IndexingAcceleratorSnapshot = {
+            ...this.lastAcceleratorSnapshot,
+            batches: this.lastAcceleratorSnapshot.batches.map((batch) => ({ ...batch })),
+            workers: this.lastAcceleratorSnapshot.workers?.map((worker) => ({ ...worker })),
+        };
+        const workers = this.getCurrentAcceleratorWorkerSnapshot();
+        if (workers) {
+            snapshot.activeWorkers = workers.filter((worker) => worker.healthy).length;
+            snapshot.rejectedWorkers = workers.filter((worker) => worker.rejectedReason).length;
+            snapshot.workers = workers;
+        }
+        return snapshot;
+    }
+
+    private getCurrentAcceleratorWorkerSnapshot(): IndexingAcceleratorWorkerSnapshot[] | undefined {
+        const candidate = this.embedding as Embedding & Partial<WorkerSnapshotProvider>;
+        if (typeof candidate.getWorkerSnapshot !== "function") {
+            return undefined;
+        }
+
+        return candidate.getWorkerSnapshot();
     }
 
     private updateAcceleratorWorkerSnapshot(acceleratorRuntime: IndexingAcceleratorRuntime): void {
-        const candidate = this.embedding as Embedding & Partial<WorkerSnapshotProvider>;
-        if (typeof candidate.getWorkerSnapshot !== "function") {
+        const workers = this.getCurrentAcceleratorWorkerSnapshot();
+        if (!workers) {
             return;
         }
 
-        const workers = candidate.getWorkerSnapshot();
         acceleratorRuntime.updateWorkerCounts(
             workers.filter((worker) => worker.healthy).length,
             workers.filter((worker) => worker.rejectedReason).length,
             workers,
+        );
+    }
+
+    private getEmbeddingWorkerCapacity(): number | undefined {
+        const candidate = this.embedding as Embedding & Partial<WorkerCapacityProvider>;
+        if (typeof candidate.getWorkerPoolSize === "function") {
+            return candidate.getWorkerPoolSize();
+        }
+
+        const workers = this.getCurrentAcceleratorWorkerSnapshot();
+        if (!workers) {
+            return undefined;
+        }
+
+        return workers.filter((worker) => worker.poolState !== "rejected").length;
+    }
+
+    private getEffectiveEmbeddingConcurrency(
+        acceleratorConfig: IndexingAcceleratorConfig,
+        accelerationActive: boolean,
+    ): number {
+        if (!accelerationActive) {
+            return 1;
+        }
+
+        if (this.getRetrievalMode() !== "bge_m3_full") {
+            return acceleratorConfig.embeddingConcurrency;
+        }
+
+        const workerCapacity = this.getEmbeddingWorkerCapacity();
+        if (!workerCapacity || workerCapacity <= 0) {
+            return acceleratorConfig.embeddingConcurrency;
+        }
+
+        return Math.max(
+            acceleratorConfig.embeddingConcurrency,
+            Math.min(workerCapacity, acceleratorConfig.maxBgeM3Workers),
         );
     }
 
@@ -380,8 +353,16 @@ export class Context {
             isInitialOrForce: options.allowAcceleration,
             isBackgroundSync: options.isBackgroundSync,
         });
-        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+        const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
+            accelerationDecision.active,
+        );
+        const effectiveAcceleratorConfig = {
+            ...acceleratorConfig,
+            embeddingConcurrency: effectiveEmbeddingConcurrency,
+        };
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            effectiveAcceleratorConfig,
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
@@ -389,6 +370,7 @@ export class Context {
             ...preIndexTraversal.timings,
             selectedFileCount: preIndexTraversal.selectedFileCount,
             hashedFileCount: preIndexTraversal.hashedFileCount,
+            diagnostics: preIndexTraversal.diagnostics,
         });
         this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
@@ -402,8 +384,16 @@ export class Context {
             isInitialOrForce: options.allowAcceleration,
             isBackgroundSync: options.isBackgroundSync,
         });
-        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+        const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
+            accelerationDecision.active,
+        );
+        const effectiveAcceleratorConfig = {
+            ...acceleratorConfig,
+            embeddingConcurrency: effectiveEmbeddingConcurrency,
+        };
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            effectiveAcceleratorConfig,
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
@@ -986,13 +976,41 @@ export class Context {
             ignorePatterns: session.effectiveIgnorePatterns,
             supportedExtensions: session.effectiveExtensions,
             includeHashes: true,
+            diagnostics: isPreIndexTraversalDiagnosticsEnabled(),
             abortSignal,
+            progress: (traversalProgress) => {
+                const activity =
+                    traversalProgress.directoriesVisited +
+                    traversalProgress.filesSeen +
+                    traversalProgress.selectedFiles +
+                    traversalProgress.hashedFiles;
+                const boundedProgress = 5 + Math.min(4, Math.floor(Math.log10(Math.max(1, activity))));
+                progressCallback?.({
+                    phase:
+                        `Pre-index ${traversalProgress.phase}: ` +
+                        `${traversalProgress.selectedFiles} selected, ` +
+                        `${traversalProgress.hashedFiles} hashed, ` +
+                        `${traversalProgress.activeTasks} active, ` +
+                        `${traversalProgress.queuedTasks} queued`,
+                    current: boundedProgress,
+                    total: 100,
+                    percentage: boundedProgress,
+                });
+            },
         });
         const codeFiles = preIndexTraversal.files.map((file) => file.absolutePath);
         console.log(`[Context] 📁 Found ${codeFiles.length} code files`);
         console.log(
             `[Context] ⏱️ Pre-index traversal: totalMs=${preIndexTraversal.timings.totalMs}, scanMs=${preIndexTraversal.timings.scanMs}, hashMs=${preIndexTraversal.timings.hashMs}, fileListMs=${preIndexTraversal.timings.fileListMs}, selectedFiles=${preIndexTraversal.selectedFileCount}, hashedFiles=${preIndexTraversal.hashedFileCount}, concurrency=${preIndexTraversal.concurrency}`,
         );
+        if (preIndexTraversal.diagnostics) {
+            console.log(
+                `[Context] 🔎 Pre-index diagnostics: entries=${preIndexTraversal.diagnostics.directoryEntriesVisited}, filesSeen=${preIndexTraversal.diagnostics.filesSeen}, unsupported=${Object.values(preIndexTraversal.diagnostics.unsupportedFilesByExtension).reduce((sum, count) => sum + count, 0)}, ignoredDirs=${preIndexTraversal.diagnostics.ignoredDirectories}, ignoredFiles=${preIndexTraversal.diagnostics.ignoredFiles}, matcherCalls=${preIndexTraversal.diagnostics.matcherCalls}, matcherMs=${preIndexTraversal.diagnostics.matcherMs}, selectedFingerprint=${preIndexTraversal.diagnostics.selectedPathFingerprint}`,
+            );
+            console.log(
+                `[Context] 🔎 Pre-index diagnostics JSON: ${JSON.stringify(preIndexTraversal.diagnostics)}`,
+            );
+        }
         this.resetAcceleratorSnapshotForPreIndex(preIndexTraversal, {
             allowAcceleration: true,
             isBackgroundSync: false,
@@ -1019,9 +1037,9 @@ export class Context {
         }
 
         // 3. Process each file with streaming chunk processing
-        // Reserve 10% for preparation, 90% for actual indexing
+        // Reserve 10% for preparation, 80% for splitting, and 10% for draining embedding/insert batches.
         const indexingStartPercentage = 10;
-        const indexingEndPercentage = 100;
+        const indexingEndPercentage = 90;
         const indexingRange = indexingEndPercentage - indexingStartPercentage;
 
         const result = await this.processFileList(
@@ -1048,6 +1066,26 @@ export class Context {
                 allowAcceleration: forceReindex || codeFiles.length > 0,
                 isBackgroundSync: false,
                 preIndexTraversal,
+                onBatchProgress: (snapshot, state) => {
+                    if (snapshot.submittedBatches <= 0) {
+                        return;
+                    }
+                    if (!state.productionComplete) {
+                        return;
+                    }
+                    const completed = Math.min(snapshot.completedBatches, snapshot.submittedBatches);
+                    const drainPercentage = 90 + Math.floor((completed / snapshot.submittedBatches) * 9);
+                    progressCallback?.({
+                        phase:
+                            `Processing embedding batches ` +
+                            `(${completed}/${snapshot.submittedBatches}, ` +
+                            `${snapshot.inFlightEmbeddingBatches} embedding in-flight, ` +
+                            `${snapshot.inFlightInsertBatches} insert in-flight)...`,
+                        current: completed,
+                        total: snapshot.submittedBatches,
+                        percentage: Math.min(99, drainPercentage),
+                    });
+                },
             },
         );
 
@@ -1807,8 +1845,16 @@ export class Context {
             isInitialOrForce: options.allowAcceleration === true,
             isBackgroundSync: options.isBackgroundSync === true,
         });
-        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+        const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
+            accelerationDecision.active,
+        );
+        const effectiveAcceleratorConfig = {
+            ...acceleratorConfig,
+            embeddingConcurrency: effectiveEmbeddingConcurrency,
+        };
+        const acceleratorRuntime = new IndexingAcceleratorRuntime(
+            effectiveAcceleratorConfig,
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
@@ -1821,7 +1867,7 @@ export class Context {
             });
         }
         const embeddingLimiter = new AsyncLimiter(
-            accelerationDecision.active ? acceleratorConfig.embeddingConcurrency : 1,
+            effectiveEmbeddingConcurrency,
         );
         const insertLimiter = new AsyncLimiter(
             accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1,
@@ -1833,7 +1879,7 @@ export class Context {
         );
         console.log(`[Context] 🔧 Using CODE_CHUNK_LIMIT: ${CODE_CHUNK_LIMIT}`);
         console.log(
-            `[Context] ⚡ Index accelerator: mode=${acceleratorConfig.mode}, active=${accelerationDecision.active}, embeddingConcurrency=${accelerationDecision.active ? acceleratorConfig.embeddingConcurrency : 1}, insertConcurrency=${accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1}${accelerationDecision.fallbackReason ? `, fallback=${accelerationDecision.fallbackReason}` : ""}`,
+            `[Context] ⚡ Index accelerator: mode=${acceleratorConfig.mode}, active=${accelerationDecision.active}, embeddingConcurrency=${effectiveEmbeddingConcurrency}, insertConcurrency=${accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1}${accelerationDecision.fallbackReason ? `, fallback=${accelerationDecision.fallbackReason}` : ""}`,
         );
 
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
@@ -1841,6 +1887,14 @@ export class Context {
         let totalChunks = 0;
         let limitReached = false;
         let batchSequence = 0;
+        let productionComplete = false;
+        const publishBatchProgress = () => {
+            this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
+            this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+            options.onBatchProgress?.(this.lastAcceleratorSnapshot, {
+                productionComplete,
+            });
+        };
         const createBatchMetadata = (batch: Array<{ chunk: CodeChunk; codebasePath: string }>): IndexingBatchMetadata => {
             const filePaths = batch
                 .map((item) => item.chunk.metadata.filePath)
@@ -1914,10 +1968,10 @@ export class Context {
                                 }
                                 throw error;
                             }).finally(() => {
-                                this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
-                                this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+                                publishBatchProgress();
                             });
                             submittedBatches.push(submittedBatch);
+                            publishBatchProgress();
 
                             if (!accelerationDecision.active) {
                                 await submittedBatch;
@@ -1975,24 +2029,24 @@ export class Context {
                     }
                     throw error;
                 }).finally(() => {
-                    this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
-                    this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+                    publishBatchProgress();
                 });
                 submittedBatches.push(submittedBatch);
+                publishBatchProgress();
             }
         } catch (error) {
             await Promise.allSettled(submittedBatches);
-            this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
-            this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+            publishBatchProgress();
             throw error;
         }
 
+        productionComplete = true;
+        publishBatchProgress();
         await Promise.all(submittedBatches);
         if (limitReached) {
             acceleratorRuntime.recordLimitReached({ totalChunks, processedFiles });
         }
-        this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
-        this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
+        publishBatchProgress();
         console.log(
             `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, preIndexMs=${this.lastAcceleratorSnapshot.preIndexTotalMs}, preIndexScanMs=${this.lastAcceleratorSnapshot.preIndexScanMs}, preIndexHashMs=${this.lastAcceleratorSnapshot.preIndexHashMs}, preIndexFileListMs=${this.lastAcceleratorSnapshot.preIndexFileListMs}, preIndexSelectedFiles=${this.lastAcceleratorSnapshot.preIndexSelectedFileCount}, preIndexHashedFiles=${this.lastAcceleratorSnapshot.preIndexHashedFileCount}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
         );
@@ -2709,7 +2763,6 @@ export class Context {
         const splitterName = this.codeSplitter.constructor.name;
 
         if (splitterName === "AstCodeSplitter") {
-            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             return {
                 type: "ast",
                 hasBuiltinFallback: true,
@@ -2731,7 +2784,6 @@ export class Context {
         const splitterName = this.codeSplitter.constructor.name;
 
         if (splitterName === "AstCodeSplitter") {
-            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             return AstCodeSplitter.isLanguageSupported(language);
         }
 
@@ -2750,7 +2802,6 @@ export class Context {
         const splitterName = this.codeSplitter.constructor.name;
 
         if (splitterName === "AstCodeSplitter") {
-            const { AstCodeSplitter } = require("./splitter/ast-splitter");
             const isSupported = AstCodeSplitter.isLanguageSupported(language);
 
             return {
