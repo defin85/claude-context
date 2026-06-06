@@ -29,6 +29,8 @@ Options:
   --unit <name>           systemd --user unit name (default: ${defaultUnitName})
   --prepare-only          Recreate daemon with baseline env, do not start indexing
   --start                 Start force indexing and poll until indexed/indexfailed
+  --monitor-only          Poll current indexing run without starting a new one
+  --run-dir <path>        Existing run directory for --monitor-only
   --no-restart            Reuse the current daemon instead of recreating the unit
   --no-force              Do not pass force=true to index_codebase
   --help                  Show this help
@@ -51,6 +53,8 @@ function parseArgs(argv) {
         unitName: defaultUnitName,
         prepareOnly: false,
         start: false,
+        monitorOnly: false,
+        runDir: undefined,
         restart: true,
         force: true,
     };
@@ -90,6 +94,13 @@ function parseArgs(argv) {
             case '--start':
                 options.start = true;
                 break;
+            case '--monitor-only':
+                options.monitorOnly = true;
+                options.restart = false;
+                break;
+            case '--run-dir':
+                options.runDir = path.resolve(next());
+                break;
             case '--no-restart':
                 options.restart = false;
                 break;
@@ -112,11 +123,15 @@ function parseArgs(argv) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 0) {
         throw new Error('--timeout-ms must be a non-negative number');
     }
-    if (options.prepareOnly && options.start) {
-        throw new Error('Use either --prepare-only or --start, not both');
+    const selectedModes = [options.prepareOnly, options.start, options.monitorOnly].filter(Boolean).length;
+    if (selectedModes > 1) {
+        throw new Error('Use only one of --prepare-only, --start, or --monitor-only');
     }
-    if (!options.prepareOnly && !options.start) {
+    if (selectedModes === 0) {
         options.prepareOnly = true;
+    }
+    if (options.runDir && !options.monitorOnly) {
+        throw new Error('--run-dir is only supported with --monitor-only');
     }
 
     return options;
@@ -324,6 +339,14 @@ function appendJsonl(filePath, payload) {
     fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`);
 }
 
+function readJsonIfExists(filePath) {
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+        return null;
+    }
+}
+
 function createRunDir(artifactDir, mode) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const runDir = path.join(artifactDir, `${stamp}-${mode}`);
@@ -390,18 +413,26 @@ async function prepareDaemon(options, runDir) {
 
 async function measure(options, clientConfig, runDir) {
     const samplesPath = path.join(runDir, 'samples.jsonl');
-    const startedAt = new Date();
+    const previousSummary = options.monitorOnly
+        ? readJsonIfExists(path.join(runDir, 'summary.json'))
+        : null;
+    const startedAt = previousSummary?.startedAt
+        ? new Date(previousSummary.startedAt)
+        : new Date();
+    const monitorStartedAt = new Date();
 
-    const indexResult = await callTool(clientConfig, 'index_codebase', {
-        path: options.codebasePath,
-        force: options.force,
-    });
+    if (!options.monitorOnly) {
+        const indexResult = await callTool(clientConfig, 'index_codebase', {
+            path: options.codebasePath,
+            force: options.force,
+        });
 
-    writeJson(path.join(runDir, 'index-start-response.json'), {
-        capturedAt: new Date().toISOString(),
-        text: textFromResult(indexResult),
-        structuredContent: indexResult.structuredContent,
-    });
+        writeJson(path.join(runDir, 'index-start-response.json'), {
+            capturedAt: new Date().toISOString(),
+            text: textFromResult(indexResult),
+            structuredContent: indexResult.structuredContent,
+        });
+    }
 
     const deadline = options.timeoutMs > 0 ? Date.now() + options.timeoutMs : Number.POSITIVE_INFINITY;
     let finalResult = null;
@@ -432,7 +463,9 @@ async function measure(options, clientConfig, runDir) {
         codebasePath: options.codebasePath,
         mode: 'off',
         force: options.force,
+        monitorOnly: options.monitorOnly,
         startedAt: startedAt.toISOString(),
+        monitorStartedAt: options.monitorOnly ? monitorStartedAt.toISOString() : undefined,
         endedAt: endedAt.toISOString(),
         wallClockMs: endedAt.getTime() - startedAt.getTime(),
         finalStatus: finalResult?.structuredContent?.status,
@@ -443,8 +476,11 @@ async function measure(options, clientConfig, runDir) {
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));
-    const runDir = createRunDir(options.artifactDir, 'off');
-    const clientConfig = await prepareDaemon(options, runDir);
+    const runDir = options.runDir || createRunDir(options.artifactDir, 'off');
+    fs.mkdirSync(runDir, { recursive: true });
+    const clientConfig = options.monitorOnly
+        ? readClientConfig()
+        : await prepareDaemon(options, runDir);
 
     if (options.prepareOnly) {
         console.log(`Prepared INDEX_ACCELERATOR_MODE=off daemon measurement.`);
