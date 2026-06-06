@@ -560,11 +560,20 @@ This tool is versatile and can be used before completing various tasks to retrie
             ).catch(() => undefined);
         }
 
+        let idleAfterCancel: boolean | undefined;
         if (cancellation.active.length > 0) {
-            await this.workloadManager.waitForCodebaseIndexingIdle(accessDecision.absolutePath);
+            idleAfterCancel = await this.workloadManager.waitForCodebaseIndexingIdle(accessDecision.absolutePath);
+            if (!idleAfterCancel) {
+                console.warn(
+                    `[MCP] Timed out waiting for cancelled indexing workload to become idle for '${accessDecision.absolutePath}'.`
+                );
+            }
         }
 
-        await this.runtimeStatusManager.refresh('daemon-admin-cancel-workload');
+        await this.runtimeStatusManager.updateWorkloadState(
+            this.workloadManager.getSnapshot(),
+            idleAfterCancel === false ? 'daemon-admin-cancel-workload-timeout' : 'daemon-admin-cancel-workload'
+        );
 
         const text = cancellation.queued.length === 0 && cancellation.active.length === 0
             ? `No queued or active daemon indexing work was found for '${accessDecision.absolutePath}'.`
@@ -580,7 +589,8 @@ This tool is versatile and can be used before completing various tasks to retrie
                 path: accessDecision.absolutePath,
                 reason,
                 queued: cancellation.queued,
-                active: cancellation.active
+                active: cancellation.active,
+                ...(idleAfterCancel !== undefined ? { idleAfterCancel } : {})
             }
         };
     }

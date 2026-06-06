@@ -32,7 +32,6 @@ import {
     traversePreIndex,
 } from "./sync/preindex-traversal";
 import {
-    AsyncLimiter,
     IndexingBatchMetadata,
     IndexingAcceleratorConfig,
     IndexingAcceleratorRuntime,
@@ -41,9 +40,17 @@ import {
     getIndexingAcceleratorConfig,
     shouldAccelerateIndexing,
 } from "./indexing-accelerator";
+import { EmbeddingBatchScheduler } from "./embedding-batch-scheduler";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 const RETRIEVAL_SCHEMA_VERSION = 1;
+
+type PreparedChunkBatchInsert = {
+    collectionName: string;
+    documents: VectorDocument[];
+    insertMode: "regular" | "hybrid" | "bge_m3";
+    useBgeM3Upsert: boolean;
+};
 
 function normalizeCodebasePath(codebasePath: string): string {
     const trimmedPath = codebasePath.trim();
@@ -1079,8 +1086,10 @@ export class Context {
                         phase:
                             `Processing embedding batches ` +
                             `(${completed}/${snapshot.submittedBatches}, ` +
-                            `${snapshot.inFlightEmbeddingBatches} embedding in-flight, ` +
-                            `${snapshot.inFlightInsertBatches} insert in-flight)...`,
+                            `${snapshot.queuedBatches ?? 0} queued, ` +
+                            `${snapshot.runningEmbeddingBatches ?? snapshot.inFlightEmbeddingBatches} embedding, ` +
+                            `${snapshot.runningInsertBatches ?? snapshot.inFlightInsertBatches} insert, ` +
+                            `${snapshot.backpressureWaitMs ?? 0}ms backpressure)...`,
                         current: completed,
                         total: snapshot.submittedBatches,
                         percentage: Math.min(99, drainPercentage),
@@ -1866,13 +1875,8 @@ export class Context {
                 hashedFileCount: options.preIndexTraversal.hashedFileCount,
             });
         }
-        const embeddingLimiter = new AsyncLimiter(
-            effectiveEmbeddingConcurrency,
-        );
-        const insertLimiter = new AsyncLimiter(
-            accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1,
-        );
         const submittedBatches: Promise<void>[] = [];
+        const batchErrors: unknown[] = [];
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
             `[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`,
@@ -1887,7 +1891,9 @@ export class Context {
         let totalChunks = 0;
         let limitReached = false;
         let batchSequence = 0;
+        let chunkSequence = 0;
         let productionComplete = false;
+        const documentIdOccurrences = new Map<string, number>();
         const publishBatchProgress = () => {
             this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
             this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
@@ -1905,6 +1911,61 @@ export class Context {
                 firstFile: filePaths[0],
                 lastFile: filePaths[filePaths.length - 1],
             };
+        };
+        const scheduler = accelerationDecision.active
+            ? new EmbeddingBatchScheduler({
+                runtime: acceleratorRuntime,
+                embeddingConcurrency: effectiveEmbeddingConcurrency,
+                insertConcurrency: acceleratorConfig.insertConcurrency,
+                abortSignal,
+                onProgress: publishBatchProgress,
+            })
+            : undefined;
+        const submitBatch = async (
+            batch: Array<{ chunk: CodeChunk; codebasePath: string }>,
+            batchMetadata: IndexingBatchMetadata,
+            finalBatch: boolean,
+        ): Promise<void> => {
+            if (scheduler) {
+                const handle = await scheduler.submit({
+                    metadata: batchMetadata,
+                    runEmbedding: () => this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata),
+                    runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id),
+                });
+                const completion = handle.completion.catch((error) => {
+                    const searchType = isHybrid === true ? "hybrid" : "regular";
+                    console.error(
+                        `[Context] ❌ Failed to process ${finalBatch ? "final " : ""}chunk batch ${batchMetadata.id} for ${searchType}:`,
+                        error,
+                    );
+                    if (error instanceof Error) {
+                        console.error("[Context] Stack trace:", error.stack);
+                    }
+                    batchErrors.push(error);
+                }).finally(() => {
+                    publishBatchProgress();
+                });
+                submittedBatches.push(completion);
+                publishBatchProgress();
+                return;
+            }
+
+            const submittedBatch = this.processChunkBuffer(batch, acceleratorRuntime, batchMetadata).catch((error) => {
+                const searchType = isHybrid === true ? "hybrid" : "regular";
+                console.error(
+                    `[Context] ❌ Failed to process ${finalBatch ? "final " : ""}chunk batch ${batchMetadata.id} for ${searchType}:`,
+                    error,
+                );
+                if (error instanceof Error) {
+                    console.error("[Context] Stack trace:", error.stack);
+                }
+                throw error;
+            }).finally(() => {
+                publishBatchProgress();
+            });
+            submittedBatches.push(submittedBatch);
+            publishBatchProgress();
+            await submittedBatch;
         };
 
         try {
@@ -1942,7 +2003,15 @@ export class Context {
 
                     // Add chunks to buffer
                     for (const chunk of chunks) {
-                        chunkBuffer.push({ chunk, codebasePath });
+                        const indexedChunk = this.prepareChunkForIndex(
+                            chunk,
+                            filePath,
+                            codebasePath,
+                            chunkSequence,
+                            documentIdOccurrences,
+                        );
+                        chunkBuffer.push({ chunk: indexedChunk, codebasePath });
+                        chunkSequence++;
                         totalChunks++;
 
                         // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
@@ -1951,31 +2020,7 @@ export class Context {
                             const batch = chunkBuffer;
                             const batchMetadata = createBatchMetadata(batch);
                             chunkBuffer = [];
-                            const submittedBatch = embeddingLimiter.run(async () => {
-                                await this.processChunkBuffer(batch, acceleratorRuntime, insertLimiter, batchMetadata);
-                            }, abortSignal).catch((error) => {
-                                const searchType =
-                                    isHybrid === true ? "hybrid" : "regular";
-                                console.error(
-                                    `[Context] ❌ Failed to process chunk batch ${batchMetadata.id} for ${searchType}:`,
-                                    error,
-                                );
-                                if (error instanceof Error) {
-                                    console.error(
-                                        "[Context] Stack trace:",
-                                        error.stack,
-                                    );
-                                }
-                                throw error;
-                            }).finally(() => {
-                                publishBatchProgress();
-                            });
-                            submittedBatches.push(submittedBatch);
-                            publishBatchProgress();
-
-                            if (!accelerationDecision.active) {
-                                await submittedBatch;
-                            }
+                            await submitBatch(batch, batchMetadata, false);
                         }
 
                         // Check if chunk limit is reached
@@ -2017,24 +2062,12 @@ export class Context {
                 const finalBatch = chunkBuffer;
                 const finalBatchMetadata = createBatchMetadata(finalBatch);
                 chunkBuffer = [];
-                const submittedBatch = embeddingLimiter.run(async () => {
-                    await this.processChunkBuffer(finalBatch, acceleratorRuntime, insertLimiter, finalBatchMetadata);
-                }, abortSignal).catch((error) => {
-                    console.error(
-                        `[Context] ❌ Failed to process final chunk batch ${finalBatchMetadata.id} for ${searchType}:`,
-                        error,
-                    );
-                    if (error instanceof Error) {
-                        console.error("[Context] Stack trace:", error.stack);
-                    }
-                    throw error;
-                }).finally(() => {
-                    publishBatchProgress();
-                });
-                submittedBatches.push(submittedBatch);
-                publishBatchProgress();
+                await submitBatch(finalBatch, finalBatchMetadata, true);
             }
         } catch (error) {
+            if (scheduler) {
+                await scheduler.cancel(error instanceof Error ? error : new Error(String(error)));
+            }
             await Promise.allSettled(submittedBatches);
             publishBatchProgress();
             throw error;
@@ -2042,7 +2075,14 @@ export class Context {
 
         productionComplete = true;
         publishBatchProgress();
-        await Promise.all(submittedBatches);
+        if (scheduler) {
+            await Promise.all(submittedBatches);
+        } else {
+            await Promise.all(submittedBatches);
+        }
+        if (batchErrors.length > 0) {
+            throw batchErrors[0];
+        }
         if (limitReached) {
             acceleratorRuntime.recordLimitReached({ totalChunks, processedFiles });
         }
@@ -2064,13 +2104,63 @@ export class Context {
         };
     }
 
+    private prepareChunkForIndex(
+        chunk: CodeChunk,
+        filePath: string,
+        codebasePath: string,
+        chunkIndex: number,
+        documentIdOccurrences: Map<string, number>,
+    ): CodeChunk {
+        const chunkFilePath = chunk.metadata.filePath || filePath;
+        const relativePath = path.relative(codebasePath, chunkFilePath);
+        const startLine = chunk.metadata.startLine || 0;
+        const endLine = chunk.metadata.endLine || 0;
+        const baseDocumentId = this.generateId(
+            relativePath,
+            startLine,
+            endLine,
+            chunk.content,
+        );
+        const duplicateOrdinal = documentIdOccurrences.get(baseDocumentId) ?? 0;
+        documentIdOccurrences.set(baseDocumentId, duplicateOrdinal + 1);
+        const documentId = duplicateOrdinal === 0
+            ? baseDocumentId
+            : this.generateId(
+                relativePath,
+                startLine,
+                endLine,
+                `${chunk.content}\u0000duplicate:${duplicateOrdinal}`,
+            );
+
+        return {
+            ...chunk,
+            metadata: {
+                ...chunk.metadata,
+                filePath: chunkFilePath,
+                documentId,
+                chunkIndex,
+                duplicateOrdinal,
+            },
+        };
+    }
+
+    private getPublicChunkMetadata(chunk: CodeChunk): Record<string, unknown> {
+        const metadata: Record<string, unknown> = { ...chunk.metadata };
+        delete metadata.filePath;
+        delete metadata.startLine;
+        delete metadata.endLine;
+        delete metadata.documentId;
+        delete metadata.chunkIndex;
+        delete metadata.duplicateOrdinal;
+        return metadata;
+    }
+
     /**
      * Process accumulated chunk buffer
      */
     private async processChunkBuffer(
         chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>,
         acceleratorRuntime?: IndexingAcceleratorRuntime,
-        insertLimiter?: AsyncLimiter,
         batchMetadata?: IndexingBatchMetadata,
     ): Promise<void> {
         if (chunkBuffer.length === 0) return;
@@ -2097,7 +2187,13 @@ export class Context {
             lastFile: chunks[chunks.length - 1]?.metadata.filePath,
         });
         try {
-            await this.processChunkBatch(chunks, codebasePath, acceleratorRuntime, insertLimiter, batchMetadata?.id);
+            const preparedInsert = await this.buildPreparedChunkBatchInsert(
+                chunks,
+                codebasePath,
+                acceleratorRuntime,
+                batchMetadata?.id,
+            );
+            await this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata?.id);
             acceleratorRuntime?.recordBatchCompleted(batchMetadata?.id);
         } catch (error) {
             acceleratorRuntime?.recordBatchFailed(batchMetadata?.id);
@@ -2105,16 +2201,36 @@ export class Context {
         }
     }
 
-    /**
-     * Process a batch of chunks
-     */
-    private async processChunkBatch(
+    private prepareChunkBatchInsert(
+        chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>,
+        acceleratorRuntime: IndexingAcceleratorRuntime,
+        batchMetadata: IndexingBatchMetadata,
+    ): Promise<PreparedChunkBatchInsert> {
+        const chunks = chunkBuffer.map((item) => item.chunk);
+        const codebasePath = chunkBuffer[0].codebasePath;
+        const estimatedTokens = chunks.reduce(
+            (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
+            0,
+        );
+        const isHybrid = this.getIsHybrid();
+        const searchType = isHybrid === true ? "hybrid" : "regular";
+        console.log(
+            `[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`,
+        );
+        return this.buildPreparedChunkBatchInsert(
+            chunks,
+            codebasePath,
+            acceleratorRuntime,
+            batchMetadata.id,
+        );
+    }
+
+    private async buildPreparedChunkBatchInsert(
         chunks: CodeChunk[],
         codebasePath: string,
         acceleratorRuntime?: IndexingAcceleratorRuntime,
-        insertLimiter?: AsyncLimiter,
         batchId?: number,
-    ): Promise<void> {
+    ): Promise<PreparedChunkBatchInsert> {
         const retrievalMode = this.getRetrievalMode();
         const isHybrid = retrievalMode === "hybrid_bm25";
 
@@ -2154,11 +2270,13 @@ export class Context {
                     chunk.metadata.filePath,
                 );
                 const fileExtension = path.extname(chunk.metadata.filePath);
-                const { filePath, startLine, endLine, ...restMetadata } =
-                    chunk.metadata;
+                const restMetadata = this.getPublicChunkMetadata(chunk);
+                const documentId = chunk.metadata.documentId;
+                const chunkIndex = chunk.metadata.chunkIndex;
+                const duplicateOrdinal = chunk.metadata.duplicateOrdinal;
 
                 return {
-                    id: this.generateId(
+                    id: documentId || this.generateId(
                         relativePath,
                         chunk.metadata.startLine || 0,
                         chunk.metadata.endLine || 0,
@@ -2176,35 +2294,20 @@ export class Context {
                         ...restMetadata,
                         codebasePath,
                         language: chunk.metadata.language || "unknown",
-                        chunkIndex: index,
+                        chunkIndex: chunkIndex ?? index,
+                        ...(duplicateOrdinal && duplicateOrdinal > 0 ? { duplicateOrdinal } : {}),
                         retrievalMode,
                         retrievalSchemaVersion: RETRIEVAL_SCHEMA_VERSION,
                     },
                 };
             });
 
-            const collectionName = this.getCollectionName(codebasePath);
-            const insert = () => {
-                if (acceleratorRuntime?.getSnapshot().active && this.vectorDatabase.upsertBgeM3) {
-                    return this.vectorDatabase.upsertBgeM3(collectionName, documents);
-                }
-
-                return this.vectorDatabase.insertBgeM3(collectionName, documents);
+            return {
+                collectionName: this.getCollectionName(codebasePath),
+                documents,
+                insertMode: "bge_m3",
+                useBgeM3Upsert: Boolean(acceleratorRuntime?.getSnapshot().active && this.vectorDatabase.upsertBgeM3),
             };
-            if (acceleratorRuntime && insertLimiter) {
-                try {
-                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
-                }
-            } else {
-                try {
-                    await insert();
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
-                }
-            }
-            return;
         }
 
         let embeddings: EmbeddingVector[];
@@ -2230,11 +2333,13 @@ export class Context {
                     chunk.metadata.filePath,
                 );
                 const fileExtension = path.extname(chunk.metadata.filePath);
-                const { filePath, startLine, endLine, ...restMetadata } =
-                    chunk.metadata;
+                const restMetadata = this.getPublicChunkMetadata(chunk);
+                const documentId = chunk.metadata.documentId;
+                const chunkIndex = chunk.metadata.chunkIndex;
+                const duplicateOrdinal = chunk.metadata.duplicateOrdinal;
 
                 return {
-                    id: this.generateId(
+                    id: documentId || this.generateId(
                         relativePath,
                         chunk.metadata.startLine || 0,
                         chunk.metadata.endLine || 0,
@@ -2250,29 +2355,18 @@ export class Context {
                         ...restMetadata,
                         codebasePath,
                         language: chunk.metadata.language || "unknown",
-                        chunkIndex: index,
+                        chunkIndex: chunkIndex ?? index,
+                        ...(duplicateOrdinal && duplicateOrdinal > 0 ? { duplicateOrdinal } : {}),
                     },
                 };
             });
 
-            // Store to vector database
-            const insert = () => this.vectorDatabase.insertHybrid(
-                this.getCollectionName(codebasePath),
+            return {
+                collectionName: this.getCollectionName(codebasePath),
                 documents,
-            );
-            if (acceleratorRuntime && insertLimiter) {
-                try {
-                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
-                }
-            } else {
-                try {
-                    await insert();
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
-                }
-            }
+                insertMode: "hybrid",
+                useBgeM3Upsert: false,
+            };
         } else {
             // Create regular vector documents
             const documents: VectorDocument[] = chunks.map((chunk, index) => {
@@ -2287,11 +2381,13 @@ export class Context {
                     chunk.metadata.filePath,
                 );
                 const fileExtension = path.extname(chunk.metadata.filePath);
-                const { filePath, startLine, endLine, ...restMetadata } =
-                    chunk.metadata;
+                const restMetadata = this.getPublicChunkMetadata(chunk);
+                const documentId = chunk.metadata.documentId;
+                const chunkIndex = chunk.metadata.chunkIndex;
+                const duplicateOrdinal = chunk.metadata.duplicateOrdinal;
 
                 return {
-                    id: this.generateId(
+                    id: documentId || this.generateId(
                         relativePath,
                         chunk.metadata.startLine || 0,
                         chunk.metadata.endLine || 0,
@@ -2307,29 +2403,62 @@ export class Context {
                         ...restMetadata,
                         codebasePath,
                         language: chunk.metadata.language || "unknown",
-                        chunkIndex: index,
+                        chunkIndex: chunkIndex ?? index,
+                        ...(duplicateOrdinal && duplicateOrdinal > 0 ? { duplicateOrdinal } : {}),
                     },
                 };
             });
 
-            // Store to vector database
-            const insert = () => this.vectorDatabase.insert(
-                this.getCollectionName(codebasePath),
+            return {
+                collectionName: this.getCollectionName(codebasePath),
                 documents,
-            );
-            if (acceleratorRuntime && insertLimiter) {
-                try {
-                    await insertLimiter.run(() => acceleratorRuntime.trackInsert(insert));
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
+                insertMode: "regular",
+                useBgeM3Upsert: false,
+            };
+        }
+    }
+
+    private async insertPreparedChunkBatch(
+        preparedInsert: PreparedChunkBatchInsert,
+        acceleratorRuntime?: IndexingAcceleratorRuntime,
+        batchId?: number,
+    ): Promise<void> {
+        const insert = async () => {
+            if (preparedInsert.insertMode === "bge_m3") {
+                if (preparedInsert.useBgeM3Upsert && this.vectorDatabase.upsertBgeM3) {
+                    await this.vectorDatabase.upsertBgeM3(
+                        preparedInsert.collectionName,
+                        preparedInsert.documents,
+                    );
+                    return;
                 }
-            } else {
-                try {
-                    await insert();
-                } catch (error) {
-                    throw this.createBatchStageError("insert", batchId, error);
-                }
+                await this.vectorDatabase.insertBgeM3(
+                    preparedInsert.collectionName,
+                    preparedInsert.documents,
+                );
+                return;
             }
+            if (preparedInsert.insertMode === "hybrid") {
+                await this.vectorDatabase.insertHybrid(
+                    preparedInsert.collectionName,
+                    preparedInsert.documents,
+                );
+                return;
+            }
+            await this.vectorDatabase.insert(
+                preparedInsert.collectionName,
+                preparedInsert.documents,
+            );
+        };
+
+        try {
+            if (acceleratorRuntime) {
+                await acceleratorRuntime.trackInsert(insert);
+                return;
+            }
+            await insert();
+        } catch (error) {
+            throw this.createBatchStageError("insert", batchId, error);
         }
     }
 

@@ -118,7 +118,7 @@ test('managed worker manager plans endpoints at request time without starting wo
     assert.equal(manager.workers.length, 0);
 });
 
-test('managed worker manager retires workers when runtime VRAM pressure exceeds the configured limit', async () => {
+test('managed worker manager keeps running workers when runtime VRAM rises after startup', async () => {
     let reads = 0;
     let stopped = 0;
     const manager = await createManagedBgeM3WorkerManager(createConfig({
@@ -144,9 +144,10 @@ test('managed worker manager retires workers when runtime VRAM pressure exceeds 
     assert.equal(manager.workers.length, 1);
 
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(stopped, 1);
-    assert.equal(manager.workers.length, 0);
-    assert.match(manager.fallbackReason || '', /exceeded limit/);
+    assert.equal(stopped, 0);
+    assert.equal(manager.workers.length, 1);
+    assert.equal(manager.getSnapshot().runningWorkers.length, 1);
+    assert.doesNotMatch(manager.fallbackReason || '', /runtime VRAM pressure/i);
 });
 
 test('managed worker manager uses VRAM budget and primary endpoint capacity when planning workers', async () => {

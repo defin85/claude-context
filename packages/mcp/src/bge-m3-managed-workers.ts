@@ -381,7 +381,6 @@ export async function createManagedBgeM3WorkerManager(
     let startPromise: Promise<string[]> | undefined;
     let stopDebounceTimer: ReturnType<typeof setTimeout> | undefined;
     let idleFallbackTimer: ReturnType<typeof setTimeout> | undefined;
-    let pressureTimer: ReturnType<typeof setInterval> | undefined;
 
     const readVramSnapshot = deps.readVram || readVram;
     const checkSystemdUserAvailable = deps.isSystemdUserAvailable || isSystemdUserAvailable;
@@ -401,38 +400,6 @@ export async function createManagedBgeM3WorkerManager(
             clearTimeout(idleFallbackTimer);
             idleFallbackTimer = undefined;
         }
-    };
-
-    const clearPressureTimer = () => {
-        if (pressureTimer) {
-            clearInterval(pressureTimer);
-            pressureTimer = undefined;
-        }
-    };
-
-    const startPressureMonitor = () => {
-        clearPressureTimer();
-        if (workers.length === 0) {
-            return;
-        }
-
-        pressureTimer = setInterval(() => {
-            void (async () => {
-                const pressure = await readVramSnapshot();
-                if (!pressure) {
-                    return;
-                }
-                if (pressure.percentUsed <= config.acceleratorVramLimitPercent) {
-                    return;
-                }
-
-                fallbackReason = `Runtime VRAM usage ${pressure.percentUsed.toFixed(1)}% exceeded limit ${config.acceleratorVramLimitPercent}%`;
-                await manager.stopAll('runtime VRAM pressure exceeded');
-            })().catch((error) => {
-                console.warn(`[MCP] Failed to check managed BGE-M3 worker runtime pressure: ${error instanceof Error ? error.message : String(error)}`);
-            });
-        }, config.acceleratorWorkerPressureCheckMs);
-        pressureTimer.unref?.();
     };
 
     const startPlannedWorkers = async (reason?: string): Promise<string[]> => {
@@ -530,7 +497,6 @@ export async function createManagedBgeM3WorkerManager(
 
         for (let index = 0; index < plannedWorkers && workers.length < managedWorkerLimit; index++) {
             const port = config.acceleratorManagedWorkerStartPort + index;
-            const endpoint = `http://127.0.0.1:${port}`;
             if (!await checkPortAvailable(port)) {
                 console.warn(`[MCP] Skipping managed BGE-M3 worker port ${port}: port is already in use.`);
                 continue;
@@ -603,7 +569,6 @@ export async function createManagedBgeM3WorkerManager(
             }
         }
 
-        startPressureMonitor();
         return plannedEndpoints;
     };
 
@@ -668,7 +633,6 @@ export async function createManagedBgeM3WorkerManager(
         },
         async stopAll(reason?: string): Promise<void> {
             clearStopTimers();
-            clearPressureTimer();
             if (workers.length === 0) {
                 return;
             }

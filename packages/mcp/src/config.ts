@@ -285,7 +285,7 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3StoreColbert: getBooleanFromEnv('BGE_M3_STORE_COLBERT', true),
         acceleratorMode,
         acceleratorEmbeddingConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_EMBEDDING_CONCURRENCY', acceleratorMode === 'auto' ? 2 : 1),
-        acceleratorInsertConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_INSERT_CONCURRENCY', 1),
+        acceleratorInsertConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_INSERT_CONCURRENCY', acceleratorMode === 'auto' ? 2 : 1),
         acceleratorMaxBgeM3Workers: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_MAX_WORKERS', 1),
         acceleratorVramLimitPercent: Math.max(1, Math.min(100, getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75))),
         acceleratorRetryBudget: getPositiveIntegerFromEnvWithDefault('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
@@ -667,7 +667,7 @@ Environment Variables:
   BGE_M3_ACCELERATOR      Legacy alias for INDEX_ACCELERATOR_MODE
   INDEX_ACCELERATOR_MODE  Accelerator mode: off or auto (default: off)
   INDEX_EMBEDDING_CONCURRENCY Max in-flight embedding batches (default: 2 in auto, else 1)
-  INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 1)
+  INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 2 in auto mode, otherwise 1)
   BGE_M3_ACCELERATOR_MAX_WORKERS Total BGE-M3 worker budget including primary (default: 1)
   BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT Managed worker VRAM ceiling (default: 75)
   BGE_M3_ACCELERATOR_MANAGED_WORKERS Start extra BGE-M3 sidecars when eligible (default: false)

@@ -6,6 +6,9 @@ export interface CodeChunk {
         endLine: number;
         language?: string;
         filePath?: string;
+        documentId?: string;
+        chunkIndex?: number;
+        duplicateOrdinal?: number;
     };
 }
 

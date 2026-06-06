@@ -26,6 +26,10 @@ export interface IndexingAcceleratorSnapshot {
     accelerateBackgroundSync: boolean;
     inFlightEmbeddingBatches: number;
     inFlightInsertBatches: number;
+    queuedBatches?: number;
+    runningEmbeddingBatches?: number;
+    runningInsertBatches?: number;
+    backpressureWaitMs?: number;
     submittedBatches: number;
     completedBatches: number;
     failedBatches: number;
@@ -74,7 +78,7 @@ export interface IndexingBatchMetadata {
 
 export interface IndexingBatchSnapshot extends IndexingBatchMetadata {
     attempts: number;
-    state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+    state: 'queued' | 'running' | 'running_embedding' | 'running_insert' | 'completed' | 'failed' | 'cancelled';
 }
 
 export class IndexingAcceleratorRuntime {
@@ -94,6 +98,10 @@ export class IndexingAcceleratorRuntime {
             accelerateBackgroundSync: config.accelerateBackgroundSync,
             inFlightEmbeddingBatches: 0,
             inFlightInsertBatches: 0,
+            queuedBatches: 0,
+            runningEmbeddingBatches: 0,
+            runningInsertBatches: 0,
+            backpressureWaitMs: 0,
             submittedBatches: 0,
             completedBatches: 0,
             failedBatches: 0,
@@ -188,6 +196,33 @@ export class IndexingAcceleratorRuntime {
         });
     }
 
+    recordBatchQueued(metadata: IndexingBatchMetadata): void {
+        this.snapshot.submittedBatches++;
+        this.batches.set(metadata.id, {
+            ...metadata,
+            attempts: 1,
+            state: 'queued',
+        });
+    }
+
+    recordBatchRunningEmbedding(batchId?: number): void {
+        if (batchId !== undefined) {
+            const batch = this.batches.get(batchId);
+            if (batch) {
+                batch.state = 'running_embedding';
+            }
+        }
+    }
+
+    recordBatchRunningInsert(batchId?: number): void {
+        if (batchId !== undefined) {
+            const batch = this.batches.get(batchId);
+            if (batch) {
+                batch.state = 'running_insert';
+            }
+        }
+    }
+
     recordBatchCompleted(batchId?: number): void {
         this.snapshot.completedBatches++;
         if (batchId !== undefined) {
@@ -204,6 +239,15 @@ export class IndexingAcceleratorRuntime {
             const batch = this.batches.get(batchId);
             if (batch) {
                 batch.state = 'failed';
+            }
+        }
+    }
+
+    recordBatchCancelled(batchId?: number): void {
+        if (batchId !== undefined) {
+            const batch = this.batches.get(batchId);
+            if (batch) {
+                batch.state = 'cancelled';
             }
         }
     }
@@ -231,6 +275,20 @@ export class IndexingAcceleratorRuntime {
     recordChunkLimit(codeChunkLimit: number): void {
         this.snapshot.codeChunkLimit = codeChunkLimit;
         this.snapshot.limitReached = false;
+    }
+
+    recordSchedulerSnapshot(metrics: {
+        queuedBatches: number;
+        runningEmbeddingBatches: number;
+        runningInsertBatches: number;
+    }): void {
+        this.snapshot.queuedBatches = metrics.queuedBatches;
+        this.snapshot.runningEmbeddingBatches = metrics.runningEmbeddingBatches;
+        this.snapshot.runningInsertBatches = metrics.runningInsertBatches;
+    }
+
+    recordBackpressureWait(durationMs: number): void {
+        this.snapshot.backpressureWaitMs = (this.snapshot.backpressureWaitMs ?? 0) + durationMs;
     }
 
     recordLimitReached(metrics: { totalChunks: number; processedFiles: number }): void {
@@ -374,7 +432,7 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
     return {
         mode,
         embeddingConcurrency: parsePositiveInteger('INDEX_EMBEDDING_CONCURRENCY', mode === 'auto' ? 2 : 1),
-        insertConcurrency: parsePositiveInteger('INDEX_INSERT_CONCURRENCY', 1),
+        insertConcurrency: parsePositiveInteger('INDEX_INSERT_CONCURRENCY', mode === 'auto' ? 2 : 1),
         maxBgeM3Workers: parsePositiveInteger('BGE_M3_ACCELERATOR_MAX_WORKERS', 1),
         vramLimitPercent: parsePercent('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75),
         retryBudget: parsePositiveInteger('INDEX_ACCELERATOR_RETRY_BUDGET', 1),

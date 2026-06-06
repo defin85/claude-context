@@ -29,5 +29,5 @@
 - [x] 5.1 Run focused core tests for BGE-M3 embedding worker pool and context chunk-limit behavior.
 - [x] 5.2 Run `pnpm --filter @zilliz/claude-context-core typecheck` and build validation.
 - [x] 5.3 Run `pnpm --filter @zilliz/claude-context-mcp typecheck` and build validation if status payloads change in MCP.
-- [ ] 5.4 Run a small live smoke where an extra sidecar is temporarily rejected and then recovered.
+- [x] 5.4 Run a small live smoke where an extra sidecar is temporarily rejected and then recovered.
 - [x] 5.5 Run or document a large-repo force indexing retry with raised `CODE_CHUNK_LIMIT` and verify the configured limit is visible in status.

@@ -156,6 +156,25 @@ class OneChunkSplitter implements Splitter {
     setChunkOverlap(): void {}
 }
 
+class DuplicateChunkSplitter implements Splitter {
+    constructor(private readonly chunkCount: number) {}
+
+    async split(code: string, language: string, filePath?: string): Promise<CodeChunk[]> {
+        return Array.from({ length: this.chunkCount }, () => ({
+            content: code,
+            metadata: {
+                startLine: 1,
+                endLine: 1,
+                language,
+                filePath,
+            },
+        }));
+    }
+
+    setChunkSize(): void {}
+    setChunkOverlap(): void {}
+}
+
 class TrackingVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents = new Map<string, VectorDocument[]>();
@@ -278,6 +297,12 @@ describe('Context accelerated batch pipeline', () => {
             path.join(dir, `file${item}.ts`),
             `export const value${item} = ${item};`,
         )));
+        return dir;
+    }
+
+    async function createSingleFileCodebase(): Promise<string> {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-context-accelerator-single-'));
+        await fs.writeFile(path.join(dir, 'large.ts'), 'export const repeated = true;');
         return dir;
     }
 
@@ -473,6 +498,42 @@ describe('Context accelerated batch pipeline', () => {
         expect(embedding.maxActive).toBeLessThanOrEqual(2);
     });
 
+    it('handles accelerated cancellation without unhandled batch rejections', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.EMBEDDING_BATCH_SIZE = '1';
+        const controller = new AbortController();
+        let scheduledAbort = false;
+        const unhandledRejections: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown) => {
+            unhandledRejections.push(reason);
+        };
+        const embedding = new DelayedEmbedding(30, () => {
+            if (!scheduledAbort) {
+                scheduledAbort = true;
+                setTimeout(() => controller.abort(new IndexAbortError('queued cancellation')), 5);
+            }
+        });
+        const context = new Context({
+            embedding,
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new DuplicateChunkSplitter(24),
+        });
+        const codebasePath = await createSingleFileCodebase();
+
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            await expect(context.indexCodebase(codebasePath, undefined, false, controller.signal))
+                .rejects
+                .toBeInstanceOf(IndexAbortError);
+            await new Promise((resolve) => setImmediate(resolve));
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        expect(unhandledRejections).toHaveLength(0);
+    });
+
     it('preserves BGE-M3 full retrieval metadata under reordered batch completion', async () => {
         process.env.INDEX_ACCELERATOR_MODE = 'auto';
         process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
@@ -493,6 +554,34 @@ describe('Context accelerated batch pipeline', () => {
             expect(document.metadata.retrievalMode).toBe('bge_m3_full');
             expect(document.metadata.retrievalSchemaVersion).toBe(1);
         }
+    });
+
+    it('keeps BGE-M3 document IDs unique when a large file emits identical chunks across accelerated upserts', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.EMBEDDING_BATCH_SIZE = '4';
+        const duplicateChunkCount = 20;
+        const vectorDatabase = new TrackingVectorDatabase();
+        const upsertBgeM3 = jest.spyOn(vectorDatabase, 'upsertBgeM3')
+            .mockImplementation(async (collectionName, documents) => {
+                const ids = documents.map((document) => document.id);
+                expect(new Set(ids).size).toBe(ids.length);
+                await TrackingVectorDatabase.prototype.upsertBgeM3.call(vectorDatabase, collectionName, documents);
+            });
+
+        await new Context({
+            embedding: new DelayedBgeM3Embedding(10),
+            vectorDatabase,
+            codeSplitter: new DuplicateChunkSplitter(duplicateChunkCount),
+        }).indexCodebase(await createSingleFileCodebase());
+
+        const documents = vectorDatabase.allDocuments();
+        expect(documents).toHaveLength(duplicateChunkCount);
+        expect(new Set(documents.map((document) => document.id)).size).toBe(duplicateChunkCount);
+        expect(documents.map((document) => document.metadata.chunkIndex)).toEqual(
+            Array.from({ length: duplicateChunkCount }, (_, index) => index),
+        );
+        expect(upsertBgeM3).toHaveBeenCalledTimes(5);
     });
 
     it('uses accepted BGE-M3 worker count as default embedding concurrency', async () => {
@@ -520,6 +609,47 @@ describe('Context accelerated batch pipeline', () => {
         expect(embedding.maxActive).toBe(4);
         expect(snapshot.embeddingConcurrency).toBe(4);
         expect(snapshot.activeWorkers).toBe(4);
+    });
+
+    it('continues scheduling when one BGE-M3 worker is rejected and healthy workers remain', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        const codebasePath = await createCodebase();
+        const embedding = new DelayedBgeM3Embedding(5);
+        embedding.workerSnapshots = [
+            {
+                endpoint: 'http://127.0.0.1:8000',
+                healthy: false,
+                inFlight: 0,
+                rejectedReason: 'fetch failed',
+                lastFailureAt: '2026-06-04T00:00:00.000Z',
+                recoveryAttempts: 1,
+                poolState: 'rejected' as const,
+            },
+            {
+                endpoint: 'http://127.0.0.1:8001',
+                healthy: true,
+                inFlight: 0,
+                lastSuccessAt: '2026-06-04T00:00:01.000Z',
+                recoveryAttempts: 0,
+                poolState: 'accepted' as const,
+            },
+        ];
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(codebasePath);
+
+        const acceleratorSnapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(vectorDatabase.allDocuments()).toHaveLength(4);
+        expect(acceleratorSnapshot.completedBatches).toBe(4);
+        expect(acceleratorSnapshot.failedBatches).toBe(0);
+        expect(acceleratorSnapshot.activeWorkers).toBe(1);
+        expect(acceleratorSnapshot.rejectedWorkers).toBe(1);
     });
 
     it('reports BGE-M3 worker-pool retries in accelerator status', async () => {

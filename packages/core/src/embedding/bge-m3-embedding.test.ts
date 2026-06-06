@@ -211,6 +211,74 @@ describe('BgeM3Embedding', () => {
         ]);
     });
 
+    it('recovers the primary worker after a transient batch failure', async () => {
+        let primaryFailuresRemaining = 1;
+        let primaryEmbedBatchCalls = 0;
+
+        const fetchMock = jest.fn((url: string, init: RequestInit) => {
+            if (url.endsWith('/health')) {
+                return Promise.resolve(jsonResponse({ ok: true }));
+            }
+            if (url.endsWith('/metadata')) {
+                return Promise.resolve(jsonResponse(fullMetadata));
+            }
+            if (url === 'http://127.0.0.1:8000/embed_batch' && init.method === 'POST') {
+                primaryEmbedBatchCalls++;
+                if (primaryFailuresRemaining > 0) {
+                    primaryFailuresRemaining--;
+                    return Promise.resolve({
+                        ok: false,
+                        status: 503,
+                        statusText: 'Service Unavailable',
+                        json: async () => ({}),
+                    } as Response);
+                }
+                return Promise.resolve(jsonResponse([fullEmbedding]));
+            }
+
+            return Promise.resolve(jsonResponse([fullEmbedding]));
+        });
+
+        const embedding = new BgeM3Embedding({
+            endpoint: 'http://127.0.0.1:8000',
+            workerEndpoints: ['http://127.0.0.1:8001'],
+            mode: 'full',
+            retryBudget: 1,
+            workerRecoveryCooldownMs: 10,
+            fetch: fetchMock,
+        });
+
+        await embedding.embedMultiBatchWithWorkerPool(['first']);
+
+        expect(embedding.getWorkerSnapshot()).toEqual([
+            expect.objectContaining({
+                endpoint: 'http://127.0.0.1:8000',
+                healthy: false,
+                rejectedReason: expect.stringContaining('503 Service Unavailable'),
+                recoveryAttempts: 0,
+                poolState: 'rejected',
+            }),
+            expect.objectContaining({ endpoint: 'http://127.0.0.1:8001', healthy: true }),
+        ]);
+
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        await embedding.embedMultiBatchWithWorkerPool(['second']);
+
+        expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8000/health', expect.objectContaining({ method: 'GET' }));
+        expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8000/metadata', expect.objectContaining({ method: 'GET' }));
+        expect(embedding.getWorkerSnapshot()).toEqual([
+            expect.objectContaining({
+                endpoint: 'http://127.0.0.1:8000',
+                healthy: true,
+                rejectedReason: undefined,
+                recoveryAttempts: 1,
+                poolState: 'accepted',
+            }),
+            expect.objectContaining({ endpoint: 'http://127.0.0.1:8001', healthy: true }),
+        ]);
+        expect(primaryEmbedBatchCalls).toBeGreaterThanOrEqual(2);
+    });
+
     it('registers managed worker endpoints after construction without duplicating the primary endpoint', async () => {
         const fetchMock = jest.fn((url: string) => {
             if (url.endsWith('/health')) {
@@ -334,6 +402,62 @@ describe('BgeM3Embedding', () => {
         ]);
 
         expect(primaryEmbedBatchCalls).toBeGreaterThanOrEqual(2);
+        expect(extraEmbedBatchCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('makes fetch failed workers immediately eligible for health-based recovery', async () => {
+        let extraFailuresRemaining = 1;
+        let extraEmbedBatchCalls = 0;
+
+        const fetchMock = jest.fn((url: string, init: RequestInit) => {
+            if (url.endsWith('/health')) {
+                return Promise.resolve(jsonResponse({ ok: true }));
+            }
+            if (url.endsWith('/metadata')) {
+                return Promise.resolve(jsonResponse(fullMetadata));
+            }
+            if (url === 'http://127.0.0.1:8001/embed_batch' && init.method === 'POST') {
+                extraEmbedBatchCalls++;
+                if (extraFailuresRemaining > 0) {
+                    extraFailuresRemaining--;
+                    return Promise.reject(new TypeError('fetch failed'));
+                }
+                return Promise.resolve(jsonResponse([fullEmbedding]));
+            }
+
+            return Promise.resolve(jsonResponse([fullEmbedding]));
+        });
+
+        const embedding = new BgeM3Embedding({
+            endpoint: 'http://127.0.0.1:8000',
+            workerEndpoints: ['http://127.0.0.1:8001'],
+            mode: 'full',
+            retryBudget: 1,
+            workerRecoveryCooldownMs: 30000,
+            fetch: fetchMock,
+        });
+
+        await Promise.all([
+            embedding.embedMultiBatchWithWorkerPool(['first']),
+            embedding.embedMultiBatchWithWorkerPool(['second']),
+        ]);
+        await Promise.all([
+            embedding.embedMultiBatchWithWorkerPool(['third']),
+            embedding.embedMultiBatchWithWorkerPool(['fourth']),
+        ]);
+
+        expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8001/health', expect.objectContaining({ method: 'GET' }));
+        expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8001/metadata', expect.objectContaining({ method: 'GET' }));
+        expect(embedding.getWorkerSnapshot()).toEqual([
+            expect.objectContaining({ endpoint: 'http://127.0.0.1:8000', healthy: true }),
+            expect.objectContaining({
+                endpoint: 'http://127.0.0.1:8001',
+                healthy: true,
+                rejectedReason: undefined,
+                recoveryAttempts: 1,
+                poolState: 'accepted',
+            }),
+        ]);
         expect(extraEmbedBatchCalls).toBeGreaterThanOrEqual(2);
     });
 

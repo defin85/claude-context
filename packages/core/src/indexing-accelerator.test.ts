@@ -70,6 +70,17 @@ describe('indexing accelerator configuration', () => {
         })).toEqual({ active: true });
     });
 
+    it('defaults auto mode to two insert lanes', () => {
+        mockEnv({
+            INDEX_ACCELERATOR_MODE: 'auto',
+        });
+
+        const config = getIndexingAcceleratorConfig();
+
+        expect(config.embeddingConcurrency).toBe(2);
+        expect(config.insertConcurrency).toBe(2);
+    });
+
     it('falls back for invalid values and clamps percent values', () => {
         mockEnv({
             BGE_M3_ACCELERATOR: 'auto',
@@ -85,7 +96,7 @@ describe('indexing accelerator configuration', () => {
 
         expect(config.mode).toBe('auto');
         expect(config.embeddingConcurrency).toBe(2);
-        expect(config.insertConcurrency).toBe(1);
+        expect(config.insertConcurrency).toBe(2);
         expect(config.maxBgeM3Workers).toBe(1);
         expect(config.vramLimitPercent).toBe(100);
         expect(config.retryBudget).toBe(1);

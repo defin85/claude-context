@@ -398,9 +398,16 @@ export class BgeM3Embedding extends Embedding {
         worker.healthy = false;
         worker.rejectedReason = reason;
         worker.lastFailureAt = new Date().toISOString();
-        worker.recoveryEligibleAt = Date.now() + this.workerRecoveryCooldownMs;
+        worker.recoveryEligibleAt = Date.now() + this.getInitialRecoveryCooldownMs(reason);
         worker.recovering = false;
         console.warn(`[BGE-M3] Rejected worker ${worker.endpoint}: ${reason}`);
+    }
+
+    private getInitialRecoveryCooldownMs(reason: string): number {
+        if (reason === 'fetch failed') {
+            return 0;
+        }
+        return this.workerRecoveryCooldownMs;
     }
 
     private recordWorkerSuccess(worker: BgeM3Worker): void {
@@ -417,7 +424,6 @@ export class BgeM3Embedding extends Embedding {
     private async revalidateRejectedWorkers(): Promise<void> {
         const now = Date.now();
         const rejectedWorkers = this.workers.filter((worker) => (
-            worker.endpoint !== this.endpoint &&
             !worker.healthy &&
             !worker.recovering &&
             (worker.recoveryEligibleAt ?? 0) <= now
@@ -432,10 +438,13 @@ export class BgeM3Embedding extends Embedding {
                 const rawProfile = await this.get(worker, '/metadata');
                 const profile = this.parseWorkerProfile(rawProfile);
                 this.validateWorkerProfile(profile);
-                if (!this.primaryProfile) {
+                if (worker.endpoint === this.endpoint) {
+                    this.primaryProfile = profile;
+                } else if (!this.primaryProfile) {
                     throw new Error('BGE-M3 primary worker metadata unavailable; strict worker validation cannot prove equivalence');
+                } else {
+                    this.validateEquivalentProfile(profile, this.primaryProfile);
                 }
-                this.validateEquivalentProfile(profile, this.primaryProfile);
                 worker.profile = profile;
                 this.recordWorkerSuccess(worker);
             } catch (error) {

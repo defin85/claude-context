@@ -46,4 +46,4 @@
 - [x] 6.3 Add unit tests for worker metadata mismatch, worker failure, retry, and fallback behavior.
 - [x] 6.4 Add integration tests or mocked-vector-db tests proving stable document IDs and BGE-M3 full metadata under reordered batch completion.
 - [x] 6.5 Run `pnpm lint`, `pnpm typecheck`, and `pnpm build`.
-- [ ] 6.6 Run local benchmark comparisons for acceleration disabled, parallel batches with one worker, and parallel batches with additional BGE-M3 workers.
+- [x] 6.6 Run local benchmark comparisons for acceleration disabled, parallel batches with one worker, and parallel batches with additional BGE-M3 workers.
