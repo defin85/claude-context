@@ -74,6 +74,19 @@ Use Python 3.10-3.12, install `python/requirements-bge-m3-sidecar.txt`, and run
 ColBERT vectors can be large; the default storage cap keeps local Milvus payloads
 small enough for typical code chunks.
 
+Full BGE-M3 indexes use more local Milvus disk than dense-only indexes because
+they store dense vectors, model-generated sparse weights, and ColBERT token
+vectors. On local Milvus, inspect usage with:
+
+```bash
+pnpm milvus:storage-audit -- --json
+```
+
+If local Milvus was installed under a non-default path, set
+`MILVUS_LOCAL_VOLUME_PATH` or pass `--local-volume-path <path>`. The audit reports
+aggregate filesystem estimates for `wp`, `insert_log`, and `index_files`; those
+paths are Milvus/MinIO implementation details and are not safe cleanup targets.
+
 
 ### Advanced Configuration
 | Variable | Description | Default |

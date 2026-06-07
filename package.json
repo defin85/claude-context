@@ -24,6 +24,7 @@
         "benchmark:daemon-idle": "node scripts/daemon-idle-benchmark.js",
         "benchmark:indexing-baseline": "node scripts/measure-indexing-baseline.js",
         "benchmark:preindex": "node scripts/preindex-diagnostic.js",
+        "milvus:storage-audit": "node scripts/milvus-storage-audit.js",
         "verify:ast-splitters": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-ast-splitters.ts",
         "verify:upstream-merge": "pnpm --filter @zilliz/claude-context-mcp exec tsx ../../scripts/verify-upstream-merge.ts"
     },

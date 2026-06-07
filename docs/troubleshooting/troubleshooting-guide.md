@@ -19,6 +19,55 @@ Tell your agent:
 ```
 , which will call `get_indexing_status` tool to get error messages, progress information, or status details. They are helpful for troubleshooting.
 
+### Local Milvus Disk Usage
+
+Local BGE-M3 full indexing can make Milvus storage grow quickly because full mode
+stores dense vectors, sparse lexical weights, and ColBERT token-vector payloads.
+For local Milvus installed by the project helper, the object store is usually
+under:
+
+```bash
+~/.local/share/claude-context/milvus/volumes
+```
+
+Do not delete files inside that directory, including MinIO paths such as
+`a-bucket/files/wp`, `a-bucket/files/insert_log`, or `a-bucket/files/index_files`.
+Those paths are Milvus implementation details; deleting them directly can corrupt
+Milvus metadata.
+
+Use the read-only storage audit instead:
+
+```bash
+pnpm milvus:storage-audit -- --json
+```
+
+The report lists Milvus collections, known codebase ownership, snapshot status,
+row counts when available, retrieval metadata, and approximate local volume
+sizes. Filesystem sizes are aggregate estimates; Milvus does not always expose
+exact per-collection object-store ownership.
+
+Before clearing a known codebase, generate a dry-run plan:
+
+```bash
+du -sh ~/.local/share/claude-context/milvus/volumes
+pnpm milvus:storage-audit -- --dry-run-reclaim /absolute/path/to/codebase --json
+```
+
+The dry run does not mutate Milvus, snapshots, or codebase config. Confirmed
+cleanup must drop collections through Milvus/vector database APIs. For the local
+maintenance script, destructive reclaim requires both `--reclaim` and
+`--confirm-reclaim`:
+
+```bash
+pnpm milvus:storage-audit -- --reclaim /absolute/path/to/codebase --confirm-reclaim --json
+du -sh ~/.local/share/claude-context/milvus/volumes
+```
+
+For normal MCP use, `clear_index` remains the preferred user-facing operation
+for a known indexed codebase. If dropping a collection does not immediately
+reduce `du` output, Milvus/MinIO compaction or garbage collection may still be
+pending.
+
 ### Step 2: Get Debug Logs
 
 If Step 1 doesn't reveal the issue, collect detailed debug information:
