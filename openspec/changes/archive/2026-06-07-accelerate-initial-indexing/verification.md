@@ -70,6 +70,19 @@ Relevant test coverage:
 | Parallel batches, one worker | `INDEX_ACCELERATOR_MODE=auto`, `INDEX_EMBEDDING_CONCURRENCY=2`, `INDEX_INSERT_CONCURRENCY=1`, `BGE_M3_ACCELERATOR_MAX_WORKERS=1`, `BGE_M3_ACCELERATOR_MANAGED_WORKERS=false` | Completed successfully: `indexed`, 192 files, 3648 chunks, 114/114 batches completed, 0 failed, 0 retried. Journal stats: `scanMs=127`, `splitMs=811`, `embeddingMs=450401`, `insertMs=112048`. No `duplicate primary` or accelerated insert failure was observed. |
 | Additional managed BGE-M3 workers | `INDEX_ACCELERATOR_MODE=auto`, `INDEX_INSERT_CONCURRENCY=1`, `BGE_M3_ACCELERATOR_MAX_WORKERS=4`, `BGE_M3_ACCELERATOR_MANAGED_WORKERS=true`, worker lifecycle `systemd` | Completed successfully: `indexed`, 192 files, 3648 chunks, 114/114 batches completed, 0 failed, 3 retried. Runtime status reached 4 active accepted workers (`8000-8003`) during the run. One worker was later rejected with `fetch failed`, and retry handling drained the workload successfully. Journal stats: `scanMs=155`, `splitMs=955`, `embeddingMs=482119`, `insertMs=161381`. No `duplicate primary` or accelerated insert failure was observed. |
 
+## Large Baseline Evidence
+
+Task 1.4 is now closed based on the later representative 1C baseline run requested for comparison work:
+
+- Codebase: `/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c`
+- Artifact directory: `.artifacts/indexing-baselines/2026-06-07T12-50-21-375Z-off-demo-do30`
+- Configuration: `INDEX_ACCELERATOR_MODE=off`, `activeWorkers=1`
+- Last normal progress sample before user-requested cancellation: `688/6595` files, `18%`, elapsed `1746280ms` (`~29m06s`)
+- Final cancelled sample: `indexfailed` by explicit stop, elapsed `1751287ms` (`~29m11s`), `submittedBatches=445`, `completedBatches=445`, `failedBatches=0`, `retriedBatches=0`, `backpressureWaitMs=0`
+- Working interpretation for comparison: off-mode baseline is approximately `20%` in `30 minutes` on this larger 1C sample.
+
+The earlier `/run/media/egor/D6B64A72B64A52E3/Projects/OneC/bp-unicom-sdd` baseline remains a useful stress-run artifact but was too long for interactive completion. Its stopped artifact is `.artifacts/indexing-baselines/2026-06-06T17-06-21-298Z-off/`.
+
 Managed-worker journal check since daemon restart showed only transient worker `fetch failed` warnings plus:
 
 - `Accelerator stats: submitted=114, completed=114, failed=0, ...`
@@ -90,4 +103,4 @@ The daemon was restarted after restoring the env, and the small benchmark repo i
 
 ## Remaining Open Item
 
-Task 1.4 remains open. The requested small benchmark comparison is complete, but the OpenSpec task explicitly asks for a representative large-repository baseline with acceleration disabled. That large run was not repeated because it requires separate confirmation.
+None for this change. The large disabled-accelerator baseline was captured as a stopped baseline artifact and is sufficient for this change's performance comparison scope.

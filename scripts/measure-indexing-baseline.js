@@ -339,6 +339,58 @@ function appendJsonl(filePath, payload) {
     fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`);
 }
 
+function compactBatch(batch) {
+    if (!batch || typeof batch !== 'object') {
+        return batch;
+    }
+    return {
+        id: batch.id,
+        chunkCount: batch.chunkCount,
+        attempts: batch.attempts,
+        state: batch.state,
+        firstFile: batch.firstFile,
+        lastFile: batch.lastFile,
+    };
+}
+
+function summarizeBatches(batches) {
+    const byState = {};
+    for (const batch of batches) {
+        const state = batch?.state || 'unknown';
+        byState[state] = (byState[state] || 0) + 1;
+    }
+    const active = batches
+        .filter((batch) => batch?.state && batch.state !== 'completed')
+        .slice(-10)
+        .map(compactBatch);
+    return {
+        count: batches.length,
+        byState,
+        activeTail: active,
+        latestTail: batches.slice(-10).map(compactBatch),
+    };
+}
+
+function compactStructuredContent(structuredContent) {
+    if (!structuredContent || typeof structuredContent !== 'object') {
+        return structuredContent;
+    }
+
+    const accelerator = structuredContent.accelerator;
+    if (!accelerator || !Array.isArray(accelerator.batches)) {
+        return structuredContent;
+    }
+
+    return {
+        ...structuredContent,
+        accelerator: {
+            ...accelerator,
+            batchesSummary: summarizeBatches(accelerator.batches),
+            batches: undefined,
+        },
+    };
+}
+
 function readJsonIfExists(filePath) {
     try {
         return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -441,16 +493,17 @@ async function measure(options, clientConfig, runDir) {
         const statusResult = await callTool(clientConfig, 'get_indexing_status', {
             path: options.codebasePath,
         });
+        const structuredContent = compactStructuredContent(statusResult.structuredContent);
         const sample = {
             capturedAt: new Date().toISOString(),
             elapsedMs: Date.now() - startedAt.getTime(),
             text: textFromResult(statusResult),
-            structuredContent: statusResult.structuredContent,
+            structuredContent,
         };
         appendJsonl(samplesPath, sample);
         finalResult = sample;
 
-        const status = statusResult.structuredContent?.status;
+        const status = structuredContent?.status;
         if (terminalStatuses.has(status)) {
             break;
         }

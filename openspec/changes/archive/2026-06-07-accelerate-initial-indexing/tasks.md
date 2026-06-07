@@ -3,7 +3,7 @@
 - [x] 1.1 Add accelerator configuration parsing for mode, embedding concurrency, insert concurrency, maximum BGE-M3 workers, VRAM budget, retry budget, and background-sync policy.
 - [x] 1.2 Add startup/config summary logging that reports accelerator settings without exposing secrets.
 - [x] 1.3 Add benchmark or diagnostic logging for scan/split time, embedding batch time, insert time, in-flight batch counts, and retry counts.
-- [ ] 1.4 Capture a baseline indexing run on a representative large repository with acceleration disabled.
+- [x] 1.4 Capture a baseline indexing run on a representative large repository with acceleration disabled.
 
 ## 2. Parallel Batch Pipeline
 
