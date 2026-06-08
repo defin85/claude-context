@@ -9,6 +9,7 @@ function createRuntime(): IndexingAcceleratorRuntime {
         mode: 'auto',
         embeddingConcurrency: 2,
         insertConcurrency: 1,
+        insertQueueCapacity: 2,
         maxBgeM3Workers: 2,
         vramLimitPercent: 75,
         retryBudget: 1,
@@ -108,6 +109,54 @@ describe('EmbeddingBatchScheduler', () => {
         expect(runtime.getSnapshot().completedBatches).toBe(2);
     });
 
+    it('bounds insert backlog and reports insert scheduler counters', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 1,
+            insertConcurrency: 1,
+            queueCapacity: 4,
+            insertQueueCapacity: 1,
+        });
+        const firstInsert = deferred<void>();
+        let thirdEmbeddingStarted = false;
+
+        const firstCompletion = (await scheduler.submit({
+            metadata: { id: 1, chunkCount: 1 },
+            runEmbedding: async () => 'first',
+            runInsert: () => firstInsert.promise,
+        })).completion;
+        const secondCompletion = (await scheduler.submit({
+            metadata: { id: 2, chunkCount: 1 },
+            runEmbedding: async () => 'second',
+            runInsert: async () => {},
+        })).completion;
+        const thirdHandle = await scheduler.submit({
+            metadata: { id: 3, chunkCount: 1 },
+            runEmbedding: async () => {
+                thirdEmbeddingStarted = true;
+                return 'third';
+            },
+            runInsert: async () => {},
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        let snapshot = runtime.getSnapshot();
+        expect(snapshot.runningInsertBatches).toBe(1);
+        expect(snapshot.queuedInsertBatches).toBe(1);
+        expect(snapshot.completedInsertBatches).toBe(0);
+        expect(thirdEmbeddingStarted).toBe(false);
+
+        firstInsert.resolve();
+        await Promise.all([firstCompletion, secondCompletion, thirdHandle.completion]);
+
+        snapshot = runtime.getSnapshot();
+        expect(snapshot.completedBatches).toBe(3);
+        expect(snapshot.completedInsertBatches).toBe(3);
+        expect(snapshot.failedInsertBatches).toBe(0);
+        expect(snapshot.queuedInsertBatches).toBe(0);
+    });
+
     it('cancels queued batches and waits for active batches to settle', async () => {
         const runtime = createRuntime();
         const scheduler = new EmbeddingBatchScheduler({
@@ -139,6 +188,45 @@ describe('EmbeddingBatchScheduler', () => {
         expect(snapshot.completedBatches).toBe(1);
         expect(snapshot.batches.find((batch) => batch.id === 2)?.state).toBe('cancelled');
         expect(snapshot.queuedBatches).toBe(0);
+    });
+
+    it('cancels queued insert batches and waits for running inserts to settle', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 2,
+            insertConcurrency: 1,
+            queueCapacity: 4,
+            insertQueueCapacity: 1,
+        });
+        const runningInsert = deferred<void>();
+
+        const firstCompletion = (await scheduler.submit({
+            metadata: { id: 1, chunkCount: 1 },
+            runEmbedding: async () => 'first',
+            runInsert: () => runningInsert.promise,
+        })).completion;
+        const queuedInsertCompletion = (await scheduler.submit({
+            metadata: { id: 2, chunkCount: 1 },
+            runEmbedding: async () => 'second',
+            runInsert: async () => {},
+        })).completion;
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(runtime.getSnapshot().runningInsertBatches).toBe(1);
+        expect(runtime.getSnapshot().queuedInsertBatches).toBe(1);
+
+        const cancelPromise = scheduler.cancel(new Error('cancelled by test'));
+        await expect(queuedInsertCompletion).rejects.toThrow('cancelled by test');
+        runningInsert.resolve();
+        await expect(firstCompletion).resolves.toBeUndefined();
+        await cancelPromise;
+
+        const snapshot = runtime.getSnapshot();
+        expect(snapshot.completedBatches).toBe(1);
+        expect(snapshot.batches.find((batch) => batch.id === 2)?.state).toBe('cancelled');
+        expect(snapshot.queuedInsertBatches).toBe(0);
+        expect(snapshot.runningInsertBatches).toBe(0);
     });
 
     it('reports queued, running embedding, running insert, completed, failed, retried, and backpressure metrics', async () => {
@@ -238,6 +326,7 @@ describe('EmbeddingBatchScheduler', () => {
 
         const snapshot = runtime.getSnapshot();
         expect(snapshot.failedBatches).toBe(1);
+        expect(snapshot.failedInsertBatches).toBe(1);
         expect(snapshot.batches.find((batch) => batch.id === 1)?.state).toBe('failed');
         expect(snapshot.runningEmbeddingBatches).toBe(0);
         expect(snapshot.runningInsertBatches).toBe(0);

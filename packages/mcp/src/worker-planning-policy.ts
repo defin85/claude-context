@@ -19,6 +19,14 @@ export interface WorkerPlanningPolicySnapshot {
     statusFields: {
         queue: 'runtimes[].workload';
         workers: 'accelerator.workers';
+        insertScheduler: [
+            'accelerator.insertConcurrency',
+            'accelerator.queuedInsertBatches',
+            'accelerator.runningInsertBatches',
+            'accelerator.completedInsertBatches',
+            'accelerator.failedInsertBatches',
+            'accelerator.insertMs',
+        ];
         managedWorkers: 'managedBgeM3Workers';
         vramPlan: 'managedBgeM3Workers.vramPlanning';
         fallbackReasons: [
@@ -63,6 +71,14 @@ export function createWorkerPlanningPolicy(): WorkerPlanningPolicySnapshot {
         statusFields: {
             queue: 'runtimes[].workload',
             workers: 'accelerator.workers',
+            insertScheduler: [
+                'accelerator.insertConcurrency',
+                'accelerator.queuedInsertBatches',
+                'accelerator.runningInsertBatches',
+                'accelerator.completedInsertBatches',
+                'accelerator.failedInsertBatches',
+                'accelerator.insertMs',
+            ],
             managedWorkers: 'managedBgeM3Workers',
             vramPlan: 'managedBgeM3Workers.vramPlanning',
             fallbackReasons: [
@@ -110,6 +126,9 @@ export function createDaemonStatusResult(
         textLines.push(
             `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
             `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
+            ` insertConcurrency=${accelerator.insertConcurrency ?? 1} queuedInsert=${accelerator.queuedInsertBatches ?? 0}` +
+            ` runningInsert=${accelerator.runningInsertBatches ?? 0}` +
+            ` completedInsert=${accelerator.completedInsertBatches ?? 0} failedInsert=${accelerator.failedInsertBatches ?? 0}` +
             ` retries=${accelerator.retriedBatches} rejectedWorkers=${accelerator.rejectedWorkers ?? 0}` +
             ` recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +
             `${retryReasonText ? ` retryReasons=${retryReasonText}` : ''}` +

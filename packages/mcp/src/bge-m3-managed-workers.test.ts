@@ -20,6 +20,7 @@ function createConfig(overrides: Partial<ContextMcpConfig> = {}): ContextMcpConf
         acceleratorMode: 'auto',
         acceleratorEmbeddingConcurrency: 2,
         acceleratorInsertConcurrency: 1,
+        acceleratorInsertQueueCapacity: 2,
         acceleratorMaxBgeM3Workers: 3,
         acceleratorVramLimitPercent: 75,
         acceleratorRetryBudget: 1,

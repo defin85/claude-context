@@ -178,6 +178,9 @@ class DuplicateChunkSplitter implements Splitter {
 class TrackingVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents = new Map<string, VectorDocument[]>();
+    insertDelayMs = 0;
+    private activeInserts = 0;
+    maxActiveInserts = 0;
 
     async createCollection(collectionName: string): Promise<void> {
         this.collections.add(collectionName);
@@ -206,10 +209,19 @@ class TrackingVectorDatabase implements VectorDatabase {
     }
 
     async insert(collectionName: string, documents: VectorDocument[]): Promise<void> {
-        this.documents.set(collectionName, [
-            ...(this.documents.get(collectionName) || []),
-            ...documents,
-        ]);
+        this.activeInserts++;
+        this.maxActiveInserts = Math.max(this.maxActiveInserts, this.activeInserts);
+        try {
+            if (this.insertDelayMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, this.insertDelayMs));
+            }
+            this.documents.set(collectionName, [
+                ...(this.documents.get(collectionName) || []),
+                ...documents,
+            ]);
+        } finally {
+            this.activeInserts--;
+        }
     }
 
     async insertHybrid(collectionName: string, documents: VectorDocument[]): Promise<void> {
@@ -265,6 +277,7 @@ describe('Context accelerated batch pipeline', () => {
         'INDEX_ACCELERATOR_MODE',
         'INDEX_EMBEDDING_CONCURRENCY',
         'INDEX_INSERT_CONCURRENCY',
+        'INDEX_INSERT_QUEUE_CAPACITY',
         'INDEX_ACCELERATE_BACKGROUND_SYNC',
         'BGE_M3_ACCELERATOR_MAX_WORKERS',
     ];
@@ -277,6 +290,7 @@ describe('Context accelerated batch pipeline', () => {
         process.env.EMBEDDING_BATCH_SIZE = '1';
         delete process.env.INDEX_EMBEDDING_CONCURRENCY;
         process.env.INDEX_INSERT_CONCURRENCY = '1';
+        delete process.env.INDEX_INSERT_QUEUE_CAPACITY;
         process.env.INDEX_ACCELERATE_BACKGROUND_SYNC = 'false';
         delete process.env.BGE_M3_ACCELERATOR_MAX_WORKERS;
     });
@@ -582,6 +596,65 @@ describe('Context accelerated batch pipeline', () => {
             Array.from({ length: duplicateChunkCount }, (_, index) => index),
         );
         expect(upsertBgeM3).toHaveBeenCalledTimes(5);
+    });
+
+    it('runs parallel BGE-M3 upserts without changing document identity or retrieval metadata', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_INSERT_CONCURRENCY = '2';
+        process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
+        process.env.EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new TrackingVectorDatabase();
+        vectorDatabase.insertDelayMs = 20;
+        const codebasePath = await createCodebase();
+
+        const context = new Context({
+            embedding: new DelayedBgeM3Embedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+        await context.indexCodebase(codebasePath);
+
+        const documents = vectorDatabase.allDocuments();
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(vectorDatabase.maxActiveInserts).toBeGreaterThan(1);
+        expect(snapshot.insertConcurrency).toBe(2);
+        expect(snapshot.completedInsertBatches).toBe(4);
+        expect(snapshot.failedInsertBatches).toBe(0);
+        expect(documents).toHaveLength(4);
+        expect(new Set(documents.map((document) => document.id)).size).toBe(4);
+        for (const document of documents) {
+            expect(document.metadata.retrievalMode).toBe('bge_m3_full');
+            expect(document.metadata.retrievalSchemaVersion).toBe(1);
+            expect(document.sparseVector).toEqual({ indices: [1, 2], values: [0.5, 0.25] });
+            expect(document.colbertVectors).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+        }
+    });
+
+    it('fails plain insert errors with insert stage and batch context without retrying', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_INSERT_CONCURRENCY = '2';
+        process.env.EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new TrackingVectorDatabase();
+        const insert = jest.spyOn(vectorDatabase, 'insert')
+            .mockRejectedValueOnce(new Error('ambiguous vector write'));
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await expect(context.indexCodebase(await createCodebase()))
+            .rejects
+            .toThrow(/Indexing batch \d+ failed during insert: ambiguous vector write/);
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.submittedBatches).toBe(4);
+        expect(insert).toHaveBeenCalledTimes(snapshot.submittedBatches);
+        expect(vectorDatabase.allDocuments()).toHaveLength(3);
+        expect(snapshot.failedInsertBatches).toBe(1);
+        expect(snapshot.failedBatches).toBe(1);
     });
 
     it('uses accepted BGE-M3 worker count as default embedding concurrency', async () => {

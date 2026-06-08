@@ -28,6 +28,7 @@ describe('indexing accelerator configuration', () => {
             mode: 'off',
             embeddingConcurrency: 1,
             insertConcurrency: 1,
+            insertQueueCapacity: 2,
             maxBgeM3Workers: 1,
             vramLimitPercent: 75,
             retryBudget: 1,
@@ -47,6 +48,7 @@ describe('indexing accelerator configuration', () => {
             INDEX_ACCELERATOR_MODE: 'auto',
             INDEX_EMBEDDING_CONCURRENCY: '4',
             INDEX_INSERT_CONCURRENCY: '2',
+            INDEX_INSERT_QUEUE_CAPACITY: '8',
             BGE_M3_ACCELERATOR_MAX_WORKERS: '3',
             BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT: '75',
             INDEX_ACCELERATOR_RETRY_BUDGET: '5',
@@ -59,6 +61,7 @@ describe('indexing accelerator configuration', () => {
             mode: 'auto',
             embeddingConcurrency: 4,
             insertConcurrency: 2,
+            insertQueueCapacity: 8,
             maxBgeM3Workers: 3,
             vramLimitPercent: 75,
             retryBudget: 5,
@@ -70,7 +73,7 @@ describe('indexing accelerator configuration', () => {
         })).toEqual({ active: true });
     });
 
-    it('defaults auto mode to two insert lanes', () => {
+    it('keeps auto mode insert concurrency conservative by default', () => {
         mockEnv({
             INDEX_ACCELERATOR_MODE: 'auto',
         });
@@ -78,7 +81,7 @@ describe('indexing accelerator configuration', () => {
         const config = getIndexingAcceleratorConfig();
 
         expect(config.embeddingConcurrency).toBe(2);
-        expect(config.insertConcurrency).toBe(2);
+        expect(config.insertConcurrency).toBe(1);
     });
 
     it('falls back for invalid values and clamps percent values', () => {
@@ -96,7 +99,7 @@ describe('indexing accelerator configuration', () => {
 
         expect(config.mode).toBe('auto');
         expect(config.embeddingConcurrency).toBe(2);
-        expect(config.insertConcurrency).toBe(2);
+        expect(config.insertConcurrency).toBe(1);
         expect(config.maxBgeM3Workers).toBe(1);
         expect(config.vramLimitPercent).toBe(100);
         expect(config.retryBudget).toBe(1);

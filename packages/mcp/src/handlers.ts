@@ -1546,6 +1546,9 @@ export class ToolHandlers {
                     : '';
                 statusMessage +=
                     `\n⚡ Accelerator: retries=${accelerator.retriedBatches}, failed=${accelerator.failedBatches}, ` +
+                    `insertConcurrency=${accelerator.insertConcurrency ?? 1}, queuedInsert=${accelerator.queuedInsertBatches ?? 0}, ` +
+                    `runningInsert=${accelerator.runningInsertBatches ?? accelerator.inFlightInsertBatches ?? 0}, ` +
+                    `completedInsert=${accelerator.completedInsertBatches ?? 0}, failedInsert=${accelerator.failedInsertBatches ?? 0}, ` +
                     `activeWorkers=${accelerator.activeWorkers ?? 0}, rejectedWorkers=${accelerator.rejectedWorkers ?? 0}, ` +
                     `recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +
                     `${retryReasonText ? `, retryReasons=${retryReasonText}` : ''}`;

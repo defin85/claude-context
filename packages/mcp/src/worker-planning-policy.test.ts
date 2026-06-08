@@ -45,12 +45,17 @@ function createAcceleratorSnapshot(): IndexingAcceleratorSnapshot {
         fallbackReason: 'background sync acceleration disabled',
         embeddingConcurrency: 1,
         insertConcurrency: 1,
+        insertQueueCapacity: 2,
         maxBgeM3Workers: 2,
         vramLimitPercent: 75,
         retryBudget: 1,
         accelerateBackgroundSync: false,
         inFlightEmbeddingBatches: 0,
         inFlightInsertBatches: 0,
+        queuedInsertBatches: 0,
+        runningInsertBatches: 0,
+        completedInsertBatches: 0,
+        failedInsertBatches: 0,
         submittedBatches: 0,
         completedBatches: 0,
         failedBatches: 0,
@@ -148,6 +153,14 @@ test('worker planning policy exposes canonical status field paths', () => {
 
     assert.equal(policy.statusFields.queue, 'runtimes[].workload');
     assert.equal(policy.statusFields.workers, 'accelerator.workers');
+    assert.deepEqual(policy.statusFields.insertScheduler, [
+        'accelerator.insertConcurrency',
+        'accelerator.queuedInsertBatches',
+        'accelerator.runningInsertBatches',
+        'accelerator.completedInsertBatches',
+        'accelerator.failedInsertBatches',
+        'accelerator.insertMs',
+    ]);
     assert.equal(policy.statusFields.managedWorkers, 'managedBgeM3Workers');
     assert.equal(policy.statusFields.vramPlan, 'managedBgeM3Workers.vramPlanning');
     assert.deepEqual(policy.statusFields.fallbackReasons, [

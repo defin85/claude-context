@@ -1093,7 +1093,8 @@ export class Context {
                             `(${completed}/${snapshot.submittedBatches}, ` +
                             `${snapshot.queuedBatches ?? 0} queued, ` +
                             `${snapshot.runningEmbeddingBatches ?? snapshot.inFlightEmbeddingBatches} embedding, ` +
-                            `${snapshot.runningInsertBatches ?? snapshot.inFlightInsertBatches} insert, ` +
+                            `${snapshot.queuedInsertBatches ?? 0} queued insert, ` +
+                            `${snapshot.runningInsertBatches ?? snapshot.inFlightInsertBatches} running insert, ` +
                             `${snapshot.backpressureWaitMs ?? 0}ms backpressure)...`,
                         current: completed,
                         total: snapshot.submittedBatches,
@@ -1922,6 +1923,7 @@ export class Context {
                 runtime: acceleratorRuntime,
                 embeddingConcurrency: effectiveEmbeddingConcurrency,
                 insertConcurrency: acceleratorConfig.insertConcurrency,
+                insertQueueCapacity: acceleratorConfig.insertQueueCapacity,
                 abortSignal,
                 onProgress: publishBatchProgress,
             })

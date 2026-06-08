@@ -27,22 +27,36 @@ Options:
   --interval-ms <ms>      Poll interval while measuring (default: 30000)
   --timeout-ms <ms>       Stop polling after timeout, 0 disables timeout (default: 0)
   --unit <name>           systemd --user unit name (default: ${defaultUnitName})
+  --accelerator-mode <mode>
+                          Accelerator mode for daemon restart: off or auto (default: off)
+  --embedding-concurrency <n>
+                          INDEX_EMBEDDING_CONCURRENCY for daemon restart (default: 1)
+  --insert-concurrency <n>
+                          INDEX_INSERT_CONCURRENCY for daemon restart (default: 1)
+  --insert-queue-capacity <n>
+                          INDEX_INSERT_QUEUE_CAPACITY for daemon restart (default: 2)
+  --managed-workers <bool>
+                          BGE_M3_ACCELERATOR_MANAGED_WORKERS for daemon restart (default: false)
+  --max-workers <n>
+                          BGE_M3_ACCELERATOR_MAX_WORKERS for daemon restart (default: 1)
   --prepare-only          Recreate daemon with baseline env, do not start indexing
   --start                 Start force indexing and poll until indexed/indexfailed
   --monitor-only          Poll current indexing run without starting a new one
   --run-dir <path>        Existing run directory for --monitor-only
   --no-restart            Reuse the current daemon instead of recreating the unit
   --no-force              Do not pass force=true to index_codebase
+  --cancel-on-timeout     Cancel daemon workload when timeout stops polling before terminal status
   --self-test-compact-output
                           Validate compact sample shaping and exit
   --help                  Show this help
 
-Baseline env overrides:
-  INDEX_ACCELERATOR_MODE=off
-  INDEX_EMBEDDING_CONCURRENCY=1
-  INDEX_INSERT_CONCURRENCY=1
-  BGE_M3_ACCELERATOR_MANAGED_WORKERS=false
-  BGE_M3_ACCELERATOR_MAX_WORKERS=1
+Default daemon env overrides:
+  INDEX_ACCELERATOR_MODE=<--accelerator-mode>
+  INDEX_EMBEDDING_CONCURRENCY=<--embedding-concurrency>
+  INDEX_INSERT_CONCURRENCY=<--insert-concurrency>
+  INDEX_INSERT_QUEUE_CAPACITY=<--insert-queue-capacity>
+  BGE_M3_ACCELERATOR_MANAGED_WORKERS=<--managed-workers>
+  BGE_M3_ACCELERATOR_MAX_WORKERS=<--max-workers>
 `);
 }
 
@@ -53,12 +67,19 @@ function parseArgs(argv) {
         intervalMs: 30_000,
         timeoutMs: 0,
         unitName: defaultUnitName,
+        acceleratorMode: 'off',
+        embeddingConcurrency: 1,
+        insertConcurrency: 1,
+        insertQueueCapacity: 2,
+        managedWorkers: false,
+        maxWorkers: 1,
         prepareOnly: false,
         start: false,
         monitorOnly: false,
         runDir: undefined,
         restart: true,
         force: true,
+        cancelOnTimeout: false,
         selfTestCompactOutput: false,
     };
 
@@ -91,6 +112,24 @@ function parseArgs(argv) {
             case '--unit':
                 options.unitName = next();
                 break;
+            case '--accelerator-mode':
+                options.acceleratorMode = next();
+                break;
+            case '--embedding-concurrency':
+                options.embeddingConcurrency = Number(next());
+                break;
+            case '--insert-concurrency':
+                options.insertConcurrency = Number(next());
+                break;
+            case '--insert-queue-capacity':
+                options.insertQueueCapacity = Number(next());
+                break;
+            case '--managed-workers':
+                options.managedWorkers = parseBooleanArg(next(), '--managed-workers');
+                break;
+            case '--max-workers':
+                options.maxWorkers = Number(next());
+                break;
             case '--prepare-only':
                 options.prepareOnly = true;
                 break;
@@ -109,6 +148,9 @@ function parseArgs(argv) {
                 break;
             case '--no-force':
                 options.force = false;
+                break;
+            case '--cancel-on-timeout':
+                options.cancelOnTimeout = true;
                 break;
             case '--self-test-compact-output':
                 options.selfTestCompactOutput = true;
@@ -129,6 +171,19 @@ function parseArgs(argv) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 0) {
         throw new Error('--timeout-ms must be a non-negative number');
     }
+    if (!['off', 'auto'].includes(options.acceleratorMode)) {
+        throw new Error('--accelerator-mode must be off or auto');
+    }
+    for (const [name, value] of [
+        ['--embedding-concurrency', options.embeddingConcurrency],
+        ['--insert-concurrency', options.insertConcurrency],
+        ['--insert-queue-capacity', options.insertQueueCapacity],
+        ['--max-workers', options.maxWorkers],
+    ]) {
+        if (!Number.isFinite(value) || value <= 0) {
+            throw new Error(`${name} must be a positive number`);
+        }
+    }
     if (options.selfTestCompactOutput) {
         return options;
     }
@@ -147,12 +202,29 @@ function parseArgs(argv) {
     return options;
 }
 
+function parseBooleanArg(value, name) {
+    if (value === 'true') {
+        return true;
+    }
+    if (value === 'false') {
+        return false;
+    }
+    throw new Error(`${name} must be true or false`);
+}
+
 function selfTestCompactOutput() {
     const compacted = compactStructuredContent({
         status: 'indexing',
         accelerator: {
             retriedBatches: 2,
             failedBatches: 1,
+            insertConcurrency: 2,
+            insertQueueCapacity: 4,
+            queuedInsertBatches: 1,
+            runningInsertBatches: 1,
+            completedInsertBatches: 3,
+            failedInsertBatches: 1,
+            insertMs: 1234,
             retryReasons: { embedding_timeout: 1, embedding_error: 1 },
             retrySafeFailures: 2,
             retryUnsafeFailures: 0,
@@ -187,12 +259,25 @@ function selfTestCompactOutput() {
     if (compacted.accelerator.workerSummary.rejectedWorkers !== 1) {
         throw new Error('Expected workerSummary rejected worker count to be preserved.');
     }
+    if (compacted.accelerator.insertSummary.queuedInsertBatches !== 1) {
+        throw new Error('Expected insertSummary queued insert count to be preserved.');
+    }
+    if (compacted.accelerator.insertSummary.insertMs !== 1234) {
+        throw new Error('Expected insertSummary insert timing to be preserved.');
+    }
 
     const compactedStatusOnly = compactStructuredContent({
         status: 'indexing',
         accelerator: {
             retriedBatches: 1,
             failedBatches: 0,
+            insertConcurrency: 1,
+            insertQueueCapacity: 2,
+            queuedInsertBatches: 0,
+            runningInsertBatches: 1,
+            completedInsertBatches: 2,
+            failedInsertBatches: 0,
+            insertMs: 456,
             retryReasons: { embedding_error: 1 },
             retrySafeFailures: 1,
             retryUnsafeFailures: 0,
@@ -207,6 +292,9 @@ function selfTestCompactOutput() {
     }
     if (compactedStatusOnly.accelerator.workerSummary?.activeWorkers !== 4) {
         throw new Error('Expected workerSummary to be added when accelerator.batches is absent.');
+    }
+    if (compactedStatusOnly.accelerator.insertSummary?.runningInsertBatches !== 1) {
+        throw new Error('Expected insertSummary to be added when accelerator.batches is absent.');
     }
     if (compactedStatusOnly.accelerator.batchesSummary !== undefined) {
         throw new Error('Expected batchesSummary to be omitted when accelerator.batches is absent.');
@@ -294,15 +382,16 @@ function getCurrentServiceEnvironment(unitName) {
     return parseEnvironment(raw);
 }
 
-function buildBaselineEnvironment(currentEnv) {
+function buildMeasurementEnvironment(currentEnv, options) {
     return {
         ...currentEnv,
         MCP_RUNTIME_MODE: 'daemon',
-        INDEX_ACCELERATOR_MODE: 'off',
-        INDEX_EMBEDDING_CONCURRENCY: '1',
-        INDEX_INSERT_CONCURRENCY: '1',
-        BGE_M3_ACCELERATOR_MANAGED_WORKERS: 'false',
-        BGE_M3_ACCELERATOR_MAX_WORKERS: '1',
+        INDEX_ACCELERATOR_MODE: options.acceleratorMode,
+        INDEX_EMBEDDING_CONCURRENCY: String(options.embeddingConcurrency),
+        INDEX_INSERT_CONCURRENCY: String(options.insertConcurrency),
+        INDEX_INSERT_QUEUE_CAPACITY: String(options.insertQueueCapacity),
+        BGE_M3_ACCELERATOR_MANAGED_WORKERS: String(options.managedWorkers),
+        BGE_M3_ACCELERATOR_MAX_WORKERS: String(options.maxWorkers),
     };
 }
 
@@ -315,6 +404,35 @@ function stopUnit(unitName) {
         cwd: repoRoot,
         encoding: 'utf8',
     });
+    stopClientConfigDaemon();
+}
+
+function stopClientConfigDaemon() {
+    let config;
+    try {
+        config = readClientConfig();
+    } catch {
+        return;
+    }
+    if (!isPidAlive(config.pid)) {
+        return;
+    }
+    try {
+        process.kill(config.pid, 'SIGTERM');
+    } catch {
+        return;
+    }
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && isPidAlive(config.pid)) {
+        sleepSync(250);
+    }
+    if (isPidAlive(config.pid)) {
+        process.kill(config.pid, 'SIGKILL');
+    }
+}
+
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function startUnit(unitName, env) {
@@ -471,6 +589,15 @@ function summarizeRetryAndWorkers(accelerator) {
                 recoveryAttempts: worker.recoveryAttempts,
             })),
         },
+        insertSummary: {
+            insertConcurrency: accelerator.insertConcurrency || 1,
+            insertQueueCapacity: accelerator.insertQueueCapacity || 0,
+            queuedInsertBatches: accelerator.queuedInsertBatches || 0,
+            runningInsertBatches: accelerator.runningInsertBatches || 0,
+            completedInsertBatches: accelerator.completedInsertBatches || 0,
+            failedInsertBatches: accelerator.failedInsertBatches || 0,
+            insertMs: accelerator.insertMs || 0,
+        },
     };
 }
 
@@ -529,11 +656,11 @@ async function prepareDaemon(options, runDir) {
         serviceEnv = process.env;
     }
 
-    const baselineEnv = buildBaselineEnvironment(serviceEnv);
+    const measurementEnv = buildMeasurementEnvironment(serviceEnv, options);
 
     if (options.restart) {
         stopUnit(options.unitName);
-        startUnit(options.unitName, baselineEnv);
+        startUnit(options.unitName, measurementEnv);
     }
 
     const clientConfig = await waitForDaemon(options.restart ? previousConfig?.runtimeId : undefined);
@@ -552,16 +679,17 @@ async function prepareDaemon(options, runDir) {
             allowedRoots: clientConfig.allowedRoots,
             runtimeStatusFilePath: statusPath,
         },
-        baselineEnv: redactEnv({
-            INDEX_ACCELERATOR_MODE: baselineEnv.INDEX_ACCELERATOR_MODE,
-            INDEX_EMBEDDING_CONCURRENCY: baselineEnv.INDEX_EMBEDDING_CONCURRENCY,
-            INDEX_INSERT_CONCURRENCY: baselineEnv.INDEX_INSERT_CONCURRENCY,
-            BGE_M3_ACCELERATOR_MANAGED_WORKERS: baselineEnv.BGE_M3_ACCELERATOR_MANAGED_WORKERS,
-            BGE_M3_ACCELERATOR_MAX_WORKERS: baselineEnv.BGE_M3_ACCELERATOR_MAX_WORKERS,
-            EMBEDDING_PROVIDER: baselineEnv.EMBEDDING_PROVIDER,
-            BGE_M3_MODE: baselineEnv.BGE_M3_MODE,
-            BGE_M3_STORE_COLBERT: baselineEnv.BGE_M3_STORE_COLBERT,
-            MILVUS_ADDRESS: baselineEnv.MILVUS_ADDRESS,
+        measurementEnv: redactEnv({
+            INDEX_ACCELERATOR_MODE: measurementEnv.INDEX_ACCELERATOR_MODE,
+            INDEX_EMBEDDING_CONCURRENCY: measurementEnv.INDEX_EMBEDDING_CONCURRENCY,
+            INDEX_INSERT_CONCURRENCY: measurementEnv.INDEX_INSERT_CONCURRENCY,
+            INDEX_INSERT_QUEUE_CAPACITY: measurementEnv.INDEX_INSERT_QUEUE_CAPACITY,
+            BGE_M3_ACCELERATOR_MANAGED_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MANAGED_WORKERS,
+            BGE_M3_ACCELERATOR_MAX_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MAX_WORKERS,
+            EMBEDDING_PROVIDER: measurementEnv.EMBEDDING_PROVIDER,
+            BGE_M3_MODE: measurementEnv.BGE_M3_MODE,
+            BGE_M3_STORE_COLBERT: measurementEnv.BGE_M3_STORE_COLBERT,
+            MILVUS_ADDRESS: measurementEnv.MILVUS_ADDRESS,
         }),
         runtimeWorkload: runtimeStatus.workload,
         runtimeSync: runtimeStatus.sync,
@@ -595,6 +723,7 @@ async function measure(options, clientConfig, runDir) {
 
     const deadline = options.timeoutMs > 0 ? Date.now() + options.timeoutMs : Number.POSITIVE_INFINITY;
     let finalResult = null;
+    let lastAcceleratorSample = null;
 
     while (Date.now() <= deadline) {
         const statusResult = await callTool(clientConfig, 'get_indexing_status', {
@@ -609,6 +738,9 @@ async function measure(options, clientConfig, runDir) {
         };
         appendJsonl(samplesPath, sample);
         finalResult = sample;
+        if (hasInsertSchedulerEvidence(structuredContent?.accelerator, options.codebasePath)) {
+            lastAcceleratorSample = sample;
+        }
 
         const status = structuredContent?.status;
         if (terminalStatuses.has(status)) {
@@ -618,20 +750,86 @@ async function measure(options, clientConfig, runDir) {
         await sleep(options.intervalMs);
     }
 
+    let cancellationResult;
+    if (
+        options.cancelOnTimeout &&
+        finalResult?.structuredContent?.status &&
+        !terminalStatuses.has(finalResult.structuredContent.status)
+    ) {
+        const cancelResult = await callTool(clientConfig, 'cancel_codebase_workload', {
+            path: options.codebasePath,
+            reason: `measure-indexing-baseline timeout after ${options.timeoutMs}ms`,
+        });
+        cancellationResult = {
+            capturedAt: new Date().toISOString(),
+            text: textFromResult(cancelResult),
+            structuredContent: cancelResult.structuredContent,
+        };
+        writeJson(path.join(runDir, 'cancel-response.json'), cancellationResult);
+    }
+
     const endedAt = new Date();
     writeJson(path.join(runDir, 'summary.json'), {
         codebasePath: options.codebasePath,
-        mode: 'off',
+        mode: options.acceleratorMode,
+        embeddingConcurrency: options.embeddingConcurrency,
+        insertConcurrency: options.insertConcurrency,
+        insertQueueCapacity: options.insertQueueCapacity,
         force: options.force,
         monitorOnly: options.monitorOnly,
+        cancelledOnTimeout: Boolean(cancellationResult),
         startedAt: startedAt.toISOString(),
         monitorStartedAt: options.monitorOnly ? monitorStartedAt.toISOString() : undefined,
         endedAt: endedAt.toISOString(),
         wallClockMs: endedAt.getTime() - startedAt.getTime(),
         finalStatus: finalResult?.structuredContent?.status,
+        insertSummary: selectInsertSummary(finalResult, lastAcceleratorSample, options.codebasePath),
+        lastAcceleratorStructuredContent: lastAcceleratorSample?.structuredContent,
+        cancellation: cancellationResult,
         finalStructuredContent: finalResult?.structuredContent,
         samplesPath,
     });
+}
+
+function hasInsertSchedulerEvidence(accelerator, codebasePath) {
+    if (!accelerator) {
+        return false;
+    }
+    if (!acceleratorMatchesCodebase(accelerator, codebasePath)) {
+        return false;
+    }
+    const insertSummary = accelerator.insertSummary || accelerator;
+    return Boolean(
+        insertSummary.completedInsertBatches ||
+        insertSummary.failedInsertBatches ||
+        insertSummary.runningInsertBatches ||
+        insertSummary.queuedInsertBatches ||
+        insertSummary.insertMs,
+    );
+}
+
+function acceleratorMatchesCodebase(accelerator, codebasePath) {
+    const batchesSummary = accelerator?.batchesSummary;
+    const batches = [
+        ...(Array.isArray(batchesSummary?.activeTail) ? batchesSummary.activeTail : []),
+        ...(Array.isArray(batchesSummary?.latestTail) ? batchesSummary.latestTail : []),
+    ];
+    if (batches.length === 0) {
+        return true;
+    }
+    return batches.some((batch) => (
+        typeof batch?.firstFile === 'string' && batch.firstFile.startsWith(codebasePath)
+    ) || (
+        typeof batch?.lastFile === 'string' && batch.lastFile.startsWith(codebasePath)
+    ));
+}
+
+function selectInsertSummary(finalResult, lastAcceleratorSample, codebasePath) {
+    const finalSummary = finalResult?.structuredContent?.accelerator?.insertSummary;
+    if (hasInsertSchedulerEvidence(finalResult?.structuredContent?.accelerator, codebasePath)) {
+        return finalSummary;
+    }
+    return lastAcceleratorSample?.structuredContent?.accelerator?.insertSummary || finalSummary;
 }
 
 async function main() {
@@ -641,14 +839,17 @@ async function main() {
         console.log('Compact benchmark output self-test passed.');
         return;
     }
-    const runDir = options.runDir || createRunDir(options.artifactDir, 'off');
+    const runDir = options.runDir || createRunDir(
+        options.artifactDir,
+        `${options.acceleratorMode}-insert${options.insertConcurrency}`,
+    );
     fs.mkdirSync(runDir, { recursive: true });
     const clientConfig = options.monitorOnly
         ? readClientConfig()
         : await prepareDaemon(options, runDir);
 
     if (options.prepareOnly) {
-        console.log(`Prepared INDEX_ACCELERATOR_MODE=off daemon measurement.`);
+        console.log(`Prepared INDEX_ACCELERATOR_MODE=${options.acceleratorMode} daemon measurement.`);
         console.log(`Run dir: ${runDir}`);
         console.log(`Runtime: ${clientConfig.runtimeId} pid=${clientConfig.pid}`);
         console.log(`Start measurement with: node scripts/measure-indexing-baseline.js --start --no-restart --codebase ${options.codebasePath}`);

@@ -35,6 +35,7 @@ export interface IndexingAcceleratorConfig {
     mode: IndexingAcceleratorMode;
     embeddingConcurrency: number;
     insertConcurrency: number;
+    insertQueueCapacity: number;
     maxBgeM3Workers: number;
     vramLimitPercent: number;
     retryBudget: number;
@@ -47,6 +48,7 @@ export interface IndexingAcceleratorSnapshot {
     fallbackReason?: string;
     embeddingConcurrency: number;
     insertConcurrency: number;
+    insertQueueCapacity: number;
     maxBgeM3Workers: number;
     vramLimitPercent: number;
     retryBudget: number;
@@ -55,7 +57,10 @@ export interface IndexingAcceleratorSnapshot {
     inFlightInsertBatches: number;
     queuedBatches?: number;
     runningEmbeddingBatches?: number;
+    queuedInsertBatches?: number;
     runningInsertBatches?: number;
+    completedInsertBatches: number;
+    failedInsertBatches: number;
     backpressureWaitMs?: number;
     submittedBatches: number;
     completedBatches: number;
@@ -111,7 +116,7 @@ export interface IndexingBatchMetadata {
 
 export interface IndexingBatchSnapshot extends IndexingBatchMetadata {
     attempts: number;
-    state: 'queued' | 'running' | 'running_embedding' | 'running_insert' | 'completed' | 'failed' | 'cancelled';
+    state: 'queued' | 'running' | 'running_embedding' | 'queued_insert' | 'running_insert' | 'completed' | 'failed' | 'cancelled';
 }
 
 export class IndexingAcceleratorRuntime {
@@ -125,6 +130,7 @@ export class IndexingAcceleratorRuntime {
             fallbackReason,
             embeddingConcurrency: active ? config.embeddingConcurrency : 1,
             insertConcurrency: active ? config.insertConcurrency : 1,
+            insertQueueCapacity: active ? config.insertQueueCapacity : 1,
             maxBgeM3Workers: config.maxBgeM3Workers,
             vramLimitPercent: config.vramLimitPercent,
             retryBudget: config.retryBudget,
@@ -133,7 +139,10 @@ export class IndexingAcceleratorRuntime {
             inFlightInsertBatches: 0,
             queuedBatches: 0,
             runningEmbeddingBatches: 0,
+            queuedInsertBatches: 0,
             runningInsertBatches: 0,
+            completedInsertBatches: 0,
+            failedInsertBatches: 0,
             backpressureWaitMs: 0,
             submittedBatches: 0,
             completedBatches: 0,
@@ -270,6 +279,15 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
+    recordBatchQueuedInsert(batchId?: number): void {
+        if (batchId !== undefined) {
+            const batch = this.batches.get(batchId);
+            if (batch) {
+                batch.state = 'queued_insert';
+            }
+        }
+    }
+
     recordBatchCompleted(batchId?: number): void {
         this.snapshot.completedBatches++;
         if (batchId !== undefined) {
@@ -280,6 +298,10 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
+    recordInsertCompleted(): void {
+        this.snapshot.completedInsertBatches++;
+    }
+
     recordBatchFailed(batchId?: number): void {
         this.snapshot.failedBatches++;
         if (batchId !== undefined) {
@@ -288,6 +310,10 @@ export class IndexingAcceleratorRuntime {
                 batch.state = 'failed';
             }
         }
+    }
+
+    recordInsertFailed(): void {
+        this.snapshot.failedInsertBatches++;
     }
 
     recordBatchCancelled(batchId?: number): void {
@@ -371,10 +397,12 @@ export class IndexingAcceleratorRuntime {
     recordSchedulerSnapshot(metrics: {
         queuedBatches: number;
         runningEmbeddingBatches: number;
+        queuedInsertBatches: number;
         runningInsertBatches: number;
     }): void {
         this.snapshot.queuedBatches = metrics.queuedBatches;
         this.snapshot.runningEmbeddingBatches = metrics.runningEmbeddingBatches;
+        this.snapshot.queuedInsertBatches = metrics.queuedInsertBatches;
         this.snapshot.runningInsertBatches = metrics.runningInsertBatches;
     }
 
@@ -535,7 +563,8 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
     return {
         mode,
         embeddingConcurrency: parsePositiveInteger('INDEX_EMBEDDING_CONCURRENCY', mode === 'auto' ? 2 : 1),
-        insertConcurrency: parsePositiveInteger('INDEX_INSERT_CONCURRENCY', mode === 'auto' ? 2 : 1),
+        insertConcurrency: parsePositiveInteger('INDEX_INSERT_CONCURRENCY', 1),
+        insertQueueCapacity: parsePositiveInteger('INDEX_INSERT_QUEUE_CAPACITY', 2),
         maxBgeM3Workers: parsePositiveInteger('BGE_M3_ACCELERATOR_MAX_WORKERS', 1),
         vramLimitPercent: parsePercent('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75),
         retryBudget: parsePositiveInteger('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
