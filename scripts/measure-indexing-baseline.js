@@ -35,6 +35,8 @@ Options:
                           INDEX_INSERT_CONCURRENCY for daemon restart (default: 1)
   --insert-queue-capacity <n>
                           INDEX_INSERT_QUEUE_CAPACITY for daemon restart (default: 2)
+  --adaptive-backpressure <bool>
+                          INDEX_ADAPTIVE_BACKPRESSURE for daemon restart (default: true in auto)
   --managed-workers <bool>
                           BGE_M3_ACCELERATOR_MANAGED_WORKERS for daemon restart (default: false)
   --max-workers <n>
@@ -55,6 +57,7 @@ Default daemon env overrides:
   INDEX_EMBEDDING_CONCURRENCY=<--embedding-concurrency>
   INDEX_INSERT_CONCURRENCY=<--insert-concurrency>
   INDEX_INSERT_QUEUE_CAPACITY=<--insert-queue-capacity>
+  INDEX_ADAPTIVE_BACKPRESSURE=<--adaptive-backpressure>
   BGE_M3_ACCELERATOR_MANAGED_WORKERS=<--managed-workers>
   BGE_M3_ACCELERATOR_MAX_WORKERS=<--max-workers>
 `);
@@ -71,6 +74,7 @@ function parseArgs(argv) {
         embeddingConcurrency: 1,
         insertConcurrency: 1,
         insertQueueCapacity: 2,
+        adaptiveBackpressure: undefined,
         managedWorkers: false,
         maxWorkers: 1,
         prepareOnly: false,
@@ -123,6 +127,9 @@ function parseArgs(argv) {
                 break;
             case '--insert-queue-capacity':
                 options.insertQueueCapacity = Number(next());
+                break;
+            case '--adaptive-backpressure':
+                options.adaptiveBackpressure = parseBooleanArg(next(), '--adaptive-backpressure');
                 break;
             case '--managed-workers':
                 options.managedWorkers = parseBooleanArg(next(), '--managed-workers');
@@ -383,6 +390,7 @@ function getCurrentServiceEnvironment(unitName) {
 }
 
 function buildMeasurementEnvironment(currentEnv, options) {
+    const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
     return {
         ...currentEnv,
         MCP_RUNTIME_MODE: 'daemon',
@@ -390,6 +398,7 @@ function buildMeasurementEnvironment(currentEnv, options) {
         INDEX_EMBEDDING_CONCURRENCY: String(options.embeddingConcurrency),
         INDEX_INSERT_CONCURRENCY: String(options.insertConcurrency),
         INDEX_INSERT_QUEUE_CAPACITY: String(options.insertQueueCapacity),
+        INDEX_ADAPTIVE_BACKPRESSURE: String(adaptiveBackpressure),
         BGE_M3_ACCELERATOR_MANAGED_WORKERS: String(options.managedWorkers),
         BGE_M3_ACCELERATOR_MAX_WORKERS: String(options.maxWorkers),
     };
@@ -598,6 +607,20 @@ function summarizeRetryAndWorkers(accelerator) {
             failedInsertBatches: accelerator.failedInsertBatches || 0,
             insertMs: accelerator.insertMs || 0,
         },
+        adaptiveSummary: {
+            enabled: Boolean(accelerator.adaptiveBackpressureEnabled),
+            configuredEmbeddingConcurrency: accelerator.configuredEmbeddingConcurrency || accelerator.embeddingConcurrency || 1,
+            effectiveEmbeddingConcurrency: accelerator.effectiveEmbeddingConcurrency || accelerator.embeddingConcurrency || 1,
+            configuredInsertConcurrency: accelerator.configuredInsertConcurrency || accelerator.insertConcurrency || 1,
+            effectiveInsertConcurrency: accelerator.effectiveInsertConcurrency || accelerator.insertConcurrency || 1,
+            pressureScore: accelerator.adaptivePressureScore || 0,
+            throttleReason: accelerator.adaptiveThrottleReason || 'none',
+            throttleTimeMs: accelerator.adaptiveThrottleTimeMs || 0,
+            throttleEvents: accelerator.adaptiveThrottleEvents || 0,
+            effectiveEmbeddingConcurrencyMin: accelerator.adaptiveEffectiveEmbeddingConcurrencyMin || accelerator.effectiveEmbeddingConcurrency || accelerator.embeddingConcurrency || 1,
+            effectiveEmbeddingConcurrencyMax: accelerator.adaptiveEffectiveEmbeddingConcurrencyMax || accelerator.effectiveEmbeddingConcurrency || accelerator.embeddingConcurrency || 1,
+            pressureSignals: accelerator.adaptivePressureSignals || {},
+        },
     };
 }
 
@@ -684,6 +707,7 @@ async function prepareDaemon(options, runDir) {
             INDEX_EMBEDDING_CONCURRENCY: measurementEnv.INDEX_EMBEDDING_CONCURRENCY,
             INDEX_INSERT_CONCURRENCY: measurementEnv.INDEX_INSERT_CONCURRENCY,
             INDEX_INSERT_QUEUE_CAPACITY: measurementEnv.INDEX_INSERT_QUEUE_CAPACITY,
+            INDEX_ADAPTIVE_BACKPRESSURE: measurementEnv.INDEX_ADAPTIVE_BACKPRESSURE,
             BGE_M3_ACCELERATOR_MANAGED_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MANAGED_WORKERS,
             BGE_M3_ACCELERATOR_MAX_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MAX_WORKERS,
             EMBEDDING_PROVIDER: measurementEnv.EMBEDDING_PROVIDER,
@@ -769,12 +793,14 @@ async function measure(options, clientConfig, runDir) {
     }
 
     const endedAt = new Date();
+    const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
     writeJson(path.join(runDir, 'summary.json'), {
         codebasePath: options.codebasePath,
         mode: options.acceleratorMode,
         embeddingConcurrency: options.embeddingConcurrency,
         insertConcurrency: options.insertConcurrency,
         insertQueueCapacity: options.insertQueueCapacity,
+        adaptiveBackpressure,
         force: options.force,
         monitorOnly: options.monitorOnly,
         cancelledOnTimeout: Boolean(cancellationResult),
@@ -784,6 +810,7 @@ async function measure(options, clientConfig, runDir) {
         wallClockMs: endedAt.getTime() - startedAt.getTime(),
         finalStatus: finalResult?.structuredContent?.status,
         insertSummary: selectInsertSummary(finalResult, lastAcceleratorSample, options.codebasePath),
+        adaptiveSummary: selectAdaptiveSummary(finalResult, lastAcceleratorSample, options.codebasePath),
         lastAcceleratorStructuredContent: lastAcceleratorSample?.structuredContent,
         cancellation: cancellationResult,
         finalStructuredContent: finalResult?.structuredContent,
@@ -832,6 +859,18 @@ function selectInsertSummary(finalResult, lastAcceleratorSample, codebasePath) {
     return lastAcceleratorSample?.structuredContent?.accelerator?.insertSummary || finalSummary;
 }
 
+function selectAdaptiveSummary(finalResult, lastAcceleratorSample, codebasePath) {
+    const finalAccelerator = finalResult?.structuredContent?.accelerator;
+    if (acceleratorMatchesCodebase(finalAccelerator, codebasePath)) {
+        return finalAccelerator?.adaptiveSummary || finalAccelerator;
+    }
+    const sampledAccelerator = lastAcceleratorSample?.structuredContent?.accelerator;
+    if (acceleratorMatchesCodebase(sampledAccelerator, codebasePath)) {
+        return sampledAccelerator?.adaptiveSummary || sampledAccelerator;
+    }
+    return finalAccelerator?.adaptiveSummary || sampledAccelerator?.adaptiveSummary;
+}
+
 async function main() {
     const options = parseArgs(process.argv.slice(2));
     if (options.selfTestCompactOutput) {
@@ -839,9 +878,10 @@ async function main() {
         console.log('Compact benchmark output self-test passed.');
         return;
     }
+    const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
     const runDir = options.runDir || createRunDir(
         options.artifactDir,
-        `${options.acceleratorMode}-insert${options.insertConcurrency}`,
+        `${options.acceleratorMode}-insert${options.insertConcurrency}-adaptive${adaptiveBackpressure}`,
     );
     fs.mkdirSync(runDir, { recursive: true });
     const clientConfig = options.monitorOnly

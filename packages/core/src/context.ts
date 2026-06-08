@@ -35,6 +35,7 @@ import {
     EmbeddingWorkerFailureReason,
     IndexingBatchMetadata,
     IndexingAcceleratorConfig,
+    IndexingAcceleratorResourcePressure,
     IndexingAcceleratorRuntime,
     IndexingAcceleratorSnapshot,
     IndexingAcceleratorWorkerSnapshot,
@@ -150,6 +151,7 @@ export interface ContextConfig {
     customExtensions?: string[]; // New: custom extensions from MCP
     customIgnorePatterns?: string[]; // New: custom ignore patterns from MCP
     collectionNameOverride?: string;
+    acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
 }
 
 export interface CodebaseSessionConfig {
@@ -213,6 +215,7 @@ export class Context {
     private codebaseSessions = new Map<string, CodebaseSessionState>();
     private synchronizers = new Map<string, FileSynchronizer>();
     private lastAcceleratorSnapshot?: IndexingAcceleratorSnapshot;
+    private acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -263,6 +266,7 @@ export class Context {
         // Remove duplicates
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
         this.collectionNameOverride = config.collectionNameOverride;
+        this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
 
         console.log(
             `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
@@ -1924,7 +1928,9 @@ export class Context {
                 embeddingConcurrency: effectiveEmbeddingConcurrency,
                 insertConcurrency: acceleratorConfig.insertConcurrency,
                 insertQueueCapacity: acceleratorConfig.insertQueueCapacity,
+                adaptiveBackpressure: acceleratorConfig.adaptiveBackpressure,
                 abortSignal,
+                resourcePressureProvider: this.acceleratorResourceSnapshotProvider,
                 onProgress: publishBatchProgress,
             })
             : undefined;

@@ -782,4 +782,27 @@ describe('Context accelerated batch pipeline', () => {
             workers: embedding.workerSnapshots,
         }));
     });
+
+    it('feeds measured VRAM pressure into adaptive accelerator status on the default indexing path', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_ADAPTIVE_BACKPRESSURE = 'true';
+        process.env.INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT = '90';
+        const codebasePath = await createCodebase();
+
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+            acceleratorResourceSnapshotProvider: () => ({
+                vramUsedPercent: 95,
+            }),
+        });
+        await context.indexCodebase(codebasePath);
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.adaptivePressureSignals?.vramUsedPercent).toBe(95);
+        expect(snapshot.adaptiveThrottleReason).toBe('vram');
+        expect(snapshot.adaptivePressureScore).toBe(1);
+    });
 });

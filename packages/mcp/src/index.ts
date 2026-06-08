@@ -134,7 +134,22 @@ class ContextMcpServer {
 
         this.context = new Context({
             embedding: embedding as ContextOptions['embedding'],
-            vectorDatabase: vectorDatabase as ContextOptions['vectorDatabase']
+            vectorDatabase: vectorDatabase as ContextOptions['vectorDatabase'],
+            acceleratorResourceSnapshotProvider: () => {
+                const vramPlanning = this.managedBgeM3WorkerManager?.getSnapshot().vramPlanning;
+                if (!vramPlanning?.totalMiB) {
+                    return undefined;
+                }
+                const usedMiB = vramPlanning.budgetMiB !== undefined && vramPlanning.freeBudgetMiB !== undefined
+                    ? vramPlanning.budgetMiB - vramPlanning.freeBudgetMiB - vramPlanning.safetyMarginMiB
+                    : vramPlanning.usedBeforeMiB;
+                if (usedMiB === undefined || !Number.isFinite(usedMiB)) {
+                    return undefined;
+                }
+                return {
+                    vramUsedPercent: Number((Math.max(0, usedMiB) / vramPlanning.totalMiB * 100).toFixed(2)),
+                };
+            },
         });
 
         const runtimeId = crypto.randomUUID();

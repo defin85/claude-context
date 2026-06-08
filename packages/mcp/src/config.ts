@@ -40,6 +40,20 @@ export interface ContextMcpConfig {
     acceleratorVramLimitPercent: number;
     acceleratorRetryBudget: number;
     acceleratorBackgroundSync: boolean;
+    acceleratorAdaptiveBackpressure: boolean;
+    acceleratorAdaptiveMinEmbeddingConcurrency: number;
+    acceleratorAdaptiveHighPressureThreshold: number;
+    acceleratorAdaptiveLowPressureThreshold: number;
+    acceleratorAdaptiveHealthySampleCount: number;
+    acceleratorAdaptiveCooldownMs: number;
+    acceleratorAdaptiveInsertBacklogThreshold: number;
+    acceleratorAdaptiveInsertBacklogMinBatches: number;
+    acceleratorAdaptiveInsertLatencyMsThreshold: number;
+    acceleratorAdaptiveRetryRateThreshold: number;
+    acceleratorAdaptiveRetryRateMinBatches: number;
+    acceleratorAdaptiveRejectedWorkersThreshold: number;
+    acceleratorAdaptiveMemoryFreePercentThreshold: number;
+    acceleratorAdaptiveVramUsageLimitPercent: number;
     acceleratorManagedBgeM3Workers: boolean;
     acceleratorManagedWorkerLifecycle: 'systemd' | 'child';
     acceleratorManagedWorkerStartPort: number;
@@ -214,6 +228,21 @@ function getPositiveIntegerFromEnvWithDefault(name: string, fallback: number): n
     return getPositiveIntegerFromEnv(name) || fallback;
 }
 
+function getPositiveNumberFromEnvWithDefault(name: string, fallback: number): number {
+    const rawValue = envManager.get(name);
+    if (!rawValue) {
+        return fallback;
+    }
+
+    const parsedValue = Number(rawValue);
+    if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue;
+    }
+
+    console.warn(`[DEBUG] ⚠️  Ignoring invalid ${name}: ${rawValue}. Expected a positive number.`);
+    return fallback;
+}
+
 function getBooleanFromEnv(name: string, fallback: boolean): boolean {
     const rawValue = envManager.get(name);
     if (!rawValue) {
@@ -292,6 +321,20 @@ export function createMcpConfig(): ContextMcpConfig {
         acceleratorVramLimitPercent: Math.max(1, Math.min(100, getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75))),
         acceleratorRetryBudget: getPositiveIntegerFromEnvWithDefault('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
         acceleratorBackgroundSync: getBooleanFromEnv('INDEX_ACCELERATE_BACKGROUND_SYNC', false),
+        acceleratorAdaptiveBackpressure: getBooleanFromEnv('INDEX_ADAPTIVE_BACKPRESSURE', acceleratorMode === 'auto'),
+        acceleratorAdaptiveMinEmbeddingConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY', 1),
+        acceleratorAdaptiveHighPressureThreshold: getPositiveNumberFromEnvWithDefault('INDEX_ADAPTIVE_HIGH_PRESSURE_THRESHOLD', 1),
+        acceleratorAdaptiveLowPressureThreshold: getPositiveNumberFromEnvWithDefault('INDEX_ADAPTIVE_LOW_PRESSURE_THRESHOLD', 0.5),
+        acceleratorAdaptiveHealthySampleCount: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_HEALTHY_SAMPLE_COUNT', 3),
+        acceleratorAdaptiveCooldownMs: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_COOLDOWN_MS', 5000),
+        acceleratorAdaptiveInsertBacklogThreshold: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_INSERT_BACKLOG_THRESHOLD', 2),
+        acceleratorAdaptiveInsertBacklogMinBatches: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_INSERT_BACKLOG_MIN_BATCHES', 30),
+        acceleratorAdaptiveInsertLatencyMsThreshold: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_INSERT_LATENCY_MS_THRESHOLD', 30000),
+        acceleratorAdaptiveRetryRateThreshold: getPositiveNumberFromEnvWithDefault('INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD', 0.5),
+        acceleratorAdaptiveRetryRateMinBatches: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_RETRY_RATE_MIN_BATCHES', 10),
+        acceleratorAdaptiveRejectedWorkersThreshold: getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_REJECTED_WORKERS_THRESHOLD', 1),
+        acceleratorAdaptiveMemoryFreePercentThreshold: Math.max(1, Math.min(100, getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD', 3))),
+        acceleratorAdaptiveVramUsageLimitPercent: Math.max(1, Math.min(100, getPositiveIntegerFromEnvWithDefault('INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT', 90))),
         acceleratorManagedBgeM3Workers: getBooleanFromEnv('BGE_M3_ACCELERATOR_MANAGED_WORKERS', false),
         acceleratorManagedWorkerLifecycle: parseManagedWorkerLifecycle(envManager.get('BGE_M3_ACCELERATOR_WORKER_LIFECYCLE')),
         acceleratorManagedWorkerStartPort: getPositiveIntegerFromEnvWithDefault('BGE_M3_ACCELERATOR_START_PORT', 8001),
@@ -594,6 +637,15 @@ export function logAcceleratorConfiguration(config: ContextMcpConfig): void {
     console.log(`[MCP]   Accelerator VRAM Limit: ${config.acceleratorVramLimitPercent}%`);
     console.log(`[MCP]   Accelerator Retry Budget: ${config.acceleratorRetryBudget}`);
     console.log(`[MCP]   Accelerator Background Sync: ${config.acceleratorBackgroundSync ? 'true' : 'false'}`);
+    console.log(`[MCP]   Accelerator Adaptive Backpressure: ${config.acceleratorAdaptiveBackpressure ? 'true' : 'false'}`);
+    if (config.acceleratorAdaptiveBackpressure) {
+        console.log(`[MCP]   Accelerator Adaptive Min Embedding Concurrency: ${config.acceleratorAdaptiveMinEmbeddingConcurrency}`);
+        console.log(`[MCP]   Accelerator Adaptive Pressure Thresholds: high=${config.acceleratorAdaptiveHighPressureThreshold} low=${config.acceleratorAdaptiveLowPressureThreshold}`);
+        console.log(`[MCP]   Accelerator Adaptive Recovery: healthySamples=${config.acceleratorAdaptiveHealthySampleCount} cooldownMs=${config.acceleratorAdaptiveCooldownMs}`);
+        console.log(`[MCP]   Accelerator Adaptive Insert Thresholds: backlog=${config.acceleratorAdaptiveInsertBacklogThreshold} backlogMinBatches=${config.acceleratorAdaptiveInsertBacklogMinBatches} latencyMs=${config.acceleratorAdaptiveInsertLatencyMsThreshold}`);
+        console.log(`[MCP]   Accelerator Adaptive Worker Thresholds: retryRate=${config.acceleratorAdaptiveRetryRateThreshold} retryMinBatches=${config.acceleratorAdaptiveRetryRateMinBatches} rejectedWorkers=${config.acceleratorAdaptiveRejectedWorkersThreshold}`);
+        console.log(`[MCP]   Accelerator Adaptive Guardrails: memoryFreePercent=${config.acceleratorAdaptiveMemoryFreePercentThreshold} vramUsagePercent=${config.acceleratorAdaptiveVramUsageLimitPercent}`);
+    }
     console.log(`[MCP]   Accelerator Managed BGE-M3 Workers: ${config.acceleratorManagedBgeM3Workers ? 'true' : 'false'}`);
     if (config.acceleratorManagedBgeM3Workers) {
         console.log(`[MCP]   Accelerator Worker Lifecycle: ${config.acceleratorManagedWorkerLifecycle}`);
@@ -672,6 +724,20 @@ Environment Variables:
   INDEX_EMBEDDING_CONCURRENCY Max in-flight embedding batches (default: 2 in auto, else 1)
   INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 1; raise only after Milvus safety validation)
   INDEX_INSERT_QUEUE_CAPACITY Max queued insert batches waiting for insert lanes (default: 2)
+  INDEX_ADAPTIVE_BACKPRESSURE Enable adaptive indexing backpressure in auto mode (default: true in auto)
+  INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY Minimum adaptive embedding concurrency (default: 1)
+  INDEX_ADAPTIVE_HIGH_PRESSURE_THRESHOLD Pressure score that decreases effective concurrency (default: 1)
+  INDEX_ADAPTIVE_LOW_PRESSURE_THRESHOLD Pressure score considered healthy for recovery (default: 0.5)
+  INDEX_ADAPTIVE_HEALTHY_SAMPLE_COUNT Healthy samples before recovery (default: 3)
+  INDEX_ADAPTIVE_COOLDOWN_MS Minimum recovery cooldown after throttling (default: 5000)
+  INDEX_ADAPTIVE_INSERT_BACKLOG_THRESHOLD Insert backlog pressure threshold (default: 2)
+  INDEX_ADAPTIVE_INSERT_BACKLOG_MIN_BATCHES Minimum submitted batches before insert-backlog pressure applies (default: 30)
+  INDEX_ADAPTIVE_INSERT_LATENCY_MS_THRESHOLD Insert latency pressure threshold (default: 30000)
+  INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD Retry rate pressure threshold (default: 0.5)
+  INDEX_ADAPTIVE_RETRY_RATE_MIN_BATCHES Minimum submitted batches before retry-rate pressure applies (default: 10)
+  INDEX_ADAPTIVE_REJECTED_WORKERS_THRESHOLD Rejected worker pressure threshold (default: 1)
+  INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD Memory free-percent guardrail (default: 3)
+  INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT VRAM usage guardrail when measured (default: 90)
   BGE_M3_ACCELERATOR_MAX_WORKERS Total BGE-M3 worker budget including primary (default: 1)
   BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT Managed worker VRAM ceiling (default: 75)
   BGE_M3_ACCELERATOR_MANAGED_WORKERS Start extra BGE-M3 sidecars when eligible (default: false)

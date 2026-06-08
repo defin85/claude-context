@@ -27,6 +27,14 @@ export interface WorkerPlanningPolicySnapshot {
             'accelerator.failedInsertBatches',
             'accelerator.insertMs',
         ];
+        adaptiveBackpressure: [
+            'accelerator.adaptiveBackpressureEnabled',
+            'accelerator.configuredEmbeddingConcurrency',
+            'accelerator.effectiveEmbeddingConcurrency',
+            'accelerator.adaptivePressureScore',
+            'accelerator.adaptiveThrottleReason',
+            'accelerator.adaptiveThrottleTimeMs',
+        ];
         managedWorkers: 'managedBgeM3Workers';
         vramPlan: 'managedBgeM3Workers.vramPlanning';
         fallbackReasons: [
@@ -79,6 +87,14 @@ export function createWorkerPlanningPolicy(): WorkerPlanningPolicySnapshot {
                 'accelerator.failedInsertBatches',
                 'accelerator.insertMs',
             ],
+            adaptiveBackpressure: [
+                'accelerator.adaptiveBackpressureEnabled',
+                'accelerator.configuredEmbeddingConcurrency',
+                'accelerator.effectiveEmbeddingConcurrency',
+                'accelerator.adaptivePressureScore',
+                'accelerator.adaptiveThrottleReason',
+                'accelerator.adaptiveThrottleTimeMs',
+            ],
             managedWorkers: 'managedBgeM3Workers',
             vramPlan: 'managedBgeM3Workers.vramPlanning',
             fallbackReasons: [
@@ -126,6 +142,10 @@ export function createDaemonStatusResult(
         textLines.push(
             `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
             `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
+            ` effectiveEmbeddingConcurrency=${accelerator.effectiveEmbeddingConcurrency ?? accelerator.embeddingConcurrency}` +
+            ` pressure=${accelerator.adaptivePressureScore ?? 0}` +
+            ` throttle=${accelerator.adaptiveThrottleReason ?? 'none'}` +
+            ` throttleMs=${accelerator.adaptiveThrottleTimeMs ?? 0}` +
             ` insertConcurrency=${accelerator.insertConcurrency ?? 1} queuedInsert=${accelerator.queuedInsertBatches ?? 0}` +
             ` runningInsert=${accelerator.runningInsertBatches ?? 0}` +
             ` completedInsert=${accelerator.completedInsertBatches ?? 0} failedInsert=${accelerator.failedInsertBatches ?? 0}` +

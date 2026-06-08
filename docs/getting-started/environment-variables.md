@@ -98,6 +98,39 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | `CUSTOM_EXTENSIONS` | Additional file extensions to include (comma-separated, e.g., `.vue,.svelte,.astro`) | None |
 | `CUSTOM_IGNORE_PATTERNS` | Additional ignore patterns (comma-separated, e.g., `temp/**,*.backup,private/**`) | None |
 
+### Accelerated Indexing Backpressure
+
+These options apply to accelerated indexing when `INDEX_ACCELERATOR_MODE=auto`.
+Adaptive backpressure changes effective batch admission only; configured hard
+maximums stay visible in status and remain the upper bound.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `INDEX_ACCELERATOR_MODE` | Accelerator mode: `off` or `auto` | `off` |
+| `INDEX_EMBEDDING_CONCURRENCY` | Configured maximum in-flight embedding batches | `2` in auto, else `1` |
+| `INDEX_INSERT_CONCURRENCY` | Configured maximum in-flight vector insert batches | `1` |
+| `INDEX_INSERT_QUEUE_CAPACITY` | Maximum insert backlog waiting for insert lanes | `2` |
+| `INDEX_ADAPTIVE_BACKPRESSURE` | Enable adaptive effective concurrency and producer admission throttling | `true` in auto |
+| `INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY` | Lowest effective embedding concurrency while throttled | `1` |
+| `INDEX_ADAPTIVE_HIGH_PRESSURE_THRESHOLD` | Pressure score that decreases effective concurrency | `1` |
+| `INDEX_ADAPTIVE_LOW_PRESSURE_THRESHOLD` | Pressure score considered healthy for recovery | `0.5` |
+| `INDEX_ADAPTIVE_HEALTHY_SAMPLE_COUNT` | Healthy samples required before increasing concurrency | `3` |
+| `INDEX_ADAPTIVE_COOLDOWN_MS` | Minimum recovery cooldown after throttling | `5000` |
+| `INDEX_ADAPTIVE_INSERT_BACKLOG_THRESHOLD` | Insert backlog threshold for downstream pressure | `2` |
+| `INDEX_ADAPTIVE_INSERT_BACKLOG_MIN_BATCHES` | Minimum submitted batches before insert-backlog pressure applies | `30` |
+| `INDEX_ADAPTIVE_INSERT_LATENCY_MS_THRESHOLD` | Average insert latency threshold in milliseconds | `30000` |
+| `INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD` | Retried-batch ratio threshold | `0.5` |
+| `INDEX_ADAPTIVE_RETRY_RATE_MIN_BATCHES` | Minimum submitted batches before retry-rate pressure applies | `10` |
+| `INDEX_ADAPTIVE_REJECTED_WORKERS_THRESHOLD` | Rejected BGE-M3 worker threshold | `1` |
+| `INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD` | Host memory free-percent guardrail | `3` |
+| `INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT` | VRAM usage guardrail when VRAM pressure is measured | `90` |
+
+VRAM pressure is measured by the managed BGE-M3 worker planner when managed
+workers are enabled and GPU memory metrics are available.
+
+Use `INDEX_ADAPTIVE_BACKPRESSURE=false` to keep accelerated indexing on the
+static scheduler limits while preserving the bounded queue behavior.
+
 ## 🚀 Quick Setup
 
 ### 1. Create Global Config

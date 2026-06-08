@@ -1,5 +1,6 @@
 import { envManager } from './utils/env-manager';
 import type { PreIndexTraversalDiagnostics } from './sync/preindex-traversal';
+import * as os from 'node:os';
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
 export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
@@ -31,6 +32,32 @@ export interface WorkerLifecycleSummary {
     byReason: EmbeddingWorkerFailureSummary;
 }
 
+export type AdaptiveThrottleReason =
+    | 'none'
+    | 'insert_backlog'
+    | 'insert_latency'
+    | 'retry_rate'
+    | 'worker_rejection'
+    | 'memory'
+    | 'vram';
+
+export interface AdaptiveBackpressureConfig {
+    enabled: boolean;
+    minEmbeddingConcurrency: number;
+    highPressureThreshold: number;
+    lowPressureThreshold: number;
+    healthySampleCount: number;
+    cooldownMs: number;
+    insertBacklogThreshold: number;
+    insertBacklogMinBatches: number;
+    insertLatencyMsThreshold: number;
+    retryRateThreshold: number;
+    retryRateMinBatches: number;
+    rejectedWorkersThreshold: number;
+    memoryFreePercentThreshold: number;
+    vramUsageLimitPercent: number;
+}
+
 export interface IndexingAcceleratorConfig {
     mode: IndexingAcceleratorMode;
     embeddingConcurrency: number;
@@ -40,6 +67,7 @@ export interface IndexingAcceleratorConfig {
     vramLimitPercent: number;
     retryBudget: number;
     accelerateBackgroundSync: boolean;
+    adaptiveBackpressure: AdaptiveBackpressureConfig;
 }
 
 export interface IndexingAcceleratorSnapshot {
@@ -49,6 +77,18 @@ export interface IndexingAcceleratorSnapshot {
     embeddingConcurrency: number;
     insertConcurrency: number;
     insertQueueCapacity: number;
+    adaptiveBackpressureEnabled: boolean;
+    configuredEmbeddingConcurrency: number;
+    configuredInsertConcurrency: number;
+    effectiveEmbeddingConcurrency: number;
+    effectiveInsertConcurrency: number;
+    adaptivePressureScore: number;
+    adaptiveThrottleReason: AdaptiveThrottleReason;
+    adaptiveThrottleTimeMs: number;
+    adaptiveThrottleEvents: number;
+    adaptiveEffectiveEmbeddingConcurrencyMin: number;
+    adaptiveEffectiveEmbeddingConcurrencyMax: number;
+    adaptivePressureSignals?: AdaptivePressureSignals;
     maxBgeM3Workers: number;
     vramLimitPercent: number;
     retryBudget: number;
@@ -73,6 +113,7 @@ export interface IndexingAcceleratorSnapshot {
     activeWorkers?: number;
     rejectedWorkers?: number;
     workers?: IndexingAcceleratorWorkerSnapshot[];
+    resourcePressure?: IndexingAcceleratorResourcePressure;
     codeChunkLimit?: number;
     limitReached?: boolean;
     limitReachedChunks?: number;
@@ -91,6 +132,40 @@ export interface IndexingAcceleratorSnapshot {
     splittingMs: number;
     embeddingMs: number;
     insertMs: number;
+}
+
+export interface AdaptivePressureSignals {
+    insertBacklog: number;
+    insertLatencyMs: number;
+    retryRate: number;
+    submittedBatches: number;
+    retriedBatches: number;
+    rejectedWorkers: number;
+    memoryFreePercent?: number;
+    vramUsedPercent?: number;
+}
+
+export interface IndexingAcceleratorResourcePressure {
+    vramUsedPercent?: number;
+}
+
+export interface AdaptiveBackpressureDecision {
+    enabled: boolean;
+    configuredEmbeddingConcurrency: number;
+    effectiveEmbeddingConcurrency: number;
+    configuredInsertConcurrency: number;
+    effectiveInsertConcurrency: number;
+    pressureScore: number;
+    throttleReason: AdaptiveThrottleReason;
+    throttleTimeMs: number;
+    throttleEvents: number;
+    effectiveEmbeddingConcurrencyMin: number;
+    effectiveEmbeddingConcurrencyMax: number;
+    signals: AdaptivePressureSignals;
+}
+
+export interface AdaptiveBackpressureControllerState extends AdaptiveBackpressureDecision {
+    effectiveQueueCapacity: number;
 }
 
 export interface IndexingAcceleratorWorkerSnapshot {
@@ -131,6 +206,18 @@ export class IndexingAcceleratorRuntime {
             embeddingConcurrency: active ? config.embeddingConcurrency : 1,
             insertConcurrency: active ? config.insertConcurrency : 1,
             insertQueueCapacity: active ? config.insertQueueCapacity : 1,
+            adaptiveBackpressureEnabled: active ? config.adaptiveBackpressure.enabled : false,
+            configuredEmbeddingConcurrency: active ? config.embeddingConcurrency : 1,
+            configuredInsertConcurrency: active ? config.insertConcurrency : 1,
+            effectiveEmbeddingConcurrency: active ? config.embeddingConcurrency : 1,
+            effectiveInsertConcurrency: active ? config.insertConcurrency : 1,
+            adaptivePressureScore: 0,
+            adaptiveThrottleReason: 'none',
+            adaptiveThrottleTimeMs: 0,
+            adaptiveThrottleEvents: 0,
+            adaptiveEffectiveEmbeddingConcurrencyMin: active ? config.embeddingConcurrency : 1,
+            adaptiveEffectiveEmbeddingConcurrencyMax: active ? config.embeddingConcurrency : 1,
+            adaptivePressureSignals: undefined,
             maxBgeM3Workers: config.maxBgeM3Workers,
             vramLimitPercent: config.vramLimitPercent,
             retryBudget: config.retryBudget,
@@ -160,6 +247,7 @@ export class IndexingAcceleratorRuntime {
             activeWorkers: undefined,
             rejectedWorkers: undefined,
             workers: undefined,
+            resourcePressure: undefined,
             codeChunkLimit: undefined,
             limitReached: undefined,
             limitReachedChunks: undefined,
@@ -199,6 +287,12 @@ export class IndexingAcceleratorRuntime {
                 ...this.snapshot.workerLifecycle,
                 byReason: { ...this.snapshot.workerLifecycle.byReason },
             },
+            adaptivePressureSignals: this.snapshot.adaptivePressureSignals
+                ? { ...this.snapshot.adaptivePressureSignals }
+                : undefined,
+            resourcePressure: this.snapshot.resourcePressure
+                ? { ...this.snapshot.resourcePressure }
+                : undefined,
             batches: [...this.batches.values()].map((batch) => ({ ...batch })),
         };
     }
@@ -406,8 +500,30 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.runningInsertBatches = metrics.runningInsertBatches;
     }
 
+    recordAdaptiveBackpressure(decision: AdaptiveBackpressureDecision): void {
+        this.snapshot.adaptiveBackpressureEnabled = decision.enabled;
+        this.snapshot.configuredEmbeddingConcurrency = decision.configuredEmbeddingConcurrency;
+        this.snapshot.configuredInsertConcurrency = decision.configuredInsertConcurrency;
+        this.snapshot.effectiveEmbeddingConcurrency = decision.effectiveEmbeddingConcurrency;
+        this.snapshot.effectiveInsertConcurrency = decision.effectiveInsertConcurrency;
+        this.snapshot.adaptivePressureScore = decision.pressureScore;
+        this.snapshot.adaptiveThrottleReason = decision.throttleReason;
+        this.snapshot.adaptiveThrottleTimeMs = decision.throttleTimeMs;
+        this.snapshot.adaptiveThrottleEvents = decision.throttleEvents;
+        this.snapshot.adaptiveEffectiveEmbeddingConcurrencyMin = decision.effectiveEmbeddingConcurrencyMin;
+        this.snapshot.adaptiveEffectiveEmbeddingConcurrencyMax = decision.effectiveEmbeddingConcurrencyMax;
+        this.snapshot.adaptivePressureSignals = { ...decision.signals };
+    }
+
     recordBackpressureWait(durationMs: number): void {
         this.snapshot.backpressureWaitMs = (this.snapshot.backpressureWaitMs ?? 0) + durationMs;
+    }
+
+    recordResourcePressure(pressure: IndexingAcceleratorResourcePressure): void {
+        this.snapshot.resourcePressure = {
+            ...this.snapshot.resourcePressure,
+            ...pressure,
+        };
     }
 
     recordLimitReached(metrics: { totalChunks: number; processedFiles: number }): void {
@@ -439,6 +555,197 @@ export class IndexingAcceleratorRuntime {
     }
 }
 
+export class AdaptiveBackpressureController {
+    private effectiveEmbeddingConcurrency: number;
+    private healthySamples = 0;
+    private throttleTimeMs = 0;
+    private throttleEvents = 0;
+    private lastObservedAt?: number;
+    private lastDecreaseAt = 0;
+    private minObserved: number;
+    private maxObserved: number;
+    private lastDecision?: AdaptiveBackpressureDecision;
+
+    constructor(
+        private readonly options: {
+            config: AdaptiveBackpressureConfig;
+            configuredEmbeddingConcurrency: number;
+            configuredInsertConcurrency: number;
+            queueCapacity: number;
+        },
+    ) {
+        this.effectiveEmbeddingConcurrency = Math.max(1, options.configuredEmbeddingConcurrency);
+        this.minObserved = this.effectiveEmbeddingConcurrency;
+        this.maxObserved = this.effectiveEmbeddingConcurrency;
+    }
+
+    observe(signals: AdaptivePressureSignals, now: number = Date.now()): AdaptiveBackpressureControllerState {
+        const hardMaximum = Math.max(1, this.options.configuredEmbeddingConcurrency);
+        const minimum = Math.max(
+            1,
+            Math.min(this.options.config.minEmbeddingConcurrency, hardMaximum),
+        );
+        const evaluation = evaluateAdaptivePressure(this.options.config, signals);
+
+        if (this.options.config.enabled) {
+            if (evaluation.score >= this.options.config.highPressureThreshold) {
+                const next = Math.max(minimum, this.effectiveEmbeddingConcurrency - 1);
+                if (next < this.effectiveEmbeddingConcurrency) {
+                    this.throttleEvents++;
+                    this.lastDecreaseAt = now;
+                }
+                this.effectiveEmbeddingConcurrency = next;
+                this.healthySamples = 0;
+            } else if (evaluation.score <= this.options.config.lowPressureThreshold) {
+                this.healthySamples++;
+                if (
+                    this.effectiveEmbeddingConcurrency < hardMaximum &&
+                    this.healthySamples >= this.options.config.healthySampleCount &&
+                    now - this.lastDecreaseAt >= this.options.config.cooldownMs
+                ) {
+                    this.effectiveEmbeddingConcurrency++;
+                    this.healthySamples = 0;
+                }
+            } else {
+                this.healthySamples = 0;
+            }
+        } else {
+            this.effectiveEmbeddingConcurrency = hardMaximum;
+            this.healthySamples = 0;
+        }
+
+        this.minObserved = Math.min(this.minObserved, this.effectiveEmbeddingConcurrency);
+        this.maxObserved = Math.max(this.maxObserved, this.effectiveEmbeddingConcurrency);
+        if (
+            this.lastObservedAt !== undefined &&
+            this.options.config.enabled &&
+            this.effectiveEmbeddingConcurrency < hardMaximum
+        ) {
+            this.throttleTimeMs += Math.max(0, now - this.lastObservedAt);
+        }
+        this.lastObservedAt = now;
+
+        this.lastDecision = {
+            enabled: this.options.config.enabled,
+            configuredEmbeddingConcurrency: hardMaximum,
+            effectiveEmbeddingConcurrency: this.effectiveEmbeddingConcurrency,
+            configuredInsertConcurrency: Math.max(1, this.options.configuredInsertConcurrency),
+            effectiveInsertConcurrency: Math.max(1, this.options.configuredInsertConcurrency),
+            pressureScore: evaluation.score,
+            throttleReason: this.options.config.enabled ? evaluation.reason : 'none',
+            throttleTimeMs: this.throttleTimeMs,
+            throttleEvents: this.throttleEvents,
+            effectiveEmbeddingConcurrencyMin: this.minObserved,
+            effectiveEmbeddingConcurrencyMax: this.maxObserved,
+            signals,
+        };
+
+        return {
+            ...this.lastDecision,
+            effectiveQueueCapacity: this.getEffectiveQueueCapacity(),
+        };
+    }
+
+    getCurrentState(): AdaptiveBackpressureControllerState {
+        if (!this.lastDecision) {
+            return this.observe({
+                insertBacklog: 0,
+                insertLatencyMs: 0,
+                retryRate: 0,
+                submittedBatches: 0,
+                retriedBatches: 0,
+                rejectedWorkers: 0,
+                memoryFreePercent: getMemoryFreePercent(),
+            });
+        }
+        return {
+            ...this.lastDecision,
+            signals: { ...this.lastDecision.signals },
+            effectiveQueueCapacity: this.getEffectiveQueueCapacity(),
+        };
+    }
+
+    private getEffectiveQueueCapacity(): number {
+        if (!this.options.config.enabled) {
+            return this.options.queueCapacity;
+        }
+        return Math.max(
+            this.effectiveEmbeddingConcurrency,
+            Math.min(this.options.queueCapacity, this.effectiveEmbeddingConcurrency * 2),
+        );
+    }
+}
+
+export function evaluateAdaptivePressure(
+    config: AdaptiveBackpressureConfig,
+    signals: AdaptivePressureSignals,
+): { score: number; reason: AdaptiveThrottleReason } {
+    const candidates: Array<{ reason: AdaptiveThrottleReason; score: number }> = [
+        {
+            reason: 'insert_backlog',
+            score: signals.submittedBatches >= config.insertBacklogMinBatches
+                ? ratio(signals.insertBacklog, config.insertBacklogThreshold)
+                : 0,
+        },
+        {
+            reason: 'insert_latency',
+            score: ratio(signals.insertLatencyMs, config.insertLatencyMsThreshold),
+        },
+        {
+            reason: 'retry_rate',
+            score: signals.submittedBatches >= config.retryRateMinBatches
+                ? ratio(signals.retryRate, config.retryRateThreshold)
+                : 0,
+        },
+        {
+            reason: 'worker_rejection',
+            score: ratio(signals.rejectedWorkers, config.rejectedWorkersThreshold),
+        },
+    ];
+
+    if (signals.memoryFreePercent !== undefined) {
+        candidates.push({
+            reason: 'memory',
+            score: ratio(config.memoryFreePercentThreshold, signals.memoryFreePercent),
+        });
+    }
+    if (signals.vramUsedPercent !== undefined) {
+        candidates.push({
+            reason: 'vram',
+            score: ratio(signals.vramUsedPercent, config.vramUsageLimitPercent),
+        });
+    }
+
+    const winner = candidates.reduce((best, candidate) => (
+        candidate.score > best.score ? candidate : best
+    ), { reason: 'none' as AdaptiveThrottleReason, score: 0 });
+
+    if (winner.score <= 0) {
+        return { score: 0, reason: 'none' };
+    }
+    return {
+        score: Number(Math.min(1, winner.score).toFixed(4)),
+        reason: winner.reason,
+    };
+}
+
+export function createAdaptivePressureSignals(snapshot: IndexingAcceleratorSnapshot): AdaptivePressureSignals {
+    const completedInsertBatches = snapshot.completedInsertBatches || 0;
+    const submittedBatches = snapshot.submittedBatches || 0;
+    return {
+        insertBacklog: (snapshot.queuedInsertBatches || 0) + (snapshot.runningInsertBatches || 0),
+        insertLatencyMs: completedInsertBatches > 0
+            ? Math.round((snapshot.insertMs || 0) / completedInsertBatches)
+            : 0,
+        retryRate: submittedBatches > 0 ? (snapshot.retriedBatches || 0) / submittedBatches : 0,
+        submittedBatches,
+        retriedBatches: snapshot.retriedBatches || 0,
+        rejectedWorkers: snapshot.rejectedWorkers || 0,
+        memoryFreePercent: getMemoryFreePercent(),
+        vramUsedPercent: snapshot.resourcePressure?.vramUsedPercent,
+    };
+}
+
 export function createEmptyFailureSummary(): EmbeddingWorkerFailureSummary {
     return {
         startup: 0,
@@ -448,6 +755,25 @@ export function createEmptyFailureSummary(): EmbeddingWorkerFailureSummary {
         embedding_error: 0,
         cancellation: 0,
         unknown: 0,
+    };
+}
+
+export function createDefaultAdaptiveBackpressureConfig(active: boolean): AdaptiveBackpressureConfig {
+    return {
+        enabled: active,
+        minEmbeddingConcurrency: 1,
+        highPressureThreshold: 1,
+        lowPressureThreshold: 0.5,
+        healthySampleCount: 3,
+        cooldownMs: 5000,
+        insertBacklogThreshold: 2,
+        insertBacklogMinBatches: 30,
+        insertLatencyMsThreshold: 30000,
+        retryRateThreshold: 0.5,
+        retryRateMinBatches: 10,
+        rejectedWorkersThreshold: 1,
+        memoryFreePercentThreshold: 3,
+        vramUsageLimitPercent: 90,
     };
 }
 
@@ -560,6 +886,8 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
         console.warn(`[Context] ⚠️ Ignoring invalid accelerator mode '${rawMode}'. Expected 'off' or 'auto'.`);
     }
 
+    const adaptiveDefaults = createDefaultAdaptiveBackpressureConfig(mode === 'auto');
+
     return {
         mode,
         embeddingConcurrency: parsePositiveInteger('INDEX_EMBEDDING_CONCURRENCY', mode === 'auto' ? 2 : 1),
@@ -569,6 +897,22 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
         vramLimitPercent: parsePercent('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75),
         retryBudget: parsePositiveInteger('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
         accelerateBackgroundSync: parseBoolean('INDEX_ACCELERATE_BACKGROUND_SYNC', false),
+        adaptiveBackpressure: {
+            enabled: parseBoolean('INDEX_ADAPTIVE_BACKPRESSURE', adaptiveDefaults.enabled),
+            minEmbeddingConcurrency: parsePositiveInteger('INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY', adaptiveDefaults.minEmbeddingConcurrency),
+            highPressureThreshold: parsePositiveNumber('INDEX_ADAPTIVE_HIGH_PRESSURE_THRESHOLD', adaptiveDefaults.highPressureThreshold),
+            lowPressureThreshold: parsePositiveNumber('INDEX_ADAPTIVE_LOW_PRESSURE_THRESHOLD', adaptiveDefaults.lowPressureThreshold),
+            healthySampleCount: parsePositiveInteger('INDEX_ADAPTIVE_HEALTHY_SAMPLE_COUNT', adaptiveDefaults.healthySampleCount),
+            cooldownMs: parsePositiveInteger('INDEX_ADAPTIVE_COOLDOWN_MS', adaptiveDefaults.cooldownMs),
+            insertBacklogThreshold: parsePositiveInteger('INDEX_ADAPTIVE_INSERT_BACKLOG_THRESHOLD', adaptiveDefaults.insertBacklogThreshold),
+            insertBacklogMinBatches: parsePositiveInteger('INDEX_ADAPTIVE_INSERT_BACKLOG_MIN_BATCHES', adaptiveDefaults.insertBacklogMinBatches),
+            insertLatencyMsThreshold: parsePositiveInteger('INDEX_ADAPTIVE_INSERT_LATENCY_MS_THRESHOLD', adaptiveDefaults.insertLatencyMsThreshold),
+            retryRateThreshold: parsePositiveNumber('INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD', adaptiveDefaults.retryRateThreshold),
+            retryRateMinBatches: parsePositiveInteger('INDEX_ADAPTIVE_RETRY_RATE_MIN_BATCHES', adaptiveDefaults.retryRateMinBatches),
+            rejectedWorkersThreshold: parsePositiveInteger('INDEX_ADAPTIVE_REJECTED_WORKERS_THRESHOLD', adaptiveDefaults.rejectedWorkersThreshold),
+            memoryFreePercentThreshold: parsePercent('INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD', adaptiveDefaults.memoryFreePercentThreshold),
+            vramUsageLimitPercent: parsePercent('INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT', adaptiveDefaults.vramUsageLimitPercent),
+        },
     };
 }
 
@@ -589,4 +933,34 @@ export function shouldAccelerateIndexing(
         return { active: false, fallbackReason: 'accelerator concurrency is 1' };
     }
     return { active: true };
+}
+
+function parsePositiveNumber(name: string, fallback: number): number {
+    const rawValue = envManager.get(name);
+    if (!rawValue || rawValue.toLowerCase() === 'auto') {
+        return fallback;
+    }
+
+    const parsed = Number.parseFloat(rawValue);
+    if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+    }
+
+    console.warn(`[Context] ⚠️ Ignoring invalid ${name}='${rawValue}'. Expected a positive number.`);
+    return fallback;
+}
+
+function ratio(value: number, threshold: number): number {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(threshold) || threshold <= 0) {
+        return 0;
+    }
+    return value / threshold;
+}
+
+function getMemoryFreePercent(): number | undefined {
+    const total = os.totalmem();
+    if (!Number.isFinite(total) || total <= 0) {
+        return undefined;
+    }
+    return Number((os.freemem() / total * 100).toFixed(2));
 }

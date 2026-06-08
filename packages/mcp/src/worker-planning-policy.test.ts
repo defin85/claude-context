@@ -46,6 +46,26 @@ function createAcceleratorSnapshot(): IndexingAcceleratorSnapshot {
         embeddingConcurrency: 1,
         insertConcurrency: 1,
         insertQueueCapacity: 2,
+        adaptiveBackpressureEnabled: true,
+        configuredEmbeddingConcurrency: 2,
+        configuredInsertConcurrency: 1,
+        effectiveEmbeddingConcurrency: 1,
+        effectiveInsertConcurrency: 1,
+        adaptivePressureScore: 1,
+        adaptiveThrottleReason: 'insert_backlog',
+        adaptiveThrottleTimeMs: 123,
+        adaptiveThrottleEvents: 1,
+        adaptiveEffectiveEmbeddingConcurrencyMin: 1,
+        adaptiveEffectiveEmbeddingConcurrencyMax: 2,
+        adaptivePressureSignals: {
+            insertBacklog: 2,
+            insertLatencyMs: 100,
+            retryRate: 0,
+            submittedBatches: 10,
+            retriedBatches: 0,
+            rejectedWorkers: 0,
+            memoryFreePercent: 50,
+        },
         maxBgeM3Workers: 2,
         vramLimitPercent: 75,
         retryBudget: 1,
@@ -161,6 +181,14 @@ test('worker planning policy exposes canonical status field paths', () => {
         'accelerator.failedInsertBatches',
         'accelerator.insertMs',
     ]);
+    assert.deepEqual(policy.statusFields.adaptiveBackpressure, [
+        'accelerator.adaptiveBackpressureEnabled',
+        'accelerator.configuredEmbeddingConcurrency',
+        'accelerator.effectiveEmbeddingConcurrency',
+        'accelerator.adaptivePressureScore',
+        'accelerator.adaptiveThrottleReason',
+        'accelerator.adaptiveThrottleTimeMs',
+    ]);
     assert.equal(policy.statusFields.managedWorkers, 'managedBgeM3Workers');
     assert.equal(policy.statusFields.vramPlan, 'managedBgeM3Workers.vramPlanning');
     assert.deepEqual(policy.statusFields.fallbackReasons, [
@@ -210,6 +238,16 @@ test('daemon status text includes human-readable worker planning directive', () 
     assert.match(text, /must submit indexing workloads only/);
     assert.match(text, /must not start BGE-M3 workers directly/);
     assert.equal(text.includes(WORKER_PLANNING_POLICY_TEXT), true);
+});
+
+test('daemon status text includes adaptive backpressure fields when accelerator is present', () => {
+    const result = createDaemonStatusResult(createOperatorStatus(), createAcceleratorSnapshot(), undefined);
+    const text = getTextContent(result);
+
+    assert.match(text, /effectiveEmbeddingConcurrency=1/);
+    assert.match(text, /pressure=1/);
+    assert.match(text, /throttle=insert_backlog/);
+    assert.match(text, /throttleMs=123/);
 });
 
 test('worker planning policy payload does not include secret-bearing keys', () => {

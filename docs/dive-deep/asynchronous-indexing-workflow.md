@@ -35,6 +35,32 @@ The flow diagram above shows the complete indexing workflow, illustrating how th
 - **`indexfailed`** - ❌ Error occurred, can retry
 - **`not_found`** - ❌ Not indexed yet
 
+## Accelerated Indexing Backpressure
+
+When accelerated indexing is enabled, status may include an `accelerator` object
+with both configured hard limits and adaptive effective limits.
+
+- `embeddingConcurrency` and `insertConcurrency` are configured maximums.
+- `effectiveEmbeddingConcurrency` is the current admission limit after adaptive
+  pressure is applied.
+- `adaptivePressureScore` is the highest normalized pressure signal currently
+  seen by the scheduler.
+- `adaptiveThrottleReason` identifies the dominant signal, such as
+  `insert_backlog`, `insert_latency`, `retry_rate`, `worker_rejection`,
+  `memory`, or `vram`.
+- `adaptiveThrottleTimeMs` is time spent with effective embedding concurrency
+  below the configured maximum.
+- `backpressureWaitMs` is producer wait time caused by bounded queue capacity.
+- `adaptivePressureSignals.vramUsedPercent` is included when managed BGE-M3
+  worker planning has measured VRAM usage for the current daemon run.
+
+Interpret `backpressureWaitMs` as "the producer had to wait for capacity" and
+adaptive throttle fields as "why capacity was intentionally reduced." A healthy
+adaptive run can show some throttle time if it avoids larger insert queues,
+worker retries, or memory pressure. With `INDEX_ACCELERATOR_MODE=off`, indexing
+remains sequential and adaptive backpressure is inactive. With
+`INDEX_ADAPTIVE_BACKPRESSURE=false`, accelerated indexing keeps the static
+configured limits.
 
 ## Key Benefits
 

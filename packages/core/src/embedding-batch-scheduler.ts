@@ -1,4 +1,9 @@
 import {
+    AdaptiveBackpressureController,
+    AdaptiveBackpressureConfig,
+    IndexingAcceleratorResourcePressure,
+    createAdaptivePressureSignals,
+    createDefaultAdaptiveBackpressureConfig,
     IndexingAcceleratorRuntime,
     IndexingBatchMetadata,
 } from './indexing-accelerator';
@@ -8,8 +13,10 @@ export interface EmbeddingBatchSchedulerOptions {
     insertConcurrency: number;
     queueCapacity?: number;
     insertQueueCapacity?: number;
+    adaptiveBackpressure?: AdaptiveBackpressureConfig;
     runtime: IndexingAcceleratorRuntime;
     abortSignal?: AbortSignal;
+    resourcePressureProvider?: () => IndexingAcceleratorResourcePressure | undefined;
     onProgress?: () => void;
 }
 
@@ -38,6 +45,7 @@ export class EmbeddingBatchScheduler {
     private readonly insertConcurrency: number;
     private readonly queueCapacity: number;
     private readonly insertQueueCapacity: number;
+    private readonly adaptiveController: AdaptiveBackpressureController;
     private readonly queue: QueuedBatch<unknown>[] = [];
     private readonly insertQueue: QueuedInsert<unknown>[] = [];
     private readonly completionPromises = new Set<Promise<void>>();
@@ -45,6 +53,7 @@ export class EmbeddingBatchScheduler {
     private readonly insertCapacityWaiters: Array<() => void> = [];
     private runningEmbedding = 0;
     private runningInsert = 0;
+    private pendingAdmissions = 0;
     private cancelledError?: Error;
 
     constructor(private readonly options: EmbeddingBatchSchedulerOptions) {
@@ -57,6 +66,16 @@ export class EmbeddingBatchScheduler {
             1,
             options.insertQueueCapacity ?? getDefaultInsertQueueCapacity(this.insertConcurrency),
         );
+        const runtimeSnapshot = options.runtime.getSnapshot();
+        const adaptiveDefaults = createDefaultAdaptiveBackpressureConfig(
+            runtimeSnapshot.adaptiveBackpressureEnabled,
+        );
+        this.adaptiveController = new AdaptiveBackpressureController({
+            config: options.adaptiveBackpressure ?? adaptiveDefaults,
+            configuredEmbeddingConcurrency: this.embeddingConcurrency,
+            configuredInsertConcurrency: this.insertConcurrency,
+            queueCapacity: this.queueCapacity,
+        });
         options.abortSignal?.addEventListener('abort', () => {
             this.cancel(this.getAbortError());
         }, { once: true });
@@ -65,8 +84,13 @@ export class EmbeddingBatchScheduler {
 
     async submit<T>(options: EmbeddingBatchSchedulerSubmitOptions<T>): Promise<EmbeddingBatchSchedulerSubmitHandle> {
         this.throwIfCancelled();
-        await this.waitForCapacity();
-        this.throwIfCancelled();
+        await this.waitForCapacityAndReserve();
+        try {
+            this.throwIfCancelled();
+        } catch (error) {
+            this.releaseAdmissionReservation();
+            throw error;
+        }
 
         let resolveCompletion!: () => void;
         let rejectCompletion!: (error: unknown) => void;
@@ -91,6 +115,8 @@ export class EmbeddingBatchScheduler {
             resolve: resolveCompletion,
             reject: rejectCompletion,
         } as QueuedBatch<unknown>);
+        this.releaseAdmissionReservation();
+        this.notifyCapacityWaiters();
         this.publish();
         this.scheduleEmbedding();
 
@@ -131,24 +157,34 @@ export class EmbeddingBatchScheduler {
         queuedInsertBatches: number;
         runningInsertBatches: number;
         backpressureWaitMs: number;
+        effectiveEmbeddingConcurrency: number;
+        adaptivePressureScore: number;
+        adaptiveThrottleReason: string;
+        adaptiveThrottleTimeMs: number;
     } {
+        const adaptiveState = this.getAdaptiveState();
         return {
             queuedBatches: this.queue.length,
             runningEmbeddingBatches: this.runningEmbedding,
             queuedInsertBatches: this.insertQueue.length,
             runningInsertBatches: this.runningInsert,
             backpressureWaitMs: this.options.runtime.getSnapshot().backpressureWaitMs ?? 0,
+            effectiveEmbeddingConcurrency: adaptiveState.effectiveEmbeddingConcurrency,
+            adaptivePressureScore: adaptiveState.pressureScore,
+            adaptiveThrottleReason: adaptiveState.throttleReason,
+            adaptiveThrottleTimeMs: adaptiveState.throttleTimeMs,
         };
     }
 
-    private async waitForCapacity(): Promise<void> {
+    private async waitForCapacityAndReserve(): Promise<void> {
         const startedAt = Date.now();
-        while (this.getQueuedAndRunningEmbeddingCount() >= this.queueCapacity) {
+        while (this.getReservedEmbeddingCount() >= this.getEffectiveQueueCapacity()) {
             this.throwIfCancelled();
             await new Promise<void>((resolve) => {
                 this.capacityWaiters.push(resolve);
             });
         }
+        this.pendingAdmissions++;
         const waitedMs = Date.now() - startedAt;
         if (waitedMs > 0) {
             this.options.runtime.recordBackpressureWait(waitedMs);
@@ -159,7 +195,7 @@ export class EmbeddingBatchScheduler {
     private scheduleEmbedding(): void {
         while (
             !this.cancelledError &&
-            this.runningEmbedding < this.embeddingConcurrency &&
+            this.runningEmbedding < this.getEffectiveEmbeddingConcurrency() &&
             this.queue.length > 0 &&
             this.hasInsertBacklogCapacity()
         ) {
@@ -251,10 +287,25 @@ export class EmbeddingBatchScheduler {
         return this.queue.length + this.runningEmbedding;
     }
 
+    private getReservedEmbeddingCount(): number {
+        return this.getQueuedAndRunningEmbeddingCount() + this.pendingAdmissions;
+    }
+
+    private releaseAdmissionReservation(): void {
+        this.pendingAdmissions = Math.max(0, this.pendingAdmissions - 1);
+        this.notifyCapacityWaiters();
+    }
+
     private notifyCapacityWaiters(): void {
+        if (this.cancelledError || this.options.abortSignal?.aborted) {
+            while (this.capacityWaiters.length > 0) {
+                this.capacityWaiters.shift()?.();
+            }
+            return;
+        }
         while (
             this.capacityWaiters.length > 0 &&
-            this.getQueuedAndRunningEmbeddingCount() < this.queueCapacity
+            this.getReservedEmbeddingCount() < this.getEffectiveQueueCapacity()
         ) {
             this.capacityWaiters.shift()?.();
         }
@@ -265,19 +316,49 @@ export class EmbeddingBatchScheduler {
     }
 
     private notifyInsertCapacityWaiters(): void {
+        if (this.cancelledError || this.options.abortSignal?.aborted) {
+            while (this.insertCapacityWaiters.length > 0) {
+                this.insertCapacityWaiters.shift()?.();
+            }
+            return;
+        }
         while (this.insertCapacityWaiters.length > 0 && this.hasInsertBacklogCapacity()) {
             this.insertCapacityWaiters.shift()?.();
         }
     }
 
     private publish(): void {
+        const adaptiveState = this.observeAdaptivePressure();
         this.options.runtime.recordSchedulerSnapshot({
             queuedBatches: this.queue.length,
             runningEmbeddingBatches: this.runningEmbedding,
             queuedInsertBatches: this.insertQueue.length,
             runningInsertBatches: this.runningInsert,
         });
+        this.options.runtime.recordAdaptiveBackpressure(adaptiveState);
         this.options.onProgress?.();
+    }
+
+    private observeAdaptivePressure() {
+        const resourcePressure = this.options.resourcePressureProvider?.();
+        if (resourcePressure) {
+            this.options.runtime.recordResourcePressure(resourcePressure);
+        }
+        return this.adaptiveController.observe(
+            createAdaptivePressureSignals(this.options.runtime.getSnapshot()),
+        );
+    }
+
+    private getAdaptiveState() {
+        return this.adaptiveController.getCurrentState();
+    }
+
+    private getEffectiveEmbeddingConcurrency(): number {
+        return this.observeAdaptivePressure().effectiveEmbeddingConcurrency;
+    }
+
+    private getEffectiveQueueCapacity(): number {
+        return this.observeAdaptivePressure().effectiveQueueCapacity;
     }
 
     private throwIfCancelled(): void {
