@@ -187,6 +187,30 @@ function selfTestCompactOutput() {
     if (compacted.accelerator.workerSummary.rejectedWorkers !== 1) {
         throw new Error('Expected workerSummary rejected worker count to be preserved.');
     }
+
+    const compactedStatusOnly = compactStructuredContent({
+        status: 'indexing',
+        accelerator: {
+            retriedBatches: 1,
+            failedBatches: 0,
+            retryReasons: { embedding_error: 1 },
+            retrySafeFailures: 1,
+            retryUnsafeFailures: 0,
+            activeWorkers: 4,
+            rejectedWorkers: 0,
+            workerLifecycle: { rejected: 0, recovered: 0, recoveryFailed: 0 },
+        },
+    });
+
+    if (compactedStatusOnly.accelerator.retrySummary?.retryReasons.embedding_error !== 1) {
+        throw new Error('Expected retrySummary to be added when accelerator.batches is absent.');
+    }
+    if (compactedStatusOnly.accelerator.workerSummary?.activeWorkers !== 4) {
+        throw new Error('Expected workerSummary to be added when accelerator.batches is absent.');
+    }
+    if (compactedStatusOnly.accelerator.batchesSummary !== undefined) {
+        throw new Error('Expected batchesSummary to be omitted when accelerator.batches is absent.');
+    }
 }
 
 function run(command, args, options = {}) {
@@ -456,17 +480,20 @@ function compactStructuredContent(structuredContent) {
     }
 
     const accelerator = structuredContent.accelerator;
-    if (!accelerator || !Array.isArray(accelerator.batches)) {
+    if (!accelerator || typeof accelerator !== 'object') {
         return structuredContent;
     }
+    const hasBatchHistory = Array.isArray(accelerator.batches);
 
     return {
         ...structuredContent,
         accelerator: {
             ...accelerator,
             ...summarizeRetryAndWorkers(accelerator),
-            batchesSummary: summarizeBatches(accelerator.batches),
-            batches: undefined,
+            ...(hasBatchHistory ? {
+                batchesSummary: summarizeBatches(accelerator.batches),
+                batches: undefined,
+            } : {}),
         },
     };
 }

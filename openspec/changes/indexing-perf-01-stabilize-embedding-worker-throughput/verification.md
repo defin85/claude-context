@@ -13,6 +13,7 @@
   - Result: passed, 8 tests.
 - `node scripts/measure-indexing-baseline.js --self-test-compact-output`
   - Result: passed.
+  - Closure update 2026-06-08: self-test now covers accelerator status samples that already omit full `batches`; compact `retrySummary` and `workerSummary` are still persisted, while `batchesSummary` remains conditional on real batch history.
 - `pnpm --filter @zilliz/claude-context-mcp typecheck`
   - Result: passed after rebuilding core declarations.
 - `pnpm lint`
@@ -33,6 +34,7 @@ Closed gaps from implementation review:
 - When all workers are rejected, the provider no longer revives the primary worker without cooldown and health plus metadata validation.
 - Retry-budget exhaustion now reports retry attempt count and last worker failure context.
 - Initialization and recovery validation classify `/health` and `/metadata` failures by the failing stage instead of collapsing both into one catch path.
+- Benchmark compacting now adds retry and worker summaries even when live status has already omitted full batch history.
 
 ## Live Daemon Restart
 
