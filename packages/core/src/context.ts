@@ -32,6 +32,7 @@ import {
     traversePreIndex,
 } from "./sync/preindex-traversal";
 import {
+    EmbeddingWorkerFailureReason,
     IndexingBatchMetadata,
     IndexingAcceleratorConfig,
     IndexingAcceleratorRuntime,
@@ -184,7 +185,11 @@ type MultiVectorEmbeddingProvider = Embedding & {
     embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]>;
     embedMultiBatchWithWorkerPool?(
         texts: string[],
-        onRetry?: (workerEndpoint: string, error: Error) => void,
+        onRetry?: (
+            workerEndpoint: string,
+            error: Error,
+            failure?: { reason: EmbeddingWorkerFailureReason; retrySafe: boolean },
+        ) => void,
     ): Promise<MultiVectorEmbedding[]>;
 };
 
@@ -2247,7 +2252,11 @@ export class Context {
                 embeddings = acceleratorRuntime?.getSnapshot().active && multiVectorEmbedding.embedMultiBatchWithWorkerPool
                     ? await acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(
                         chunkContents,
-                        () => acceleratorRuntime.recordBatchRetried(batchId),
+                        (_workerEndpoint, _error, failure) => acceleratorRuntime.recordBatchRetried(
+                            batchId,
+                            failure?.reason || "unknown",
+                            failure?.retrySafe ?? true,
+                        ),
                     ))
                     : await multiVectorEmbedding.embedMultiBatch(chunkContents);
             } catch (error) {

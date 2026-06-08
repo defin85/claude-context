@@ -3,6 +3,33 @@ import type { PreIndexTraversalDiagnostics } from './sync/preindex-traversal';
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
 export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
+export type EmbeddingWorkerFailureReason =
+    | 'startup'
+    | 'health'
+    | 'metadata'
+    | 'embedding_timeout'
+    | 'embedding_error'
+    | 'cancellation'
+    | 'unknown';
+
+export type WorkerLifecycleEvent = 'rejected' | 'recovered' | 'recovery_failed';
+
+export interface EmbeddingWorkerFailureSummary {
+    startup: number;
+    health: number;
+    metadata: number;
+    embedding_timeout: number;
+    embedding_error: number;
+    cancellation: number;
+    unknown: number;
+}
+
+export interface WorkerLifecycleSummary {
+    rejected: number;
+    recovered: number;
+    recoveryFailed: number;
+    byReason: EmbeddingWorkerFailureSummary;
+}
 
 export interface IndexingAcceleratorConfig {
     mode: IndexingAcceleratorMode;
@@ -34,6 +61,10 @@ export interface IndexingAcceleratorSnapshot {
     completedBatches: number;
     failedBatches: number;
     retriedBatches: number;
+    retryReasons: EmbeddingWorkerFailureSummary;
+    retrySafeFailures: number;
+    retryUnsafeFailures: number;
+    workerLifecycle: WorkerLifecycleSummary;
     activeWorkers?: number;
     rejectedWorkers?: number;
     workers?: IndexingAcceleratorWorkerSnapshot[];
@@ -62,6 +93,8 @@ export interface IndexingAcceleratorWorkerSnapshot {
     healthy: boolean;
     inFlight: number;
     rejectedReason?: string;
+    rejectedFailureReason?: EmbeddingWorkerFailureReason;
+    rejectedRetrySafe?: boolean;
     lastFailureAt?: string;
     lastSuccessAt?: string;
     recoveryAttempts: number;
@@ -106,6 +139,15 @@ export class IndexingAcceleratorRuntime {
             completedBatches: 0,
             failedBatches: 0,
             retriedBatches: 0,
+            retryReasons: createEmptyFailureSummary(),
+            retrySafeFailures: 0,
+            retryUnsafeFailures: 0,
+            workerLifecycle: {
+                rejected: 0,
+                recovered: 0,
+                recoveryFailed: 0,
+                byReason: createEmptyFailureSummary(),
+            },
             activeWorkers: undefined,
             rejectedWorkers: undefined,
             workers: undefined,
@@ -143,6 +185,11 @@ export class IndexingAcceleratorRuntime {
                 }
                 : undefined,
             workers: this.snapshot.workers?.map((worker) => ({ ...worker })),
+            retryReasons: { ...this.snapshot.retryReasons },
+            workerLifecycle: {
+                ...this.snapshot.workerLifecycle,
+                byReason: { ...this.snapshot.workerLifecycle.byReason },
+            },
             batches: [...this.batches.values()].map((batch) => ({ ...batch })),
         };
     }
@@ -252,8 +299,14 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
-    recordBatchRetried(batchId?: number): void {
+    recordBatchRetried(batchId?: number, reason: EmbeddingWorkerFailureReason = 'unknown', retrySafe: boolean = true): void {
         this.snapshot.retriedBatches++;
+        this.snapshot.retryReasons[reason]++;
+        if (retrySafe) {
+            this.snapshot.retrySafeFailures++;
+        } else {
+            this.snapshot.retryUnsafeFailures++;
+        }
         if (batchId !== undefined) {
             const batch = this.batches.get(batchId);
             if (batch) {
@@ -262,14 +315,52 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
+    recordWorkerLifecycle(event: WorkerLifecycleEvent, reason: EmbeddingWorkerFailureReason = 'unknown'): void {
+        if (event === 'rejected') {
+            this.snapshot.workerLifecycle.rejected++;
+            this.snapshot.workerLifecycle.byReason[reason]++;
+        } else if (event === 'recovered') {
+            this.snapshot.workerLifecycle.recovered++;
+        } else {
+            this.snapshot.workerLifecycle.recoveryFailed++;
+            this.snapshot.workerLifecycle.byReason[reason]++;
+        }
+    }
+
     updateWorkerCounts(
         activeWorkers: number,
         rejectedWorkers: number,
         workers?: IndexingAcceleratorWorkerSnapshot[],
     ): void {
+        this.recordWorkerTransitions(workers);
         this.snapshot.activeWorkers = activeWorkers;
         this.snapshot.rejectedWorkers = rejectedWorkers;
         this.snapshot.workers = workers?.map((worker) => ({ ...worker }));
+    }
+
+    private recordWorkerTransitions(workers?: IndexingAcceleratorWorkerSnapshot[]): void {
+        if (!workers) {
+            return;
+        }
+
+        const previousWorkers = new Map(
+            (this.snapshot.workers || []).map((worker) => [worker.endpoint, worker]),
+        );
+        for (const worker of workers) {
+            const previous = previousWorkers.get(worker.endpoint);
+            const previousState = previous?.poolState;
+            if (worker.poolState === 'rejected' && previousState !== 'rejected') {
+                this.recordWorkerLifecycle('rejected', worker.rejectedFailureReason || 'unknown');
+            } else if (worker.poolState === 'accepted' && previousState === 'rejected') {
+                this.recordWorkerLifecycle('recovered');
+            } else if (
+                worker.poolState === 'rejected' &&
+                previousState === 'recovering' &&
+                worker.lastRecoveryAttemptAt !== previous?.lastRecoveryAttemptAt
+            ) {
+                this.recordWorkerLifecycle('recovery_failed', worker.rejectedFailureReason || 'unknown');
+            }
+        }
     }
 
     recordChunkLimit(codeChunkLimit: number): void {
@@ -318,6 +409,18 @@ export class IndexingAcceleratorRuntime {
             this.snapshot.inFlightInsertBatches = Math.max(0, this.snapshot.inFlightInsertBatches - 1);
         }
     }
+}
+
+export function createEmptyFailureSummary(): EmbeddingWorkerFailureSummary {
+    return {
+        startup: 0,
+        health: 0,
+        metadata: 0,
+        embedding_timeout: 0,
+        embedding_error: 0,
+        cancellation: 0,
+        unknown: 0,
+    };
 }
 
 export class AsyncLimiter {

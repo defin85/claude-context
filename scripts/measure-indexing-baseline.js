@@ -33,6 +33,8 @@ Options:
   --run-dir <path>        Existing run directory for --monitor-only
   --no-restart            Reuse the current daemon instead of recreating the unit
   --no-force              Do not pass force=true to index_codebase
+  --self-test-compact-output
+                          Validate compact sample shaping and exit
   --help                  Show this help
 
 Baseline env overrides:
@@ -57,6 +59,7 @@ function parseArgs(argv) {
         runDir: undefined,
         restart: true,
         force: true,
+        selfTestCompactOutput: false,
     };
 
     for (let index = 0; index < argv.length; index += 1) {
@@ -107,6 +110,9 @@ function parseArgs(argv) {
             case '--no-force':
                 options.force = false;
                 break;
+            case '--self-test-compact-output':
+                options.selfTestCompactOutput = true;
+                break;
             case '--help':
             case '-h':
                 usage();
@@ -123,6 +129,10 @@ function parseArgs(argv) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 0) {
         throw new Error('--timeout-ms must be a non-negative number');
     }
+    if (options.selfTestCompactOutput) {
+        return options;
+    }
+
     const selectedModes = [options.prepareOnly, options.start, options.monitorOnly].filter(Boolean).length;
     if (selectedModes > 1) {
         throw new Error('Use only one of --prepare-only, --start, or --monitor-only');
@@ -135,6 +145,48 @@ function parseArgs(argv) {
     }
 
     return options;
+}
+
+function selfTestCompactOutput() {
+    const compacted = compactStructuredContent({
+        status: 'indexing',
+        accelerator: {
+            retriedBatches: 2,
+            failedBatches: 1,
+            retryReasons: { embedding_timeout: 1, embedding_error: 1 },
+            retrySafeFailures: 2,
+            retryUnsafeFailures: 0,
+            activeWorkers: 1,
+            rejectedWorkers: 1,
+            workerLifecycle: { rejected: 1, recovered: 0, recoveryFailed: 0 },
+            workers: [{
+                endpoint: 'http://127.0.0.1:8000',
+                poolState: 'rejected',
+                healthy: false,
+                inFlight: 0,
+                rejectedFailureReason: 'embedding_error',
+                rejectedRetrySafe: true,
+                recoveryAttempts: 1,
+            }],
+            batches: [
+                { id: 1, state: 'completed', attempts: 1, chunkCount: 100 },
+                { id: 2, state: 'failed', attempts: 2, chunkCount: 100 },
+            ],
+        },
+    });
+
+    if (compacted.accelerator.batches !== undefined) {
+        throw new Error('Expected compacted accelerator.batches to be omitted.');
+    }
+    if (compacted.accelerator.batchesSummary.count !== 2) {
+        throw new Error('Expected batchesSummary.count to preserve batch count.');
+    }
+    if (compacted.accelerator.retrySummary.retryReasons.embedding_timeout !== 1) {
+        throw new Error('Expected retrySummary retry reasons to be preserved.');
+    }
+    if (compacted.accelerator.workerSummary.rejectedWorkers !== 1) {
+        throw new Error('Expected workerSummary rejected worker count to be preserved.');
+    }
 }
 
 function run(command, args, options = {}) {
@@ -371,6 +423,33 @@ function summarizeBatches(batches) {
     };
 }
 
+function summarizeRetryAndWorkers(accelerator) {
+    const workers = Array.isArray(accelerator.workers) ? accelerator.workers : [];
+    return {
+        retrySummary: {
+            retriedBatches: accelerator.retriedBatches || 0,
+            failedBatches: accelerator.failedBatches || 0,
+            retryReasons: accelerator.retryReasons || {},
+            retrySafeFailures: accelerator.retrySafeFailures || 0,
+            retryUnsafeFailures: accelerator.retryUnsafeFailures || 0,
+        },
+        workerSummary: {
+            activeWorkers: accelerator.activeWorkers || 0,
+            rejectedWorkers: accelerator.rejectedWorkers || 0,
+            lifecycle: accelerator.workerLifecycle || {},
+            workers: workers.map((worker) => ({
+                endpoint: worker.endpoint,
+                poolState: worker.poolState,
+                healthy: worker.healthy,
+                inFlight: worker.inFlight,
+                rejectedFailureReason: worker.rejectedFailureReason,
+                rejectedRetrySafe: worker.rejectedRetrySafe,
+                recoveryAttempts: worker.recoveryAttempts,
+            })),
+        },
+    };
+}
+
 function compactStructuredContent(structuredContent) {
     if (!structuredContent || typeof structuredContent !== 'object') {
         return structuredContent;
@@ -385,6 +464,7 @@ function compactStructuredContent(structuredContent) {
         ...structuredContent,
         accelerator: {
             ...accelerator,
+            ...summarizeRetryAndWorkers(accelerator),
             batchesSummary: summarizeBatches(accelerator.batches),
             batches: undefined,
         },
@@ -529,6 +609,11 @@ async function measure(options, clientConfig, runDir) {
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));
+    if (options.selfTestCompactOutput) {
+        selfTestCompactOutput();
+        console.log('Compact benchmark output self-test passed.');
+        return;
+    }
     const runDir = options.runDir || createRunDir(options.artifactDir, 'off');
     fs.mkdirSync(runDir, { recursive: true });
     const clientConfig = options.monitorOnly

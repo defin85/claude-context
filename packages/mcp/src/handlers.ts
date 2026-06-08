@@ -1537,6 +1537,20 @@ export class ToolHandlers {
                     break;
             }
 
+            if (accelerator) {
+                const retryReasonText = accelerator.retryReasons
+                    ? Object.entries(accelerator.retryReasons)
+                        .filter(([, count]) => count > 0)
+                        .map(([reason, count]) => `${reason}=${count}`)
+                        .join(', ')
+                    : '';
+                statusMessage +=
+                    `\n⚡ Accelerator: retries=${accelerator.retriedBatches}, failed=${accelerator.failedBatches}, ` +
+                    `activeWorkers=${accelerator.activeWorkers ?? 0}, rejectedWorkers=${accelerator.rejectedWorkers ?? 0}, ` +
+                    `recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +
+                    `${retryReasonText ? `, retryReasons=${retryReasonText}` : ''}`;
+            }
+
             const pathInfo = codebasePath !== absolutePath
                 ? `\nNote: Input path '${codebasePath}' was resolved to absolute path '${absolutePath}'`
                 : '';

@@ -1,4 +1,5 @@
 import { Embedding, EmbeddingVector, MultiVectorEmbedding } from './base-embedding';
+import type { EmbeddingWorkerFailureReason, WorkerLifecycleEvent } from '../indexing-accelerator';
 
 export type BgeM3Mode = 'full' | 'dense';
 
@@ -43,6 +44,8 @@ interface BgeM3Worker {
     inFlight: number;
     healthy: boolean;
     rejectedReason?: string;
+    rejectedFailureReason?: EmbeddingWorkerFailureReason;
+    rejectedRetrySafe?: boolean;
     profile?: BgeM3WorkerProfile;
     lastFailureAt?: string;
     lastSuccessAt?: string;
@@ -57,11 +60,33 @@ export interface BgeM3WorkerSnapshot {
     healthy: boolean;
     inFlight: number;
     rejectedReason?: string;
+    rejectedFailureReason?: EmbeddingWorkerFailureReason;
+    rejectedRetrySafe?: boolean;
     lastFailureAt?: string;
     lastSuccessAt?: string;
     recoveryAttempts: number;
     lastRecoveryAttemptAt?: string;
     poolState: 'accepted' | 'rejected' | 'recovering';
+}
+
+export interface BgeM3WorkerFailure {
+    reason: EmbeddingWorkerFailureReason;
+    retrySafe: boolean;
+    message: string;
+    error: Error;
+}
+
+interface BgeM3WorkerFailureContext {
+    workerEndpoint: string;
+    failure: BgeM3WorkerFailure;
+}
+
+export interface BgeM3WorkerLifecycleSnapshot {
+    event: WorkerLifecycleEvent;
+    endpoint: string;
+    reason: EmbeddingWorkerFailureReason;
+    retrySafe: boolean;
+    occurredAt: string;
 }
 
 interface ParsedBgeM3Response {
@@ -182,7 +207,7 @@ export class BgeM3Embedding extends Embedding {
 
     async embedMultiBatchWithWorkerPool(
         texts: string[],
-        onRetry?: (workerEndpoint: string, error: Error) => void,
+        onRetry?: (workerEndpoint: string, error: Error, failure?: BgeM3WorkerFailure) => void,
     ): Promise<MultiVectorEmbedding[]> {
         const processedTexts = this.preprocessTexts(texts);
         const response = await this.withWorkerRetry((worker) => this.post(worker, '/embed_batch', {
@@ -226,6 +251,8 @@ export class BgeM3Embedding extends Embedding {
             healthy: worker.healthy,
             inFlight: worker.inFlight,
             rejectedReason: worker.rejectedReason,
+            rejectedFailureReason: worker.rejectedFailureReason,
+            rejectedRetrySafe: worker.rejectedRetrySafe,
             lastFailureAt: worker.lastFailureAt,
             lastSuccessAt: worker.lastSuccessAt,
             recoveryAttempts: worker.recoveryAttempts,
@@ -299,22 +326,49 @@ export class BgeM3Embedding extends Embedding {
 
     private async withWorkerRetry(
         run: (worker: BgeM3Worker) => Promise<unknown>,
-        onRetry?: (workerEndpoint: string, error: Error) => void,
+        onRetry?: (workerEndpoint: string, error: Error, failure?: BgeM3WorkerFailure) => void,
     ): Promise<unknown> {
         let lastError: unknown;
+        let lastFailureContext: BgeM3WorkerFailureContext | undefined;
+        let retryAttempts = 0;
         const attempts = Math.max(1, this.retryBudget + 1);
         for (let attempt = 0; attempt < attempts; attempt++) {
-            const worker = await this.selectWorker();
+            let worker: BgeM3Worker;
+            try {
+                worker = await this.selectWorker();
+            } catch (error) {
+                if (lastFailureContext) {
+                    throw this.createRetryBudgetExhaustedError(lastFailureContext, retryAttempts, error);
+                }
+                throw error;
+            }
             try {
                 return await run(worker);
             } catch (error) {
                 lastError = error;
-                this.rejectWorker(worker, error);
-                if (attempt < attempts - 1) {
+                const failure = this.classifyFailure(error, 'embedding');
+                if (failure.reason === 'cancellation') {
+                    break;
+                }
+                this.rejectWorker(worker, failure);
+                if (attempt < attempts - 1 && failure.retrySafe) {
+                    retryAttempts++;
+                    lastFailureContext = {
+                        workerEndpoint: worker.endpoint,
+                        failure,
+                    };
                     onRetry?.(
                         worker.endpoint,
-                        error instanceof Error ? error : new Error(String(error)),
+                        failure.error,
+                        failure,
                     );
+                } else if (!failure.retrySafe) {
+                    break;
+                } else {
+                    throw this.createRetryBudgetExhaustedError({
+                        workerEndpoint: worker.endpoint,
+                        failure,
+                    }, retryAttempts);
                 }
             }
         }
@@ -333,12 +387,7 @@ export class BgeM3Embedding extends Embedding {
         await this.revalidateRejectedWorkers();
         const healthyWorkers = this.workers.filter((worker) => worker.healthy);
         if (healthyWorkers.length === 0) {
-            const primary = this.getPrimaryWorker();
-            primary.healthy = true;
-            primary.rejectedReason = undefined;
-            primary.recovering = false;
-            primary.inFlight++;
-            return primary;
+            throw this.createNoHealthyWorkersError();
         }
 
         const selectedWorker = healthyWorkers.sort((left, right) => left.inFlight - right.inFlight)[0];
@@ -365,10 +414,7 @@ export class BgeM3Embedding extends Embedding {
         this.workersInitialized = true;
         for (const worker of this.workers) {
             try {
-                await this.get(worker, '/health');
-                const rawProfile = await this.get(worker, '/metadata');
-                const profile = this.parseWorkerProfile(rawProfile);
-                this.validateWorkerProfile(profile);
+                const profile = await this.validateWorkerReadiness(worker);
                 if (worker.endpoint === this.endpoint) {
                     this.primaryProfile = profile;
                 } else if (this.primaryProfile) {
@@ -382,29 +428,24 @@ export class BgeM3Embedding extends Embedding {
                 worker.lastSuccessAt = new Date().toISOString();
                 worker.recovering = false;
             } catch (error) {
-                if (worker.endpoint === this.endpoint) {
-                    worker.healthy = true;
-                    worker.rejectedReason = error instanceof Error ? `metadata unavailable: ${error.message}` : 'metadata unavailable';
-                    worker.lastFailureAt = new Date().toISOString();
-                } else {
-                    this.rejectWorker(worker, error);
-                }
+                this.rejectWorker(worker, this.normalizeWorkerFailure(error, 'startup'));
             }
         }
     }
 
-    private rejectWorker(worker: BgeM3Worker, error: unknown): void {
-        const reason = error instanceof Error ? error.message : String(error);
+    private rejectWorker(worker: BgeM3Worker, failure: BgeM3WorkerFailure): void {
         worker.healthy = false;
-        worker.rejectedReason = reason;
+        worker.rejectedReason = failure.message;
+        worker.rejectedFailureReason = failure.reason;
+        worker.rejectedRetrySafe = failure.retrySafe;
         worker.lastFailureAt = new Date().toISOString();
-        worker.recoveryEligibleAt = Date.now() + this.getInitialRecoveryCooldownMs(reason);
+        worker.recoveryEligibleAt = Date.now() + this.getInitialRecoveryCooldownMs(failure);
         worker.recovering = false;
-        console.warn(`[BGE-M3] Rejected worker ${worker.endpoint}: ${reason}`);
+        console.warn(`[BGE-M3] Rejected worker ${worker.endpoint}: ${failure.reason} ${failure.message}`);
     }
 
-    private getInitialRecoveryCooldownMs(reason: string): number {
-        if (reason === 'fetch failed') {
+    private getInitialRecoveryCooldownMs(failure: BgeM3WorkerFailure): number {
+        if (failure.reason === 'embedding_error' && failure.message === 'fetch failed') {
             return 0;
         }
         return this.workerRecoveryCooldownMs;
@@ -417,6 +458,8 @@ export class BgeM3Embedding extends Embedding {
         }
         worker.healthy = true;
         worker.rejectedReason = undefined;
+        worker.rejectedFailureReason = undefined;
+        worker.rejectedRetrySafe = undefined;
         worker.recoveryEligibleAt = undefined;
         worker.recovering = false;
     }
@@ -434,10 +477,7 @@ export class BgeM3Embedding extends Embedding {
             worker.recoveryAttempts++;
             worker.lastRecoveryAttemptAt = new Date().toISOString();
             try {
-                await this.get(worker, '/health');
-                const rawProfile = await this.get(worker, '/metadata');
-                const profile = this.parseWorkerProfile(rawProfile);
-                this.validateWorkerProfile(profile);
+                const profile = await this.validateWorkerReadiness(worker);
                 if (worker.endpoint === this.endpoint) {
                     this.primaryProfile = profile;
                 } else if (!this.primaryProfile) {
@@ -448,15 +488,109 @@ export class BgeM3Embedding extends Embedding {
                 worker.profile = profile;
                 this.recordWorkerSuccess(worker);
             } catch (error) {
-                const reason = error instanceof Error ? error.message : String(error);
+                const failure = this.normalizeWorkerFailure(error, 'metadata');
                 worker.recovering = false;
                 worker.healthy = false;
-                worker.rejectedReason = reason;
+                worker.rejectedReason = failure.message;
+                worker.rejectedFailureReason = failure.reason;
+                worker.rejectedRetrySafe = failure.retrySafe;
                 worker.lastFailureAt = new Date().toISOString();
                 worker.recoveryEligibleAt = Date.now() + this.workerRecoveryCooldownMs;
-                console.warn(`[BGE-M3] Worker ${worker.endpoint} recovery failed: ${reason}`);
+                console.warn(`[BGE-M3] Worker ${worker.endpoint} recovery failed: ${failure.reason} ${failure.message}`);
             }
         }
+    }
+
+    private async validateWorkerReadiness(worker: BgeM3Worker): Promise<BgeM3WorkerProfile> {
+        try {
+            await this.get(worker, '/health');
+        } catch (error) {
+            throw this.classifyFailure(error, 'health');
+        }
+
+        try {
+            const rawProfile = await this.get(worker, '/metadata');
+            const profile = this.parseWorkerProfile(rawProfile);
+            this.validateWorkerProfile(profile);
+            return profile;
+        } catch (error) {
+            throw this.classifyFailure(error, 'metadata');
+        }
+    }
+
+    private normalizeWorkerFailure(error: unknown, fallbackStage: 'startup' | 'health' | 'metadata' | 'embedding'): BgeM3WorkerFailure {
+        if (this.isWorkerFailure(error)) {
+            return error;
+        }
+        return this.classifyFailure(error, fallbackStage);
+    }
+
+    private isWorkerFailure(error: unknown): error is BgeM3WorkerFailure {
+        return Boolean(
+            error &&
+            typeof error === 'object' &&
+            'reason' in error &&
+            'retrySafe' in error &&
+            'message' in error &&
+            'error' in error
+        );
+    }
+
+    private createNoHealthyWorkersError(): Error {
+        const workerContext = this.workers.map((worker) => (
+            `${worker.endpoint}[state=${worker.recovering ? 'recovering' : worker.healthy ? 'accepted' : 'rejected'}, ` +
+            `reason=${worker.rejectedFailureReason || 'none'}, retriesSafe=${worker.rejectedRetrySafe ?? 'unknown'}, ` +
+            `recoveryAttempts=${worker.recoveryAttempts}]`
+        )).join('; ');
+        return new Error(`No healthy BGE-M3 workers available after recovery validation. Workers: ${workerContext || 'none'}`);
+    }
+
+    private createRetryBudgetExhaustedError(
+        failureContext: BgeM3WorkerFailureContext,
+        retryAttempts: number,
+        selectionError?: unknown,
+    ): Error {
+        const suffix = selectionError instanceof Error
+            ? ` Next worker selection failed: ${selectionError.message}`
+            : '';
+        return new Error(
+            `BGE-M3 worker retry budget exhausted after ${retryAttempts} retry attempt(s). ` +
+            `Last failure: ${failureContext.failure.reason} at ${failureContext.workerEndpoint}: ${failureContext.failure.message}.` +
+            suffix,
+        );
+    }
+
+    private classifyFailure(error: unknown, stage: 'startup' | 'health' | 'metadata' | 'embedding'): BgeM3WorkerFailure {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        const message = normalized.message || String(error);
+        const lowerMessage = message.toLowerCase();
+        let reason: EmbeddingWorkerFailureReason;
+        let retrySafe = true;
+
+        if (normalized.name === 'AbortError' || lowerMessage.includes('abort') || lowerMessage.includes('cancel')) {
+            reason = 'cancellation';
+            retrySafe = false;
+        } else if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
+            reason = 'embedding_timeout';
+        } else if (stage === 'health' || lowerMessage.includes('/health') || lowerMessage.includes('health')) {
+            reason = 'health';
+        } else if (stage === 'metadata' || lowerMessage.includes('metadata') || lowerMessage.includes('model mismatch') || lowerMessage.includes('missing') || lowerMessage.includes('dimension mismatch')) {
+            reason = 'metadata';
+            retrySafe = false;
+        } else if (stage === 'startup') {
+            reason = 'startup';
+        } else if (stage === 'embedding') {
+            reason = 'embedding_error';
+        } else {
+            reason = 'unknown';
+        }
+
+        return {
+            reason,
+            retrySafe,
+            message,
+            error: normalized,
+        };
     }
 
     private parseWorkerProfile(raw: unknown): BgeM3WorkerProfile {

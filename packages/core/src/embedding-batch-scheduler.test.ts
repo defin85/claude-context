@@ -159,7 +159,7 @@ describe('EmbeddingBatchScheduler', () => {
         const failedCompletion = (await scheduler.submit({
             metadata: { id: 2, chunkCount: 1 },
             runEmbedding: async () => {
-                runtime.recordBatchRetried(2);
+                runtime.recordBatchRetried(2, 'embedding_timeout', true);
                 throw new Error('embedding failed');
             },
             runInsert: async () => {},
@@ -177,9 +177,45 @@ describe('EmbeddingBatchScheduler', () => {
         expect(snapshot.completedBatches).toBe(1);
         expect(snapshot.failedBatches).toBe(1);
         expect(snapshot.retriedBatches).toBe(1);
+        expect(snapshot.retryReasons.embedding_timeout).toBe(1);
+        expect(snapshot.retrySafeFailures).toBe(1);
+        expect(snapshot.retryUnsafeFailures).toBe(0);
         expect(snapshot.batches.find((batch) => batch.id === 2)?.attempts).toBe(2);
         expect(snapshot.runningEmbeddingBatches).toBe(0);
         expect(snapshot.runningInsertBatches).toBe(0);
+    });
+
+    it('summarizes worker rejection and recovery transitions by reason', () => {
+        const runtime = createRuntime();
+
+        runtime.updateWorkerCounts(1, 0, [{
+            endpoint: 'http://127.0.0.1:8000',
+            healthy: true,
+            inFlight: 0,
+            recoveryAttempts: 0,
+            poolState: 'accepted',
+        }]);
+        runtime.updateWorkerCounts(0, 1, [{
+            endpoint: 'http://127.0.0.1:8000',
+            healthy: false,
+            inFlight: 0,
+            rejectedFailureReason: 'embedding_error',
+            rejectedRetrySafe: true,
+            recoveryAttempts: 0,
+            poolState: 'rejected',
+        }]);
+        runtime.updateWorkerCounts(1, 0, [{
+            endpoint: 'http://127.0.0.1:8000',
+            healthy: true,
+            inFlight: 0,
+            recoveryAttempts: 1,
+            poolState: 'accepted',
+        }]);
+
+        const snapshot = runtime.getSnapshot();
+        expect(snapshot.workerLifecycle.rejected).toBe(1);
+        expect(snapshot.workerLifecycle.recovered).toBe(1);
+        expect(snapshot.workerLifecycle.byReason.embedding_error).toBe(1);
     });
 
     it('counts an insert-stage failure once', async () => {

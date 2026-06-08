@@ -101,9 +101,18 @@ export function createDaemonStatusResult(
         );
     }
     if (accelerator) {
+        const retryReasonText = accelerator.retryReasons
+            ? Object.entries(accelerator.retryReasons)
+                .filter(([, count]) => count > 0)
+                .map(([reason, count]) => `${reason}=${count}`)
+                .join(',')
+            : '';
         textLines.push(
             `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
             `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
+            ` retries=${accelerator.retriedBatches} rejectedWorkers=${accelerator.rejectedWorkers ?? 0}` +
+            ` recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +
+            `${retryReasonText ? ` retryReasons=${retryReasonText}` : ''}` +
             `${accelerator.fallbackReason ? ` fallback=${accelerator.fallbackReason}` : ''}`,
         );
     }
