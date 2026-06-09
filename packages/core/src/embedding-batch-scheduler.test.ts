@@ -8,6 +8,8 @@ import {
 function createRuntime(): IndexingAcceleratorRuntime {
     const config: IndexingAcceleratorConfig = {
         mode: 'auto',
+        embeddingBatchSize: 100,
+        insertBatchSize: 100,
         embeddingConcurrency: 2,
         insertConcurrency: 1,
         insertQueueCapacity: 2,

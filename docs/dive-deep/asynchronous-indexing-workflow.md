@@ -35,12 +35,36 @@ The flow diagram above shows the complete indexing workflow, illustrating how th
 - **`indexfailed`** - ❌ Error occurred, can retry
 - **`not_found`** - ❌ Not indexed yet
 
+## 1C Scope Status
+
+For exported 1C configuration trees, `index_codebase` can use
+`oneCIndexScopeProfile` (`full`, `developer`, or `minimal`) or the
+`1C_INDEX_SCOPE_PROFILE` environment variable. `full` is the default and keeps
+existing traversal behavior.
+
+Reduced profiles are persisted with the codebase index metadata.
+`get_indexing_status` and `search_code` include:
+
+- `oneCIndexScopeProfile` - the selected profile for the persisted index.
+- `oneCIndexScope` - include/exclude counts by reason when traversal statistics
+  are available.
+- `reducedCoverageWarning` - warning text for `developer` and `minimal`
+  indexes.
+
+Changing between profiles changes indexed coverage, so `index_codebase` rejects
+the request without `force=true` when an existing index was built with a
+different 1C scope profile.
+
 ## Accelerated Indexing Backpressure
 
 When accelerated indexing is enabled, status may include an `accelerator` object
 with both configured hard limits and adaptive effective limits.
 
 - `embeddingConcurrency` and `insertConcurrency` are configured maximums.
+- `embeddingBatchSize` and `insertBatchSize` are configured batch-size
+  boundaries. The embedding size controls chunk grouping before embedding, while
+  the insert size controls how embedded documents are split before vector
+  database writes.
 - `effectiveEmbeddingConcurrency` is the current admission limit after adaptive
   pressure is applied.
 - `adaptivePressureScore` is the highest normalized pressure signal currently

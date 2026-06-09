@@ -18,6 +18,8 @@ function createConfig(overrides: Partial<ContextMcpConfig> = {}): ContextMcpConf
         bgeM3CandidateLimit: 100,
         bgeM3StoreColbert: true,
         acceleratorMode: 'auto',
+        indexEmbeddingBatchSize: 100,
+        indexInsertBatchSize: 100,
         acceleratorEmbeddingConcurrency: 2,
         acceleratorInsertConcurrency: 1,
         acceleratorInsertQueueCapacity: 2,

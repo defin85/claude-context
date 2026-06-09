@@ -29,6 +29,10 @@ Options:
   --unit <name>           systemd --user unit name (default: ${defaultUnitName})
   --accelerator-mode <mode>
                           Accelerator mode for daemon restart: off or auto (default: off)
+  --embedding-batch-size <n>
+                          INDEX_EMBEDDING_BATCH_SIZE for daemon restart (default: 100)
+  --insert-batch-size <n>
+                          INDEX_INSERT_BATCH_SIZE for daemon restart (default: embedding batch size)
   --embedding-concurrency <n>
                           INDEX_EMBEDDING_CONCURRENCY for daemon restart (default: 1)
   --insert-concurrency <n>
@@ -41,6 +45,8 @@ Options:
                           BGE_M3_ACCELERATOR_MANAGED_WORKERS for daemon restart (default: false)
   --max-workers <n>
                           BGE_M3_ACCELERATOR_MAX_WORKERS for daemon restart (default: 1)
+  --one-c-index-scope-profile <profile>
+                          1C_INDEX_SCOPE_PROFILE for daemon restart and index_codebase request: full, developer, or minimal (default: full)
   --prepare-only          Recreate daemon with baseline env, do not start indexing
   --start                 Start force indexing and poll until indexed/indexfailed
   --monitor-only          Poll current indexing run without starting a new one
@@ -71,12 +77,15 @@ function parseArgs(argv) {
         timeoutMs: 0,
         unitName: defaultUnitName,
         acceleratorMode: 'off',
+        embeddingBatchSize: 100,
+        insertBatchSize: undefined,
         embeddingConcurrency: 1,
         insertConcurrency: 1,
         insertQueueCapacity: 2,
         adaptiveBackpressure: undefined,
         managedWorkers: false,
         maxWorkers: 1,
+        oneCIndexScopeProfile: 'full',
         prepareOnly: false,
         start: false,
         monitorOnly: false,
@@ -119,6 +128,12 @@ function parseArgs(argv) {
             case '--accelerator-mode':
                 options.acceleratorMode = next();
                 break;
+            case '--embedding-batch-size':
+                options.embeddingBatchSize = Number(next());
+                break;
+            case '--insert-batch-size':
+                options.insertBatchSize = Number(next());
+                break;
             case '--embedding-concurrency':
                 options.embeddingConcurrency = Number(next());
                 break;
@@ -136,6 +151,9 @@ function parseArgs(argv) {
                 break;
             case '--max-workers':
                 options.maxWorkers = Number(next());
+                break;
+            case '--one-c-index-scope-profile':
+                options.oneCIndexScopeProfile = next();
                 break;
             case '--prepare-only':
                 options.prepareOnly = true;
@@ -181,7 +199,12 @@ function parseArgs(argv) {
     if (!['off', 'auto'].includes(options.acceleratorMode)) {
         throw new Error('--accelerator-mode must be off or auto');
     }
+    if (!['full', 'developer', 'minimal'].includes(options.oneCIndexScopeProfile)) {
+        throw new Error('--one-c-index-scope-profile must be full, developer, or minimal');
+    }
     for (const [name, value] of [
+        ['--embedding-batch-size', options.embeddingBatchSize],
+        ['--insert-batch-size', options.insertBatchSize ?? options.embeddingBatchSize],
         ['--embedding-concurrency', options.embeddingConcurrency],
         ['--insert-concurrency', options.insertConcurrency],
         ['--insert-queue-capacity', options.insertQueueCapacity],
@@ -227,6 +250,8 @@ function selfTestCompactOutput() {
             failedBatches: 1,
             insertConcurrency: 2,
             insertQueueCapacity: 4,
+            embeddingBatchSize: 100,
+            insertBatchSize: 50,
             queuedInsertBatches: 1,
             runningInsertBatches: 1,
             completedInsertBatches: 3,
@@ -248,8 +273,8 @@ function selfTestCompactOutput() {
                 recoveryAttempts: 1,
             }],
             batches: [
-                { id: 1, state: 'completed', attempts: 1, chunkCount: 100 },
-                { id: 2, state: 'failed', attempts: 2, chunkCount: 100 },
+                { id: 1, state: 'completed', attempts: 1, chunkCount: 100, estimatedTokens: 450, insertChunkCounts: [50, 50] },
+                { id: 2, state: 'failed', attempts: 2, chunkCount: 100, estimatedTokens: 520, insertChunkCounts: [50, 50] },
             ],
         },
     });
@@ -272,10 +297,21 @@ function selfTestCompactOutput() {
     if (compacted.accelerator.insertSummary.insertMs !== 1234) {
         throw new Error('Expected insertSummary insert timing to be preserved.');
     }
+    if (compacted.accelerator.batchSizeSummary.embeddingBatchSize !== 100) {
+        throw new Error('Expected batchSizeSummary embedding batch size to be preserved.');
+    }
+    if (compacted.accelerator.batchesSummary.tokenEstimate.max !== 520) {
+        throw new Error('Expected batchesSummary token estimates to be summarized.');
+    }
+    if (compacted.accelerator.batchesSummary.insertChunks.max !== 50) {
+        throw new Error('Expected batchesSummary insert chunk sizes to be summarized.');
+    }
 
     const compactedStatusOnly = compactStructuredContent({
         status: 'indexing',
         accelerator: {
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
             retriedBatches: 1,
             failedBatches: 0,
             insertConcurrency: 1,
@@ -395,12 +431,15 @@ function buildMeasurementEnvironment(currentEnv, options) {
         ...currentEnv,
         MCP_RUNTIME_MODE: 'daemon',
         INDEX_ACCELERATOR_MODE: options.acceleratorMode,
+        INDEX_EMBEDDING_BATCH_SIZE: String(options.embeddingBatchSize),
+        INDEX_INSERT_BATCH_SIZE: String(options.insertBatchSize ?? options.embeddingBatchSize),
         INDEX_EMBEDDING_CONCURRENCY: String(options.embeddingConcurrency),
         INDEX_INSERT_CONCURRENCY: String(options.insertConcurrency),
         INDEX_INSERT_QUEUE_CAPACITY: String(options.insertQueueCapacity),
         INDEX_ADAPTIVE_BACKPRESSURE: String(adaptiveBackpressure),
         BGE_M3_ACCELERATOR_MANAGED_WORKERS: String(options.managedWorkers),
         BGE_M3_ACCELERATOR_MAX_WORKERS: String(options.maxWorkers),
+        '1C_INDEX_SCOPE_PROFILE': options.oneCIndexScopeProfile,
     };
 }
 
@@ -553,14 +592,32 @@ function compactBatch(batch) {
         state: batch.state,
         firstFile: batch.firstFile,
         lastFile: batch.lastFile,
+        estimatedTokens: batch.estimatedTokens,
+        insertChunkCounts: batch.insertChunkCounts,
     };
 }
 
 function summarizeBatches(batches) {
     const byState = {};
+    const chunkCounts = [];
+    const tokenEstimates = [];
+    const insertChunkCounts = [];
     for (const batch of batches) {
         const state = batch?.state || 'unknown';
         byState[state] = (byState[state] || 0) + 1;
+        if (Number.isFinite(batch?.chunkCount)) {
+            chunkCounts.push(batch.chunkCount);
+        }
+        if (Number.isFinite(batch?.estimatedTokens)) {
+            tokenEstimates.push(batch.estimatedTokens);
+        }
+        if (Array.isArray(batch?.insertChunkCounts)) {
+            for (const count of batch.insertChunkCounts) {
+                if (Number.isFinite(count)) {
+                    insertChunkCounts.push(count);
+                }
+            }
+        }
     }
     const active = batches
         .filter((batch) => batch?.state && batch.state !== 'completed')
@@ -569,8 +626,24 @@ function summarizeBatches(batches) {
     return {
         count: batches.length,
         byState,
+        chunkCount: summarizeNumbers(chunkCounts),
+        tokenEstimate: summarizeNumbers(tokenEstimates),
+        insertChunks: summarizeNumbers(insertChunkCounts),
         activeTail: active,
         latestTail: batches.slice(-10).map(compactBatch),
+    };
+}
+
+function summarizeNumbers(values) {
+    if (values.length === 0) {
+        return undefined;
+    }
+    const total = values.reduce((sum, value) => sum + value, 0);
+    return {
+        count: values.length,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        avg: Math.round(total / values.length),
     };
 }
 
@@ -606,6 +679,17 @@ function summarizeRetryAndWorkers(accelerator) {
             completedInsertBatches: accelerator.completedInsertBatches || 0,
             failedInsertBatches: accelerator.failedInsertBatches || 0,
             insertMs: accelerator.insertMs || 0,
+        },
+        batchSizeSummary: {
+            embeddingBatchSize: accelerator.embeddingBatchSize || 100,
+            insertBatchSize: accelerator.insertBatchSize || accelerator.embeddingBatchSize || 100,
+            totalChunks: accelerator.batchesSummary?.chunkCount?.count || accelerator.batches?.reduce((sum, batch) => sum + (batch?.chunkCount || 0), 0) || 0,
+            submittedBatches: accelerator.submittedBatches || 0,
+            completedBatches: accelerator.completedBatches || 0,
+            failedBatches: accelerator.failedBatches || 0,
+            retryRate: accelerator.submittedBatches
+                ? (accelerator.retriedBatches || 0) / accelerator.submittedBatches
+                : 0,
         },
         adaptiveSummary: {
             enabled: Boolean(accelerator.adaptiveBackpressureEnabled),
@@ -704,6 +788,8 @@ async function prepareDaemon(options, runDir) {
         },
         measurementEnv: redactEnv({
             INDEX_ACCELERATOR_MODE: measurementEnv.INDEX_ACCELERATOR_MODE,
+            INDEX_EMBEDDING_BATCH_SIZE: measurementEnv.INDEX_EMBEDDING_BATCH_SIZE,
+            INDEX_INSERT_BATCH_SIZE: measurementEnv.INDEX_INSERT_BATCH_SIZE,
             INDEX_EMBEDDING_CONCURRENCY: measurementEnv.INDEX_EMBEDDING_CONCURRENCY,
             INDEX_INSERT_CONCURRENCY: measurementEnv.INDEX_INSERT_CONCURRENCY,
             INDEX_INSERT_QUEUE_CAPACITY: measurementEnv.INDEX_INSERT_QUEUE_CAPACITY,
@@ -713,6 +799,7 @@ async function prepareDaemon(options, runDir) {
             EMBEDDING_PROVIDER: measurementEnv.EMBEDDING_PROVIDER,
             BGE_M3_MODE: measurementEnv.BGE_M3_MODE,
             BGE_M3_STORE_COLBERT: measurementEnv.BGE_M3_STORE_COLBERT,
+            '1C_INDEX_SCOPE_PROFILE': measurementEnv['1C_INDEX_SCOPE_PROFILE'],
             MILVUS_ADDRESS: measurementEnv.MILVUS_ADDRESS,
         }),
         runtimeWorkload: runtimeStatus.workload,
@@ -736,6 +823,7 @@ async function measure(options, clientConfig, runDir) {
         const indexResult = await callTool(clientConfig, 'index_codebase', {
             path: options.codebasePath,
             force: options.force,
+            oneCIndexScopeProfile: options.oneCIndexScopeProfile,
         });
 
         writeJson(path.join(runDir, 'index-start-response.json'), {
@@ -797,6 +885,9 @@ async function measure(options, clientConfig, runDir) {
     writeJson(path.join(runDir, 'summary.json'), {
         codebasePath: options.codebasePath,
         mode: options.acceleratorMode,
+        oneCIndexScopeProfile: options.oneCIndexScopeProfile,
+        embeddingBatchSize: options.embeddingBatchSize,
+        insertBatchSize: options.insertBatchSize ?? options.embeddingBatchSize,
         embeddingConcurrency: options.embeddingConcurrency,
         insertConcurrency: options.insertConcurrency,
         insertQueueCapacity: options.insertQueueCapacity,
@@ -810,6 +901,7 @@ async function measure(options, clientConfig, runDir) {
         wallClockMs: endedAt.getTime() - startedAt.getTime(),
         finalStatus: finalResult?.structuredContent?.status,
         insertSummary: selectInsertSummary(finalResult, lastAcceleratorSample, options.codebasePath),
+        batchSizeSummary: selectBatchSizeSummary(finalResult, lastAcceleratorSample, options.codebasePath),
         adaptiveSummary: selectAdaptiveSummary(finalResult, lastAcceleratorSample, options.codebasePath),
         lastAcceleratorStructuredContent: lastAcceleratorSample?.structuredContent,
         cancellation: cancellationResult,
@@ -859,6 +951,15 @@ function selectInsertSummary(finalResult, lastAcceleratorSample, codebasePath) {
     return lastAcceleratorSample?.structuredContent?.accelerator?.insertSummary || finalSummary;
 }
 
+function selectBatchSizeSummary(finalResult, lastAcceleratorSample, codebasePath) {
+    const finalAccelerator = finalResult?.structuredContent?.accelerator;
+    if (hasInsertSchedulerEvidence(finalAccelerator, codebasePath)) {
+        return finalAccelerator?.batchSizeSummary;
+    }
+    return lastAcceleratorSample?.structuredContent?.accelerator?.batchSizeSummary
+        || finalAccelerator?.batchSizeSummary;
+}
+
 function selectAdaptiveSummary(finalResult, lastAcceleratorSample, codebasePath) {
     const finalAccelerator = finalResult?.structuredContent?.accelerator;
     if (acceleratorMatchesCodebase(finalAccelerator, codebasePath)) {
@@ -881,7 +982,7 @@ async function main() {
     const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
     const runDir = options.runDir || createRunDir(
         options.artifactDir,
-        `${options.acceleratorMode}-insert${options.insertConcurrency}-adaptive${adaptiveBackpressure}`,
+        `${options.acceleratorMode}-scope${options.oneCIndexScopeProfile}-embbatch${options.embeddingBatchSize}-insertbatch${options.insertBatchSize ?? options.embeddingBatchSize}-insert${options.insertConcurrency}-adaptive${adaptiveBackpressure}`,
     );
     fs.mkdirSync(runDir, { recursive: true });
     const clientConfig = options.monitorOnly
@@ -889,10 +990,10 @@ async function main() {
         : await prepareDaemon(options, runDir);
 
     if (options.prepareOnly) {
-        console.log(`Prepared INDEX_ACCELERATOR_MODE=${options.acceleratorMode} daemon measurement.`);
+        console.log(`Prepared INDEX_ACCELERATOR_MODE=${options.acceleratorMode} daemon measurement with 1C_INDEX_SCOPE_PROFILE=${options.oneCIndexScopeProfile}.`);
         console.log(`Run dir: ${runDir}`);
         console.log(`Runtime: ${clientConfig.runtimeId} pid=${clientConfig.pid}`);
-        console.log(`Start measurement with: node scripts/measure-indexing-baseline.js --start --no-restart --codebase ${options.codebasePath}`);
+        console.log(`Start measurement with: node scripts/measure-indexing-baseline.js --start --no-restart --codebase ${options.codebasePath} --one-c-index-scope-profile ${options.oneCIndexScopeProfile}`);
         return;
     }
 

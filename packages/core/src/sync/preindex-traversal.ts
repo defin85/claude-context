@@ -3,6 +3,15 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { envManager } from '../utils/env-manager';
+import {
+    OneCIndexScopeProfile,
+    OneCIndexScopeSummary,
+    createOneCIndexScopeSummary,
+    evaluateOneCIndexScopePath,
+    isReducedOneCIndexScopeProfile,
+    recordOneCIndexScopeDecision,
+    resolveOneCIndexScopeProfile,
+} from './one-c-scope';
 
 const DEFAULT_PREINDEX_CONCURRENCY = Math.max(2, Math.min(8, os.cpus().length || 2));
 const MAX_PREINDEX_CONCURRENCY = 64;
@@ -49,6 +58,7 @@ export interface PreIndexTraversalDiagnostics {
     maxActiveTasks: number;
     selectedPathFingerprint: string;
     selectedPathHashFingerprint: string;
+    oneCIndexScope?: OneCIndexScopeSummary;
     timings: PreIndexTraversalTimings & {
         matcherMs: number;
     };
@@ -63,6 +73,7 @@ export interface PreIndexTraversalResult {
     hashedFileCount: number;
     concurrency: number;
     timings: PreIndexTraversalTimings;
+    oneCIndexScope: OneCIndexScopeSummary;
     diagnostics?: PreIndexTraversalDiagnostics;
 }
 
@@ -73,6 +84,7 @@ export interface PreIndexTraversalOptions {
     concurrency?: number;
     engine?: PreIndexTraversalEngine;
     diagnostics?: boolean;
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
     abortSignal?: AbortSignal;
     readFile?: (filePath: string) => Promise<string>;
     progress?: (progress: {
@@ -375,6 +387,8 @@ export async function traversePreIndex(
     const matcher = new PreIndexIgnoreMatcher(options.ignorePatterns || []);
     const concurrency = getPreIndexTraversalConcurrency(options.concurrency);
     const engineSelection = getPreIndexTraversalEngine(options.engine);
+    const oneCIndexScopeProfile = resolveOneCIndexScopeProfile(options.oneCIndexScopeProfile);
+    const oneCIndexScope = createOneCIndexScopeSummary(oneCIndexScopeProfile);
     const includeHashes = options.includeHashes === true;
     const collectDiagnostics = options.diagnostics === true || isPreIndexTraversalDiagnosticsEnabled();
     const directories = [normalizedRoot];
@@ -527,6 +541,12 @@ export async function traversePreIndex(
                 continue;
             }
 
+            const oneCScopeDecision = evaluateOneCIndexScopePath(relativePath, oneCIndexScopeProfile);
+            recordOneCIndexScopeDecision(oneCIndexScope, oneCScopeDecision);
+            if (!oneCScopeDecision.include) {
+                continue;
+            }
+
             enqueueFile({
                 relativePath,
                 absolutePath,
@@ -645,6 +665,16 @@ export async function traversePreIndex(
     const fileListMs = Date.now() - fileListStartedAt;
     const totalMs = Date.now() - startedAt;
     const hashedFileCount = includeHashes ? files.filter((file) => typeof file.hash === 'string').length : 0;
+    oneCIndexScope.active = oneCIndexScope.recognized || isReducedOneCIndexScopeProfile(oneCIndexScope.profile);
+    if (isReducedOneCIndexScopeProfile(oneCIndexScope.profile) && !oneCIndexScope.recognized) {
+        throw new Error(
+            `1C_INDEX_SCOPE_PROFILE=${oneCIndexScope.profile} requires a recognized exported 1C configuration tree. ` +
+                'Use full scope or index a 1C configuration export with stable 1C path conventions.',
+        );
+    }
+    if (isReducedOneCIndexScopeProfile(oneCIndexScope.profile)) {
+        oneCIndexScope.warning = `Index is intentionally scoped to 1C profile '${oneCIndexScope.profile}' and may not contain all files.`;
+    }
     emitProgress(includeHashes ? 'hashing' : 'traversal', true);
     const fingerprints = collectDiagnostics
         ? createPreIndexFingerprint(files, includeHashes)
@@ -656,6 +686,7 @@ export async function traversePreIndex(
         selectedFileCount: files.length,
         hashedFileCount,
         concurrency,
+        oneCIndexScope,
         timings: {
             scanMs,
             hashMs,
@@ -673,6 +704,7 @@ export async function traversePreIndex(
             matcherPatternEvaluations: matcherStats.patternEvaluations,
             selectedFiles: files.length,
             hashedFiles: hashedFileCount,
+            oneCIndexScope,
             selectedPathFingerprint: fingerprints.selectedPathFingerprint,
             selectedPathHashFingerprint: fingerprints.selectedPathHashFingerprint,
             timings: {

@@ -1,7 +1,8 @@
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { envManager } from "@zilliz/claude-context-core";
+import { envManager, getIndexingAcceleratorConfig } from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import { McpRuntimeMode } from './access-policy.js';
 import { normalizeCodebasePath } from './utils.js';
 
@@ -33,6 +34,8 @@ export interface ContextMcpConfig {
     bgeM3RerankLimit?: number;
     bgeM3StoreColbert: boolean;
     acceleratorMode: 'off' | 'auto';
+    indexEmbeddingBatchSize: number;
+    indexInsertBatchSize: number;
     acceleratorEmbeddingConcurrency: number;
     acceleratorInsertConcurrency: number;
     acceleratorInsertQueueCapacity: number;
@@ -136,6 +139,9 @@ export interface CodebaseInfoIndexing extends CodebaseInfoBase {
     indexingPercentage: number;  // Current progress percentage
     progressDetails?: IndexingProgressDetails;
     owner?: IndexingOwnerInfo;
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
+    oneCIndexScope?: OneCIndexScopeSummary;
+    reducedCoverageWarning?: string;
 }
 
 // Indexed state - when indexing completed successfully
@@ -146,6 +152,9 @@ export interface CodebaseInfoIndexed extends CodebaseInfoBase {
     codeChunkLimit?: number;     // CODE_CHUNK_LIMIT used by the indexing run when known
     indexStatus: 'completed' | 'limit_reached';  // Status from indexing result
     statsState?: 'known' | 'unknown';  // Whether file/chunk statistics are available locally
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
+    oneCIndexScope?: OneCIndexScopeSummary;
+    reducedCoverageWarning?: string;
 }
 
 // Index failed state - when indexing failed
@@ -288,6 +297,7 @@ export function createMcpConfig(): ContextMcpConfig {
     const embeddingProvider = (envManager.get('EMBEDDING_PROVIDER') as EmbeddingProviderName) || 'OpenAI';
     const bgeM3Mode = getBgeM3ModeFromEnv();
     const acceleratorMode = parseAcceleratorMode(envManager.get('INDEX_ACCELERATOR_MODE') || envManager.get('BGE_M3_ACCELERATOR'));
+    const indexingAcceleratorConfig = getIndexingAcceleratorConfig();
 
     const config: ContextMcpConfig = {
         name: envManager.get('MCP_SERVER_NAME') || "Context MCP Server",
@@ -314,6 +324,8 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3RerankLimit: getPositiveIntegerFromEnv('BGE_M3_RERANK_LIMIT'),
         bgeM3StoreColbert: getBooleanFromEnv('BGE_M3_STORE_COLBERT', true),
         acceleratorMode,
+        indexEmbeddingBatchSize: indexingAcceleratorConfig.embeddingBatchSize,
+        indexInsertBatchSize: indexingAcceleratorConfig.insertBatchSize,
         acceleratorEmbeddingConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_EMBEDDING_CONCURRENCY', acceleratorMode === 'auto' ? 2 : 1),
         acceleratorInsertConcurrency: getPositiveIntegerFromEnvWithDefault('INDEX_INSERT_CONCURRENCY', 1),
         acceleratorInsertQueueCapacity: getPositiveIntegerFromEnvWithDefault('INDEX_INSERT_QUEUE_CAPACITY', 2),
@@ -630,6 +642,8 @@ export function logRuntimeConfigurationSummary(runtimeConfig: McpRuntimeConfig):
 
 export function logAcceleratorConfiguration(config: ContextMcpConfig): void {
     console.log(`[MCP]   Accelerator Mode: ${config.acceleratorMode}`);
+    console.log(`[MCP]   Index Embedding Batch Size: ${config.indexEmbeddingBatchSize}`);
+    console.log(`[MCP]   Index Insert Batch Size: ${config.indexInsertBatchSize}`);
     console.log(`[MCP]   Accelerator Embedding Concurrency: ${config.acceleratorEmbeddingConcurrency}`);
     console.log(`[MCP]   Accelerator Insert Concurrency: ${config.acceleratorInsertConcurrency}`);
     console.log(`[MCP]   Accelerator Insert Queue Capacity: ${config.acceleratorInsertQueueCapacity}`);
@@ -721,6 +735,8 @@ Environment Variables:
   BGE_M3_WORKER_ENDPOINTS Additional BGE-M3 sidecar endpoints, separated by comma or whitespace
   BGE_M3_ACCELERATOR      Legacy alias for INDEX_ACCELERATOR_MODE
   INDEX_ACCELERATOR_MODE  Accelerator mode: off or auto (default: off)
+  INDEX_EMBEDDING_BATCH_SIZE Chunks per embedding request (default: EMBEDDING_BATCH_SIZE or 100)
+  INDEX_INSERT_BATCH_SIZE Chunks per vector insert request (default: INDEX_EMBEDDING_BATCH_SIZE)
   INDEX_EMBEDDING_CONCURRENCY Max in-flight embedding batches (default: 2 in auto, else 1)
   INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 1; raise only after Milvus safety validation)
   INDEX_INSERT_QUEUE_CAPACITY Max queued insert batches waiting for insert lanes (default: 2)

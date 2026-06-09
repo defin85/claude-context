@@ -13,6 +13,8 @@ import {
     IndexingOwnerInfo,
     IndexingProgressDetails
 } from "./config.js";
+import { isReducedOneCIndexScopeProfile } from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import {
     getErrorCode,
     getErrorMessage,
@@ -39,6 +41,11 @@ interface SnapshotReadResult {
 interface SnapshotMutationResult<T> {
     result: T;
     changed: boolean;
+}
+
+interface OneCScopeSnapshotMetadata {
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
+    oneCIndexScope?: OneCIndexScopeSummary;
 }
 
 export interface IndexingOwnershipClaimResult {
@@ -265,6 +272,20 @@ export class SnapshotManager {
             current,
             total,
             percentage
+        };
+    }
+
+    private createReducedCoverageWarning(profile: OneCIndexScopeProfile | undefined): string | undefined {
+        return isReducedOneCIndexScopeProfile(profile)
+            ? `Index is intentionally scoped to 1C profile '${profile}' and may not contain all files.`
+            : undefined;
+    }
+
+    private normalizeOneCScopeMetadata(metadata?: OneCScopeSnapshotMetadata): OneCScopeSnapshotMetadata {
+        const profile = metadata?.oneCIndexScopeProfile || metadata?.oneCIndexScope?.profile;
+        return {
+            ...(profile ? { oneCIndexScopeProfile: profile } : {}),
+            ...(metadata?.oneCIndexScope ? { oneCIndexScope: metadata.oneCIndexScope } : {})
         };
     }
 
@@ -1228,10 +1249,19 @@ export class SnapshotManager {
     public setCodebaseIndexing(
         codebasePath: string,
         progress: number = 0,
-        progressDetails?: IndexingProgressDetails
+        progressDetails?: IndexingProgressDetails,
+        metadata?: OneCScopeSnapshotMetadata
     ): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
         const existingInfo = this.codebaseInfoMap.get(codebasePath);
+        const scopeMetadata = this.normalizeOneCScopeMetadata(metadata || (
+            existingInfo?.status === 'indexing' || existingInfo?.status === 'indexed'
+                ? {
+                    oneCIndexScopeProfile: existingInfo.oneCIndexScopeProfile,
+                    oneCIndexScope: existingInfo.oneCIndexScope
+                }
+                : undefined
+        ));
         this.indexingCodebases.set(codebasePath, progress);
         this.pendingDeletes.delete(codebasePath);
 
@@ -1246,6 +1276,10 @@ export class SnapshotManager {
             progressDetails: this.normalizeProgressDetails(progressDetails)
                 || (existingInfo?.status === 'indexing' ? existingInfo.progressDetails : undefined),
             lastUpdated: new Date().toISOString(),
+            ...scopeMetadata,
+            ...(this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile)
+                ? { reducedCoverageWarning: this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile) }
+                : {}),
             ...(existingInfo?.status === 'indexing' && existingInfo.owner
                 ? { owner: this.buildOwnerInfo(existingInfo.owner) }
                 : {})
@@ -1258,9 +1292,10 @@ export class SnapshotManager {
      */
     public setCodebaseIndexed(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number }
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number } & OneCScopeSnapshotMetadata
     ): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
+        const scopeMetadata = this.normalizeOneCScopeMetadata(stats);
         this.pendingDeletes.delete(codebasePath);
 
         // Add to indexed list if not already there
@@ -1281,6 +1316,10 @@ export class SnapshotManager {
             codeChunkLimit: stats.codeChunkLimit,
             indexStatus: stats.status,
             statsState: 'known',
+            ...scopeMetadata,
+            ...(this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile)
+                ? { reducedCoverageWarning: this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile) }
+                : {}),
             lastUpdated: new Date().toISOString()
         };
         this.codebaseInfoMap.set(codebasePath, info);
@@ -1288,9 +1327,11 @@ export class SnapshotManager {
 
     public setCodebaseIndexedWithoutStats(
         codebasePath: string,
-        status: 'completed' | 'limit_reached' = 'completed'
+        status: 'completed' | 'limit_reached' = 'completed',
+        metadata?: OneCScopeSnapshotMetadata
     ): void {
         codebasePath = this.normalizeCodebasePath(codebasePath);
+        const scopeMetadata = this.normalizeOneCScopeMetadata(metadata);
         this.pendingDeletes.delete(codebasePath);
 
         if (!this.indexedCodebases.includes(codebasePath)) {
@@ -1304,6 +1345,10 @@ export class SnapshotManager {
             status: 'indexed',
             indexStatus: status,
             statsState: 'unknown',
+            ...scopeMetadata,
+            ...(this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile)
+                ? { reducedCoverageWarning: this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile) }
+                : {}),
             lastUpdated: new Date().toISOString()
         };
         this.codebaseInfoMap.set(codebasePath, info);
@@ -1609,7 +1654,7 @@ export class SnapshotManager {
 
     public async completeIndexingOwnership(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number }
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number } & OneCScopeSnapshotMetadata
     ): Promise<boolean> {
         const normalizedPath = this.normalizeCodebasePath(codebasePath);
 
@@ -1625,6 +1670,10 @@ export class SnapshotManager {
                 };
             }
 
+            const scopeMetadata = this.normalizeOneCScopeMetadata({
+                oneCIndexScopeProfile: stats.oneCIndexScopeProfile || existingInfo.oneCIndexScopeProfile,
+                oneCIndexScope: stats.oneCIndexScope || existingInfo.oneCIndexScope
+            });
             snapshot.codebases[normalizedPath] = {
                 status: 'indexed',
                 indexedFiles: stats.indexedFiles,
@@ -1632,6 +1681,10 @@ export class SnapshotManager {
                 codeChunkLimit: stats.codeChunkLimit,
                 indexStatus: stats.status,
                 statsState: 'known',
+                ...scopeMetadata,
+                ...(this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile)
+                    ? { reducedCoverageWarning: this.createReducedCoverageWarning(scopeMetadata.oneCIndexScopeProfile) }
+                    : {}),
                 lastUpdated: new Date().toISOString()
             };
             if (snapshot.deletedCodebases) {

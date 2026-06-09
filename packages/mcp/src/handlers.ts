@@ -2,7 +2,15 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
-import { CodebaseSessionConfig, Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
+import {
+    CodebaseSessionConfig,
+    Context,
+    COLLECTION_LIMIT_MESSAGE,
+    isReducedOneCIndexScopeProfile,
+    parseOneCIndexScopeProfile,
+    resolveOneCIndexScopeProfile,
+} from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
@@ -348,11 +356,72 @@ export class ToolHandlers {
 
     private createPersistedSessionConfig(
         customExtensions: string[],
-        customIgnorePatterns: string[]
+        customIgnorePatterns: string[],
+        oneCIndexScopeProfile?: OneCIndexScopeProfile
     ): CodebaseSessionConfig {
         return {
             customExtensions,
-            customIgnorePatterns
+            customIgnorePatterns,
+            ...(oneCIndexScopeProfile ? { oneCIndexScopeProfile } : {})
+        };
+    }
+
+    private normalizeOneCIndexScopeProfile(value: unknown): OneCIndexScopeProfile {
+        if (typeof value !== 'string') {
+            return resolveOneCIndexScopeProfile();
+        }
+        return parseOneCIndexScopeProfile(value, 'oneCIndexScopeProfile');
+    }
+
+    private getPersistedOneCIndexScopeProfile(info: unknown, config: CodebaseSessionConfig | null): OneCIndexScopeProfile {
+        const candidate = info && typeof info === 'object'
+            ? (info as { oneCIndexScopeProfile?: unknown }).oneCIndexScopeProfile
+            : undefined;
+        if (typeof candidate === 'string') {
+            return parseOneCIndexScopeProfile(candidate, 'persisted oneCIndexScopeProfile');
+        }
+        if (config?.oneCIndexScopeProfile) {
+            return config.oneCIndexScopeProfile;
+        }
+        return 'full';
+    }
+
+    private createReducedOneCScopeWarning(profile: OneCIndexScopeProfile | undefined): string | undefined {
+        if (!isReducedOneCIndexScopeProfile(profile)) {
+            return undefined;
+        }
+        return `1C indexing scope profile '${profile}' intentionally indexes reduced coverage. Search results may omit files excluded by this profile.`;
+    }
+
+    private getOneCScopeStatus(
+        info: unknown,
+        config: CodebaseSessionConfig | null,
+        accelerator?: { oneCIndexScope?: OneCIndexScopeSummary }
+    ): {
+        oneCIndexScopeProfile?: OneCIndexScopeProfile;
+        oneCIndexScope?: OneCIndexScopeSummary;
+        reducedCoverageWarning?: string;
+    } {
+        const infoScope = info && typeof info === 'object'
+            ? info as {
+                oneCIndexScopeProfile?: unknown;
+                oneCIndexScope?: OneCIndexScopeSummary;
+                reducedCoverageWarning?: unknown;
+            }
+            : undefined;
+        const profile = this.getPersistedOneCIndexScopeProfile(infoScope, config);
+        const oneCIndexScope = infoScope?.oneCIndexScope || accelerator?.oneCIndexScope;
+        const reducedCoverageWarning =
+            (typeof infoScope?.reducedCoverageWarning === 'string' ? infoScope.reducedCoverageWarning : undefined)
+            || oneCIndexScope?.warning
+            || this.createReducedOneCScopeWarning(profile);
+
+        return {
+            ...((profile !== 'full' || config?.oneCIndexScopeProfile || infoScope?.oneCIndexScopeProfile)
+                ? { oneCIndexScopeProfile: profile }
+                : {}),
+            ...(oneCIndexScope ? { oneCIndexScope } : {}),
+            ...(reducedCoverageWarning ? { reducedCoverageWarning } : {}),
         };
     }
 
@@ -536,13 +605,18 @@ export class ToolHandlers {
         const codebasePath = typeof args.path === 'string' ? args.path : '';
         const forceReindex = args.force === true;
         const splitterType = typeof args.splitter === 'string' ? args.splitter : 'ast'; // Default to AST
+        const oneCIndexScopeProfile = this.normalizeOneCIndexScopeProfile(args.oneCIndexScopeProfile ?? args['1cIndexScopeProfile']);
         const customFileExtensions = Array.isArray(args.customExtensions)
             ? args.customExtensions.filter((extension): extension is string => typeof extension === 'string')
             : [];
         const customIgnorePatterns = Array.isArray(args.ignorePatterns)
             ? args.ignorePatterns.filter((pattern): pattern is string => typeof pattern === 'string')
             : [];
-        const persistedSessionConfig = this.createPersistedSessionConfig(customFileExtensions, customIgnorePatterns);
+        const persistedSessionConfig = this.createPersistedSessionConfig(
+            customFileExtensions,
+            customIgnorePatterns,
+            oneCIndexScopeProfile,
+        );
         let ownershipClaimed = false;
         let claimedCodebasePath: string | null = null;
 
@@ -598,6 +672,9 @@ export class ToolHandlers {
             const snapshotHasIndex = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
             const cloudHasIndex = await this.context.hasIndex(absolutePath);
             const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
+            const existingSessionConfig = hasPersistedSyncConfig
+                ? await this.codebaseConfigManager.getConfig(absolutePath)
+                : null;
 
             // Reconcile local snapshot with cloud truth for this specific codebase
             if (snapshotHasIndex !== cloudHasIndex) {
@@ -626,6 +703,31 @@ export class ToolHandlers {
                     await this.snapshotManager.saveCodebaseSnapshot('index-reconcile-cloud-missing');
                     console.log(`[INDEX-VALIDATION] 🧹 Removed stale snapshot entry without cloud index: ${absolutePath}`);
                 }
+            }
+
+            const existingInfo = this.snapshotManager.getCodebaseInfo(absolutePath);
+            const hasExistingIndex = cloudHasIndex || snapshotHasIndex;
+            const persistedOneCIndexScopeProfile = this.getPersistedOneCIndexScopeProfile(existingInfo, existingSessionConfig);
+            if (
+                hasExistingIndex &&
+                !forceReindex &&
+                persistedOneCIndexScopeProfile !== oneCIndexScopeProfile
+            ) {
+                return {
+                    content: [{
+                        type: "text",
+                        text:
+                            `Error: 1C indexing scope profile change requires force=true for '${absolutePath}'. ` +
+                            `Persisted profile is '${persistedOneCIndexScopeProfile}', requested profile is '${oneCIndexScopeProfile}'.`
+                    }],
+                    structuredContent: {
+                        path: absolutePath,
+                        oneCIndexScopeProfile,
+                        persistedOneCIndexScopeProfile,
+                        forceRequired: true,
+                    },
+                    isError: true
+                };
             }
 
             // Check if already indexed in cloud (unless force is true)
@@ -693,6 +795,9 @@ export class ToolHandlers {
 
             ownershipClaimed = true;
             claimedCodebasePath = absolutePath;
+            this.snapshotManager.setCodebaseIndexing(absolutePath, 0, undefined, {
+                oneCIndexScopeProfile,
+            });
 
             if (ownershipClaim.reason === 'reclaimed-stale-owner') {
                 console.warn(
@@ -764,6 +869,10 @@ export class ToolHandlers {
             const ignoreInfo = customIgnorePatterns.length > 0
                 ? `\nUsing ${customIgnorePatterns.length} custom ignore patterns: ${customIgnorePatterns.join(', ')}`
                 : '';
+            const scopeInfo = `\nUsing 1C indexing scope profile: ${oneCIndexScopeProfile}` +
+                (isReducedOneCIndexScopeProfile(oneCIndexScopeProfile)
+                    ? `\nWarning: 1C scope '${oneCIndexScopeProfile}' intentionally indexes reduced coverage.`
+                    : '');
 
             const queueInfo = queuedIndexingJob.startedImmediately
                 ? `\nIndexing started immediately.`
@@ -772,7 +881,7 @@ export class ToolHandlers {
             return {
                 content: [{
                     type: "text",
-                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
+                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${scopeInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
                 }],
                 structuredContent: {
                     path: absolutePath,
@@ -781,6 +890,7 @@ export class ToolHandlers {
                     splitter: splitterType,
                     customExtensions: customFileExtensions,
                     ignorePatterns: customIgnorePatterns,
+                    oneCIndexScopeProfile,
                     startedImmediately: queuedIndexingJob.startedImmediately,
                     queuePosition: queuedIndexingJob.queuePosition
                 }
@@ -992,6 +1102,12 @@ export class ToolHandlers {
                 const isIndexedInSnapshot = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
                 const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
                 const hasCloudIndex = await this.context.hasIndex(absolutePath);
+                const persistedSearchConfig = await this.codebaseConfigManager.getConfig(absolutePath);
+                const oneCScopeStatus = this.getOneCScopeStatus(
+                    this.snapshotManager.getCodebaseInfo(absolutePath),
+                    persistedSearchConfig,
+                    this.context.getLastAcceleratorSnapshot()
+                );
 
                 // Self-heal snapshot if index exists in cloud but local snapshot is missing
                 if (hasCloudIndex && !isIndexedInSnapshot && !isIndexing) {
@@ -1032,6 +1148,9 @@ export class ToolHandlers {
                 if (isIndexing) {
                     indexingStatusMessage = `\n⚠️  **Indexing in Progress**: This codebase is currently being indexed in the background. Search results may be incomplete until indexing completes.`;
                 }
+                const scopeWarningMessage = oneCScopeStatus.reducedCoverageWarning
+                    ? `\n⚠️  **1C Scope**: ${oneCScopeStatus.reducedCoverageWarning}`
+                    : '';
 
                 console.log(`[SEARCH] Searching in codebase: ${absolutePath}`);
                 console.log(`[SEARCH] Query: "${query}"`);
@@ -1081,7 +1200,7 @@ export class ToolHandlers {
                         }
                     }
 
-                    let noResultsMessage = `No results found for query: "${query}" in codebase '${absolutePath}'`;
+                    let noResultsMessage = `No results found for query: "${query}" in codebase '${absolutePath}'${scopeWarningMessage}`;
                     if (isIndexing) {
                         noResultsMessage += `\n\nNote: This codebase is still being indexed. Try searching again after indexing completes, or the query may not match any indexed content.`;
                     }
@@ -1095,6 +1214,7 @@ export class ToolHandlers {
                             query,
                             limit: Math.min(resultLimit, 50),
                             indexingStatus: isIndexing ? 'indexing' : 'indexed',
+                            ...oneCScopeStatus,
                             results: []
                         }
                     };
@@ -1112,7 +1232,7 @@ export class ToolHandlers {
                         `   Context: \n\`\`\`${result.language}\n${context}\n\`\`\`\n`;
                 }).join('\n');
 
-                let resultMessage = `Found ${searchResults.length} results for query: "${query}" in codebase '${absolutePath}'${indexingStatusMessage}\n\n${formattedResults}`;
+                let resultMessage = `Found ${searchResults.length} results for query: "${query}" in codebase '${absolutePath}'${indexingStatusMessage}${scopeWarningMessage}\n\n${formattedResults}`;
 
                 if (isIndexing) {
                     resultMessage += `\n\n💡 **Tip**: This codebase is still being indexed. More results may become available as indexing progresses.`;
@@ -1128,6 +1248,7 @@ export class ToolHandlers {
                         query,
                         limit: Math.min(resultLimit, 50),
                         indexingStatus: isIndexing ? 'indexing' : 'indexed',
+                        ...oneCScopeStatus,
                         results: searchResults.map((result): SearchResultSummary => ({
                             relativePath: result.relativePath,
                             language: result.language,
@@ -1439,6 +1560,8 @@ export class ToolHandlers {
                 structuredStatus.retrievalMode = persistedSyncConfig.retrievalMode;
                 structuredStatus.retrievalSchemaVersion = persistedSyncConfig.retrievalSchemaVersion;
             }
+            const oneCScopeStatus = this.getOneCScopeStatus(info, persistedSyncConfig, accelerator);
+            Object.assign(structuredStatus, oneCScopeStatus);
 
             switch (status) {
                 case 'indexed':
@@ -1552,6 +1675,9 @@ export class ToolHandlers {
                     `activeWorkers=${accelerator.activeWorkers ?? 0}, rejectedWorkers=${accelerator.rejectedWorkers ?? 0}, ` +
                     `recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +
                     `${retryReasonText ? `, retryReasons=${retryReasonText}` : ''}`;
+            }
+            if (oneCScopeStatus.reducedCoverageWarning) {
+                statusMessage += `\n⚠️ 1C scope: ${oneCScopeStatus.reducedCoverageWarning}`;
             }
 
             const pathInfo = codebasePath !== absolutePath

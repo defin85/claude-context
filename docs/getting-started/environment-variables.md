@@ -92,11 +92,31 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HYBRID_MODE` | Enable hybrid search (BM25 + dense vector). Set to `false` for dense-only search | `true` |
-| `EMBEDDING_BATCH_SIZE` | Batch size for processing. Larger batch size means less indexing time | `100` |
+| `EMBEDDING_BATCH_SIZE` | Legacy embedding batch size. Used only when `INDEX_EMBEDDING_BATCH_SIZE` is unset | `100` |
+| `INDEX_EMBEDDING_BATCH_SIZE` | Chunks grouped per embedding request. Values above `10000` are clamped by the core indexer | `EMBEDDING_BATCH_SIZE` or `100` |
+| `INDEX_INSERT_BATCH_SIZE` | Embedded documents grouped per vector database insert request. Defaults to the effective embedding batch size to preserve existing write behavior | `INDEX_EMBEDDING_BATCH_SIZE` |
 | `CODE_CHUNK_LIMIT` | Maximum number of code chunks to index per codebase. Increase for very large repositories when you accept extra indexing time and vector database storage. If a previous run stopped at a lower limit, run a force reindex after raising this value to include chunks that were skipped before. | `450000` |
+| `1C_INDEX_SCOPE_PROFILE` | Scope profile for exported 1C configuration trees: `full`, `developer`, or `minimal`. Reduced profiles must be selected explicitly and require `force=true` when changing an existing index profile. | `full` |
 | `SPLITTER_TYPE` | Code splitter type: `ast`, `langchain` | `ast` |
 | `CUSTOM_EXTENSIONS` | Additional file extensions to include (comma-separated, e.g., `.vue,.svelte,.astro`) | None |
 | `CUSTOM_IGNORE_PATTERNS` | Additional ignore patterns (comma-separated, e.g., `temp/**,*.backup,private/**`) | None |
+
+### 1C Exported Configuration Scope Profiles
+
+`1C_INDEX_SCOPE_PROFILE` only affects recognized exported 1C configuration
+trees. Non-1C repositories keep existing traversal behavior when the profile is
+left at `full`.
+
+| Profile | Coverage | Use case |
+|---------|----------|----------|
+| `full` | Preserve existing include/exclude behavior for all supported files. | Complete indexing and compatibility with existing users. |
+| `developer` | Include BSL modules and developer-relevant metadata such as `Configuration.xml`; exclude documented generated or low-value export files. | Faster 1C code search with visible reduced-coverage warning. |
+| `minimal` | Include only high-value BSL module artifacts such as common, object, manager, form, and command modules. | Fastest scoped code search when metadata search is not needed. |
+
+MCP `index_codebase` also accepts `oneCIndexScopeProfile` for a per-call
+override. Search and indexing status expose `oneCIndexScopeProfile`,
+`oneCIndexScope`, and `reducedCoverageWarning` for reduced indexes so users can
+distinguish scoped results from full coverage.
 
 ### Accelerated Indexing Backpressure
 
@@ -107,6 +127,8 @@ maximums stay visible in status and remain the upper bound.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INDEX_ACCELERATOR_MODE` | Accelerator mode: `off` or `auto` | `off` |
+| `INDEX_EMBEDDING_BATCH_SIZE` | Chunks submitted per embedding batch. Defaults preserve the legacy `EMBEDDING_BATCH_SIZE` behavior | `EMBEDDING_BATCH_SIZE` or `100` |
+| `INDEX_INSERT_BATCH_SIZE` | Chunks submitted per vector insert batch. Lower values split embedded batches before writing while preserving document IDs and metadata | `INDEX_EMBEDDING_BATCH_SIZE` |
 | `INDEX_EMBEDDING_CONCURRENCY` | Configured maximum in-flight embedding batches | `2` in auto, else `1` |
 | `INDEX_INSERT_CONCURRENCY` | Configured maximum in-flight vector insert batches | `1` |
 | `INDEX_INSERT_QUEUE_CAPACITY` | Maximum insert backlog waiting for insert lanes | `2` |
@@ -127,6 +149,10 @@ maximums stay visible in status and remain the upper bound.
 
 VRAM pressure is measured by the managed BGE-M3 worker planner when managed
 workers are enabled and GPU memory metrics are available.
+
+Changing the default batch sizes requires benchmark evidence from both a small
+repository and a larger repository. Compare wall-clock time, retry rate, insert
+latency, and memory/VRAM notes before promoting a candidate default.
 
 Use `INDEX_ADAPTIVE_BACKPRESSURE=false` to keep accelerated indexing on the
 static scheduler limits while preserving the bounded queue behavior.

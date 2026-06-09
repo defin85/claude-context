@@ -31,6 +31,8 @@ describe('indexing accelerator configuration', () => {
 
         expect(config).toEqual({
             mode: 'off',
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
             embeddingConcurrency: 1,
             insertConcurrency: 1,
             insertQueueCapacity: 2,
@@ -52,6 +54,8 @@ describe('indexing accelerator configuration', () => {
     it('parses auto mode, concurrency, VRAM budget, retry budget, and background sync policy', () => {
         mockEnv({
             INDEX_ACCELERATOR_MODE: 'auto',
+            INDEX_EMBEDDING_BATCH_SIZE: '256',
+            INDEX_INSERT_BATCH_SIZE: '64',
             INDEX_EMBEDDING_CONCURRENCY: '4',
             INDEX_INSERT_CONCURRENCY: '2',
             INDEX_INSERT_QUEUE_CAPACITY: '8',
@@ -72,6 +76,8 @@ describe('indexing accelerator configuration', () => {
 
         expect(config).toEqual({
             mode: 'auto',
+            embeddingBatchSize: 256,
+            insertBatchSize: 64,
             embeddingConcurrency: 4,
             insertConcurrency: 2,
             insertQueueCapacity: 8,
@@ -116,6 +122,8 @@ describe('indexing accelerator configuration', () => {
     it('falls back for invalid values and clamps percent values', () => {
         mockEnv({
             BGE_M3_ACCELERATOR: 'auto',
+            INDEX_EMBEDDING_BATCH_SIZE: '0',
+            INDEX_INSERT_BATCH_SIZE: '20000',
             INDEX_EMBEDDING_CONCURRENCY: 'bad',
             INDEX_INSERT_CONCURRENCY: '-1',
             BGE_M3_ACCELERATOR_MAX_WORKERS: '0',
@@ -127,6 +135,8 @@ describe('indexing accelerator configuration', () => {
         const config = getIndexingAcceleratorConfig();
 
         expect(config.mode).toBe('auto');
+        expect(config.embeddingBatchSize).toBe(100);
+        expect(config.insertBatchSize).toBe(10000);
         expect(config.embeddingConcurrency).toBe(2);
         expect(config.insertConcurrency).toBe(1);
         expect(config.maxBgeM3Workers).toBe(1);
@@ -229,6 +239,8 @@ describe('indexing accelerator configuration', () => {
     it('creates pressure signals from accelerator snapshot counters', () => {
         const runtimeConfig = {
             mode: 'auto' as const,
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
             embeddingConcurrency: 2,
             insertConcurrency: 1,
             insertQueueCapacity: 2,
@@ -269,6 +281,8 @@ describe('indexing accelerator configuration', () => {
     it('includes measured VRAM usage in adaptive pressure signals', () => {
         const runtimeConfig = {
             mode: 'auto' as const,
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
             embeddingConcurrency: 2,
             insertConcurrency: 1,
             insertQueueCapacity: 2,

@@ -43,6 +43,8 @@ function createAcceleratorSnapshot(): IndexingAcceleratorSnapshot {
         mode: 'auto',
         active: false,
         fallbackReason: 'background sync acceleration disabled',
+        embeddingBatchSize: 100,
+        insertBatchSize: 100,
         embeddingConcurrency: 1,
         insertConcurrency: 1,
         insertQueueCapacity: 2,

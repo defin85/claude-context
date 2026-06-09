@@ -31,6 +31,7 @@ import {
     PreIndexTraversalResult,
     traversePreIndex,
 } from "./sync/preindex-traversal";
+import { OneCIndexScopeProfile, OneCIndexScopeSummary } from "./sync/one-c-scope";
 import {
     EmbeddingWorkerFailureReason,
     IndexingBatchMetadata,
@@ -159,6 +160,7 @@ export interface CodebaseSessionConfig {
     customIgnorePatterns?: string[];
     retrievalMode?: RetrievalMode;
     retrievalSchemaVersion?: number;
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
 }
 
 interface ProcessFileListOptions {
@@ -176,6 +178,7 @@ interface CodebaseSessionState {
     codebasePath: string;
     customExtensions: string[];
     customIgnorePatterns: string[];
+    oneCIndexScopeProfile?: OneCIndexScopeProfile;
     fileIgnorePatterns: string[];
     effectiveExtensions: string[];
     effectiveIgnorePatterns: string[];
@@ -386,6 +389,7 @@ export class Context {
             ...preIndexTraversal.timings,
             selectedFileCount: preIndexTraversal.selectedFileCount,
             hashedFileCount: preIndexTraversal.hashedFileCount,
+            oneCIndexScope: preIndexTraversal.oneCIndexScope,
             diagnostics: preIndexTraversal.diagnostics,
         });
         this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
@@ -517,6 +521,7 @@ export class Context {
         session.customIgnorePatterns = this.normalizeIgnorePatternsList(
             config.customIgnorePatterns || [],
         );
+        session.oneCIndexScopeProfile = config.oneCIndexScopeProfile;
         this.updateSessionEffectiveState(session);
 
         console.log(
@@ -540,6 +545,7 @@ export class Context {
             customIgnorePatterns: [...session.customIgnorePatterns],
             retrievalMode: this.getRetrievalMode(),
             retrievalSchemaVersion: RETRIEVAL_SCHEMA_VERSION,
+            ...(session.oneCIndexScopeProfile ? { oneCIndexScopeProfile: session.oneCIndexScopeProfile } : {}),
         };
     }
 
@@ -948,6 +954,8 @@ export class Context {
         totalChunks: number;
         status: "completed" | "limit_reached";
         codeChunkLimit: number;
+        oneCIndexScopeProfile?: OneCIndexScopeProfile;
+        oneCIndexScope?: OneCIndexScopeSummary;
     }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
@@ -993,6 +1001,7 @@ export class Context {
             supportedExtensions: session.effectiveExtensions,
             includeHashes: true,
             diagnostics: isPreIndexTraversalDiagnosticsEnabled(),
+            oneCIndexScopeProfile: session.oneCIndexScopeProfile,
             abortSignal,
             progress: (traversalProgress) => {
                 const activity =
@@ -1027,6 +1036,15 @@ export class Context {
                 `[Context] 🔎 Pre-index diagnostics JSON: ${JSON.stringify(preIndexTraversal.diagnostics)}`,
             );
         }
+        if (preIndexTraversal.oneCIndexScope.active) {
+            const scope = preIndexTraversal.oneCIndexScope;
+            console.log(
+                `[Context] 🧭 1C index scope: profile=${scope.profile}, recognized=${scope.recognized}, included=${scope.includedFiles}, excluded=${scope.excludedFiles}`,
+            );
+            if (scope.warning) {
+                console.warn(`[Context] ⚠️ ${scope.warning}`);
+            }
+        }
         this.resetAcceleratorSnapshotForPreIndex(preIndexTraversal, {
             allowAcceleration: true,
             isBackgroundSync: false,
@@ -1049,7 +1067,14 @@ export class Context {
                 total: 100,
                 percentage: 100,
             });
-            return { indexedFiles: 0, totalChunks: 0, status: "completed", codeChunkLimit };
+            return {
+                indexedFiles: 0,
+                totalChunks: 0,
+                status: "completed",
+                codeChunkLimit,
+                oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
+                oneCIndexScope: preIndexTraversal.oneCIndexScope,
+            };
         }
 
         // 3. Process each file with streaming chunk processing
@@ -1124,6 +1149,8 @@ export class Context {
             totalChunks: result.totalChunks,
             status: result.status,
             codeChunkLimit: result.codeChunkLimit,
+            oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
+            oneCIndexScope: preIndexTraversal.oneCIndexScope,
         };
     }
 
@@ -1825,6 +1852,7 @@ export class Context {
             includeHashes: false,
             abortSignal,
             concurrency: 1,
+            oneCIndexScopeProfile: session.oneCIndexScopeProfile,
         });
         files.push(...traversal.files.map((file) => file.absolutePath));
         return files;
@@ -1854,12 +1882,10 @@ export class Context {
     }> {
         const abortSignal = options.abortSignal;
         const isHybrid = this.getIsHybrid();
-        const EMBEDDING_BATCH_SIZE = Math.max(
-            1,
-            parseInt(envManager.get("EMBEDDING_BATCH_SIZE") || "100", 10),
-        );
         const CODE_CHUNK_LIMIT = getCodeChunkLimit();
         const acceleratorConfig = getIndexingAcceleratorConfig();
+        const embeddingBatchSize = acceleratorConfig.embeddingBatchSize;
+        const insertBatchSize = acceleratorConfig.insertBatchSize;
         const accelerationDecision = shouldAccelerateIndexing(acceleratorConfig, {
             isInitialOrForce: options.allowAcceleration === true,
             isBackgroundSync: options.isBackgroundSync === true,
@@ -1883,13 +1909,17 @@ export class Context {
                 ...options.preIndexTraversal.timings,
                 selectedFileCount: options.preIndexTraversal.selectedFileCount,
                 hashedFileCount: options.preIndexTraversal.hashedFileCount,
+                oneCIndexScope: options.preIndexTraversal.oneCIndexScope,
             });
         }
         const submittedBatches: Promise<void>[] = [];
         const batchErrors: unknown[] = [];
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
-            `[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`,
+            `[Context] 🔧 Using INDEX_EMBEDDING_BATCH_SIZE: ${embeddingBatchSize}`,
+        );
+        console.log(
+            `[Context] 🔧 Using INDEX_INSERT_BATCH_SIZE: ${insertBatchSize}`,
         );
         console.log(`[Context] 🔧 Using CODE_CHUNK_LIMIT: ${CODE_CHUNK_LIMIT}`);
         console.log(
@@ -1918,6 +1948,7 @@ export class Context {
             return {
                 id: ++batchSequence,
                 chunkCount: batch.length,
+                estimatedTokens: this.estimateChunkTokens(batch.map((item) => item.chunk)),
                 firstFile: filePaths[0],
                 lastFile: filePaths[filePaths.length - 1],
             };
@@ -1943,7 +1974,7 @@ export class Context {
                 const handle = await scheduler.submit({
                     metadata: batchMetadata,
                     runEmbedding: () => this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata),
-                    runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id),
+                    runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize),
                 });
                 const completion = handle.completion.catch((error) => {
                     const searchType = isHybrid === true ? "hybrid" : "regular";
@@ -1963,7 +1994,7 @@ export class Context {
                 return;
             }
 
-            const submittedBatch = this.processChunkBuffer(batch, acceleratorRuntime, batchMetadata).catch((error) => {
+            const submittedBatch = this.processChunkBuffer(batch, acceleratorRuntime, batchMetadata, insertBatchSize).catch((error) => {
                 const searchType = isHybrid === true ? "hybrid" : "regular";
                 console.error(
                     `[Context] ❌ Failed to process ${finalBatch ? "final " : ""}chunk batch ${batchMetadata.id} for ${searchType}:`,
@@ -2027,8 +2058,8 @@ export class Context {
                         chunkSequence++;
                         totalChunks++;
 
-                        // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
-                        if (chunkBuffer.length >= EMBEDDING_BATCH_SIZE) {
+                        // Process batch when buffer reaches INDEX_EMBEDDING_BATCH_SIZE.
+                        if (chunkBuffer.length >= embeddingBatchSize) {
                             throwIfOperationAborted(abortSignal);
                             const batch = chunkBuffer;
                             const batchMetadata = createBatchMetadata(batch);
@@ -2175,6 +2206,7 @@ export class Context {
         chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>,
         acceleratorRuntime?: IndexingAcceleratorRuntime,
         batchMetadata?: IndexingBatchMetadata,
+        insertBatchSize: number = chunkBuffer.length,
     ): Promise<void> {
         if (chunkBuffer.length === 0) return;
 
@@ -2183,10 +2215,7 @@ export class Context {
         const codebasePath = chunkBuffer[0].codebasePath;
 
         // Estimate tokens (rough estimation: 1 token ≈ 4 characters)
-        const estimatedTokens = chunks.reduce(
-            (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
-            0,
-        );
+        const estimatedTokens = this.estimateChunkTokens(chunks);
 
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? "hybrid" : "regular";
@@ -2196,6 +2225,7 @@ export class Context {
         acceleratorRuntime?.recordBatchSubmitted(batchMetadata || {
             id: 0,
             chunkCount: chunks.length,
+            estimatedTokens,
             firstFile: chunks[0]?.metadata.filePath,
             lastFile: chunks[chunks.length - 1]?.metadata.filePath,
         });
@@ -2206,7 +2236,7 @@ export class Context {
                 acceleratorRuntime,
                 batchMetadata?.id,
             );
-            await this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata?.id);
+            await this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata?.id, insertBatchSize);
             acceleratorRuntime?.recordBatchCompleted(batchMetadata?.id);
         } catch (error) {
             acceleratorRuntime?.recordBatchFailed(batchMetadata?.id);
@@ -2221,10 +2251,7 @@ export class Context {
     ): Promise<PreparedChunkBatchInsert> {
         const chunks = chunkBuffer.map((item) => item.chunk);
         const codebasePath = chunkBuffer[0].codebasePath;
-        const estimatedTokens = chunks.reduce(
-            (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
-            0,
-        );
+        const estimatedTokens = this.estimateChunkTokens(chunks);
         const isHybrid = this.getIsHybrid();
         const searchType = isHybrid === true ? "hybrid" : "regular";
         console.log(
@@ -2439,44 +2466,65 @@ export class Context {
         preparedInsert: PreparedChunkBatchInsert,
         acceleratorRuntime?: IndexingAcceleratorRuntime,
         batchId?: number,
+        insertBatchSize: number = preparedInsert.documents.length,
     ): Promise<void> {
-        const insert = async () => {
+        const insertDocuments = async (documents: VectorDocument[]) => {
             if (preparedInsert.insertMode === "bge_m3") {
                 if (preparedInsert.useBgeM3Upsert && this.vectorDatabase.upsertBgeM3) {
                     await this.vectorDatabase.upsertBgeM3(
                         preparedInsert.collectionName,
-                        preparedInsert.documents,
+                        documents,
                     );
                     return;
                 }
                 await this.vectorDatabase.insertBgeM3(
                     preparedInsert.collectionName,
-                    preparedInsert.documents,
+                    documents,
                 );
                 return;
             }
             if (preparedInsert.insertMode === "hybrid") {
                 await this.vectorDatabase.insertHybrid(
                     preparedInsert.collectionName,
-                    preparedInsert.documents,
+                    documents,
                 );
                 return;
             }
             await this.vectorDatabase.insert(
                 preparedInsert.collectionName,
-                preparedInsert.documents,
+                documents,
             );
         };
+        const insertBatches = this.splitVectorDocuments(preparedInsert.documents, insertBatchSize);
+        acceleratorRuntime?.recordBatchInsertChunkCounts(batchId, insertBatches.map((documents) => documents.length));
 
         try {
-            if (acceleratorRuntime) {
-                await acceleratorRuntime.trackInsert(insert);
-                return;
+            for (const documents of insertBatches) {
+                if (acceleratorRuntime) {
+                    await acceleratorRuntime.trackInsert(() => insertDocuments(documents));
+                } else {
+                    await insertDocuments(documents);
+                }
             }
-            await insert();
         } catch (error) {
             throw this.createBatchStageError("insert", batchId, error);
         }
+    }
+
+    private estimateChunkTokens(chunks: CodeChunk[]): number {
+        return chunks.reduce(
+            (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
+            0,
+        );
+    }
+
+    private splitVectorDocuments(documents: VectorDocument[], batchSize: number): VectorDocument[][] {
+        const safeBatchSize = Math.max(1, batchSize);
+        const batches: VectorDocument[][] = [];
+        for (let index = 0; index < documents.length; index += safeBatchSize) {
+            batches.push(documents.slice(index, index + safeBatchSize));
+        }
+        return batches;
     }
 
     private createBatchStageError(stage: "embedding" | "insert", batchId: number | undefined, error: unknown): Error {

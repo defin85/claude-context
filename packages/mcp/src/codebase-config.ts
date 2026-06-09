@@ -65,7 +65,8 @@ export class CodebaseConfigManager {
             }).filter((ext: string) => ext.length > 1))],
             customIgnorePatterns: [...new Set((config.customIgnorePatterns || []).map((pattern: string) => pattern.trim()).filter(Boolean))],
             ...(config.retrievalMode && { retrievalMode: config.retrievalMode }),
-            ...(typeof config.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: config.retrievalSchemaVersion })
+            ...(typeof config.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: config.retrievalSchemaVersion }),
+            ...(config.oneCIndexScopeProfile && { oneCIndexScopeProfile: config.oneCIndexScopeProfile })
         };
     }
 
@@ -115,7 +116,8 @@ export class CodebaseConfigManager {
             customExtensions: normalizedConfig.customExtensions || [],
             customIgnorePatterns: normalizedConfig.customIgnorePatterns || [],
             ...(normalizedConfig.retrievalMode && { retrievalMode: normalizedConfig.retrievalMode }),
-            ...(typeof normalizedConfig.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: normalizedConfig.retrievalSchemaVersion })
+            ...(typeof normalizedConfig.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: normalizedConfig.retrievalSchemaVersion }),
+            ...(normalizedConfig.oneCIndexScopeProfile && { oneCIndexScopeProfile: normalizedConfig.oneCIndexScopeProfile })
         };
 
         await fs.promises.writeFile(tempPath, JSON.stringify(payload, null, 2));

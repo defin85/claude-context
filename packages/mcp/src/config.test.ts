@@ -10,6 +10,9 @@ const trackedEnv = [
     'OPENAI_API_KEY',
     'VOYAGEAI_API_KEY',
     'GEMINI_API_KEY',
+    'EMBEDDING_BATCH_SIZE',
+    'INDEX_EMBEDDING_BATCH_SIZE',
+    'INDEX_INSERT_BATCH_SIZE',
 ];
 
 function withEnv(env: Record<string, string | undefined>, run: () => void): void {
@@ -51,5 +54,27 @@ test('BGE-M3 full mode rejects disabled ColBERT storage', () => {
             () => createMcpConfig(),
             /BGE_M3_STORE_COLBERT=false is incompatible with BGE_M3_MODE=full/,
         );
+    });
+});
+
+test('index batch size summary uses core-compatible clamp and fallback', () => {
+    withEnv({
+        INDEX_EMBEDDING_BATCH_SIZE: '20000',
+        INDEX_INSERT_BATCH_SIZE: '30000',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.indexEmbeddingBatchSize, 10000);
+        assert.equal(config.indexInsertBatchSize, 10000);
+    });
+
+    withEnv({
+        EMBEDDING_BATCH_SIZE: '20000',
+        INDEX_INSERT_BATCH_SIZE: undefined,
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.indexEmbeddingBatchSize, 10000);
+        assert.equal(config.indexInsertBatchSize, 10000);
     });
 });

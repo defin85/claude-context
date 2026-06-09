@@ -1,6 +1,9 @@
 import { envManager } from './utils/env-manager';
 import type { PreIndexTraversalDiagnostics } from './sync/preindex-traversal';
+import type { OneCIndexScopeSummary } from './sync/one-c-scope';
 import * as os from 'node:os';
+
+const MAX_INDEX_BATCH_SIZE = 10_000;
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
 export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
@@ -60,6 +63,8 @@ export interface AdaptiveBackpressureConfig {
 
 export interface IndexingAcceleratorConfig {
     mode: IndexingAcceleratorMode;
+    embeddingBatchSize: number;
+    insertBatchSize: number;
     embeddingConcurrency: number;
     insertConcurrency: number;
     insertQueueCapacity: number;
@@ -74,6 +79,8 @@ export interface IndexingAcceleratorSnapshot {
     mode: IndexingAcceleratorMode;
     active: boolean;
     fallbackReason?: string;
+    embeddingBatchSize: number;
+    insertBatchSize: number;
     embeddingConcurrency: number;
     insertConcurrency: number;
     insertQueueCapacity: number;
@@ -128,6 +135,7 @@ export interface IndexingAcceleratorSnapshot {
     preIndexTotalMs: number;
     preIndexSelectedFileCount: number;
     preIndexHashedFileCount: number;
+    oneCIndexScope?: OneCIndexScopeSummary;
     preIndexDiagnostics?: PreIndexTraversalDiagnostics;
     splittingMs: number;
     embeddingMs: number;
@@ -185,8 +193,10 @@ export interface IndexingAcceleratorWorkerSnapshot {
 export interface IndexingBatchMetadata {
     id: number;
     chunkCount: number;
+    estimatedTokens?: number;
     firstFile?: string;
     lastFile?: string;
+    insertChunkCounts?: number[];
 }
 
 export interface IndexingBatchSnapshot extends IndexingBatchMetadata {
@@ -203,6 +213,8 @@ export class IndexingAcceleratorRuntime {
             mode: config.mode,
             active,
             fallbackReason,
+            embeddingBatchSize: config.embeddingBatchSize,
+            insertBatchSize: config.insertBatchSize,
             embeddingConcurrency: active ? config.embeddingConcurrency : 1,
             insertConcurrency: active ? config.insertConcurrency : 1,
             insertQueueCapacity: active ? config.insertQueueCapacity : 1,
@@ -262,6 +274,7 @@ export class IndexingAcceleratorRuntime {
             preIndexTotalMs: 0,
             preIndexSelectedFileCount: 0,
             preIndexHashedFileCount: 0,
+            oneCIndexScope: undefined,
             preIndexDiagnostics: undefined,
             splittingMs: 0,
             embeddingMs: 0,
@@ -279,6 +292,13 @@ export class IndexingAcceleratorRuntime {
                         ...this.snapshot.preIndexDiagnostics.unsupportedFilesByExtension,
                     },
                     timings: { ...this.snapshot.preIndexDiagnostics.timings },
+                }
+                : undefined,
+            oneCIndexScope: this.snapshot.oneCIndexScope
+                ? {
+                    ...this.snapshot.oneCIndexScope,
+                    includedByReason: { ...this.snapshot.oneCIndexScope.includedByReason },
+                    excludedByReason: { ...this.snapshot.oneCIndexScope.excludedByReason },
                 }
                 : undefined,
             workers: this.snapshot.workers?.map((worker) => ({ ...worker })),
@@ -310,6 +330,7 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.preIndexTotalMs = 0;
         this.snapshot.preIndexSelectedFileCount = 0;
         this.snapshot.preIndexHashedFileCount = 0;
+        this.snapshot.oneCIndexScope = undefined;
         this.snapshot.preIndexDiagnostics = undefined;
     }
 
@@ -320,6 +341,7 @@ export class IndexingAcceleratorRuntime {
         totalMs: number;
         selectedFileCount: number;
         hashedFileCount: number;
+        oneCIndexScope?: OneCIndexScopeSummary;
         diagnostics?: PreIndexTraversalDiagnostics;
     }): void {
         this.snapshot.preIndexActive = false;
@@ -330,6 +352,7 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.preIndexTotalMs += metrics.totalMs;
         this.snapshot.preIndexSelectedFileCount = metrics.selectedFileCount;
         this.snapshot.preIndexHashedFileCount = metrics.hashedFileCount;
+        this.snapshot.oneCIndexScope = metrics.oneCIndexScope;
         this.snapshot.preIndexDiagnostics = metrics.diagnostics;
     }
 
@@ -432,6 +455,16 @@ export class IndexingAcceleratorRuntime {
             if (batch) {
                 batch.attempts++;
             }
+        }
+    }
+
+    recordBatchInsertChunkCounts(batchId: number | undefined, insertChunkCounts: number[]): void {
+        if (batchId === undefined) {
+            return;
+        }
+        const batch = this.batches.get(batchId);
+        if (batch) {
+            batch.insertChunkCounts = [...insertChunkCounts];
         }
     }
 
@@ -861,6 +894,16 @@ function parsePercent(name: string, fallback: number): number {
     return Math.max(1, Math.min(100, parsed));
 }
 
+function parseBatchSize(name: string, fallback: number): number {
+    const parsed = parsePositiveInteger(name, fallback);
+    return Math.max(1, Math.min(MAX_INDEX_BATCH_SIZE, parsed));
+}
+
+function parseEmbeddingBatchSize(): number {
+    const fallback = parseBatchSize('EMBEDDING_BATCH_SIZE', 100);
+    return parseBatchSize('INDEX_EMBEDDING_BATCH_SIZE', fallback);
+}
+
 function parseBoolean(name: string, fallback: boolean): boolean {
     const rawValue = envManager.get(name);
     if (!rawValue) {
@@ -887,9 +930,12 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
     }
 
     const adaptiveDefaults = createDefaultAdaptiveBackpressureConfig(mode === 'auto');
+    const embeddingBatchSize = parseEmbeddingBatchSize();
 
     return {
         mode,
+        embeddingBatchSize,
+        insertBatchSize: parseBatchSize('INDEX_INSERT_BATCH_SIZE', embeddingBatchSize),
         embeddingConcurrency: parsePositiveInteger('INDEX_EMBEDDING_CONCURRENCY', mode === 'auto' ? 2 : 1),
         insertConcurrency: parsePositiveInteger('INDEX_INSERT_CONCURRENCY', 1),
         insertQueueCapacity: parsePositiveInteger('INDEX_INSERT_QUEUE_CAPACITY', 2),

@@ -18,6 +18,7 @@ class DelayedEmbedding extends Embedding {
     protected maxTokens = 8192;
     private active = 0;
     maxActive = 0;
+    batchSizes: number[] = [];
 
     constructor(
         private readonly delayMs: number,
@@ -37,6 +38,7 @@ class DelayedEmbedding extends Embedding {
     async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
         this.active++;
         this.maxActive = Math.max(this.maxActive, this.active);
+        this.batchSizes.push(texts.length);
         this.onBatchStart?.();
         try {
             await new Promise((resolve) => setTimeout(resolve, this.delayMs));
@@ -178,6 +180,7 @@ class DuplicateChunkSplitter implements Splitter {
 class TrackingVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents = new Map<string, VectorDocument[]>();
+    insertBatchSizes: number[] = [];
     insertDelayMs = 0;
     private activeInserts = 0;
     maxActiveInserts = 0;
@@ -211,6 +214,7 @@ class TrackingVectorDatabase implements VectorDatabase {
     async insert(collectionName: string, documents: VectorDocument[]): Promise<void> {
         this.activeInserts++;
         this.maxActiveInserts = Math.max(this.maxActiveInserts, this.activeInserts);
+        this.insertBatchSizes.push(documents.length);
         try {
             if (this.insertDelayMs > 0) {
                 await new Promise((resolve) => setTimeout(resolve, this.insertDelayMs));
@@ -274,6 +278,8 @@ describe('Context accelerated batch pipeline', () => {
     const envNames = [
         'HYBRID_MODE',
         'EMBEDDING_BATCH_SIZE',
+        'INDEX_EMBEDDING_BATCH_SIZE',
+        'INDEX_INSERT_BATCH_SIZE',
         'INDEX_ACCELERATOR_MODE',
         'INDEX_EMBEDDING_CONCURRENCY',
         'INDEX_INSERT_CONCURRENCY',
@@ -288,6 +294,8 @@ describe('Context accelerated batch pipeline', () => {
         }
         process.env.HYBRID_MODE = 'false';
         process.env.EMBEDDING_BATCH_SIZE = '1';
+        delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
+        delete process.env.INDEX_INSERT_BATCH_SIZE;
         delete process.env.INDEX_EMBEDDING_CONCURRENCY;
         process.env.INDEX_INSERT_CONCURRENCY = '1';
         delete process.env.INDEX_INSERT_QUEUE_CAPACITY;
@@ -409,6 +417,84 @@ describe('Context accelerated batch pipeline', () => {
         expect(embedding.maxActive).toBe(1);
         expect(snapshot.active).toBe(false);
         expect(snapshot.fallbackReason).toBe('accelerator disabled');
+    });
+
+    it('uses separate embedding and insert batch sizes in the default indexing path', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'off';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '4';
+        process.env.INDEX_INSERT_BATCH_SIZE = '2';
+        const embedding = new DelayedEmbedding(1);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new DuplicateChunkSplitter(4),
+        });
+
+        await context.indexCodebase(await createSingleFileCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(embedding.batchSizes).toEqual([4]);
+        expect(vectorDatabase.insertBatchSizes).toEqual([2, 2]);
+        expect(snapshot.embeddingBatchSize).toBe(4);
+        expect(snapshot.insertBatchSize).toBe(2);
+        expect(snapshot.batches).toEqual([
+            expect.objectContaining({
+                chunkCount: 4,
+                estimatedTokens: expect.any(Number),
+                insertChunkCounts: [2, 2],
+            }),
+        ]);
+        expect(vectorDatabase.allDocuments()).toHaveLength(4);
+        expect(new Set(vectorDatabase.allDocuments().map((document) => document.id)).size).toBe(4);
+    });
+
+    it('splits prepared insert batches in the accelerated scheduler path', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '4';
+        process.env.INDEX_INSERT_BATCH_SIZE = '2';
+        const embedding = new DelayedEmbedding(1);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new DuplicateChunkSplitter(4),
+        });
+
+        await context.indexCodebase(await createSingleFileCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.active).toBe(true);
+        expect(embedding.batchSizes).toEqual([4]);
+        expect(vectorDatabase.insertBatchSizes).toEqual([2, 2]);
+        expect(snapshot.batches[0]).toEqual(expect.objectContaining({
+            chunkCount: 4,
+            insertChunkCounts: [2, 2],
+        }));
+        expect(vectorDatabase.allDocuments()).toHaveLength(4);
+        expect(new Set(vectorDatabase.allDocuments().map((document) => document.id)).size).toBe(4);
+    });
+
+    it('falls back to legacy EMBEDDING_BATCH_SIZE when the new embedding batch size is unset', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'off';
+        process.env.EMBEDDING_BATCH_SIZE = '2';
+        process.env.INDEX_INSERT_BATCH_SIZE = '4';
+        const embedding = new DelayedEmbedding(1);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new DuplicateChunkSplitter(4),
+        });
+
+        await context.indexCodebase(await createSingleFileCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(embedding.batchSizes).toEqual([2, 2]);
+        expect(vectorDatabase.insertBatchSizes).toEqual([2, 2]);
+        expect(snapshot.embeddingBatchSize).toBe(2);
+        expect(snapshot.insertBatchSize).toBe(4);
     });
 
     it('resets accelerator status during pre-index before an empty run returns', async () => {

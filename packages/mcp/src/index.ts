@@ -352,6 +352,12 @@ This tool is versatile and can be used before completing various tasks to retrie
                                 },
                                 description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
                                 default: []
+                            },
+                            oneCIndexScopeProfile: {
+                                type: 'string',
+                                description: "Optional 1C exported-configuration scope profile. 'full' preserves existing behavior; 'developer' excludes generated or low-value 1C export files; 'minimal' indexes only developer-maintained BSL modules. Changing the profile for an existing index requires force=true.",
+                                enum: ['full', 'developer', 'minimal'],
+                                default: 'full'
                             }
                         },
                         required: ['path']
