@@ -177,6 +177,26 @@ class DuplicateChunkSplitter implements Splitter {
     setChunkOverlap(): void {}
 }
 
+function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+    const startedAt = Date.now();
+    while (!predicate()) {
+        if (Date.now() - startedAt > timeoutMs) {
+            throw new Error('Timed out waiting for condition');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
+
 class TrackingVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents = new Map<string, VectorDocument[]>();
@@ -717,30 +737,68 @@ describe('Context accelerated batch pipeline', () => {
         }
     });
 
-    it('fails plain insert errors with insert stage and batch context without retrying', async () => {
+    it('fails fast on plain insert errors with insert stage and batch context', async () => {
         process.env.INDEX_ACCELERATOR_MODE = 'auto';
-        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '4';
         process.env.INDEX_INSERT_CONCURRENCY = '2';
+        process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
         process.env.EMBEDDING_BATCH_SIZE = '1';
         const vectorDatabase = new TrackingVectorDatabase();
+        const runningInsert = deferred<void>();
+        const firstInsertError = new Error('ambiguous vector write');
         const insert = jest.spyOn(vectorDatabase, 'insert')
-            .mockRejectedValueOnce(new Error('ambiguous vector write'));
+            .mockImplementation(async (collectionName, documents) => {
+                if (insert.mock.calls.length === 1) {
+                    await runningInsert.promise;
+                    await TrackingVectorDatabase.prototype.insert.call(vectorDatabase, collectionName, documents);
+                    return;
+                }
+                if (insert.mock.calls.length === 2) {
+                    throw firstInsertError;
+                }
+                throw new Error('queued insert should not start after terminal insert failure');
+            });
         const context = new Context({
             embedding: new DelayedEmbedding(1),
             vectorDatabase,
             codeSplitter: new OneChunkSplitter(),
         });
+        const unhandledRejections: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown) => {
+            unhandledRejections.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
 
-        await expect(context.indexCodebase(await createCodebase()))
-            .rejects
-            .toThrow(/Indexing batch \d+ failed during insert: ambiguous vector write/);
+        try {
+            let indexSettled = false;
+            const indexPromise = context.indexCodebase(await createCodebase())
+                .finally(() => {
+                    indexSettled = true;
+                });
 
-        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
-        expect(snapshot.submittedBatches).toBe(4);
-        expect(insert).toHaveBeenCalledTimes(snapshot.submittedBatches);
-        expect(vectorDatabase.allDocuments()).toHaveLength(3);
-        expect(snapshot.failedInsertBatches).toBe(1);
-        expect(snapshot.failedBatches).toBe(1);
+            await waitForCondition(() => insert.mock.calls.length >= 2);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(indexSettled).toBe(false);
+            expect(insert).toHaveBeenCalledTimes(2);
+
+            runningInsert.resolve();
+            await expect(indexPromise)
+                .rejects
+                .toThrow(/Indexing batch \d+ failed during insert: ambiguous vector write/);
+
+            const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+            expect(snapshot.submittedBatches).toBeGreaterThanOrEqual(2);
+            expect(snapshot.submittedBatches).toBeLessThan(4);
+            expect(insert).toHaveBeenCalledTimes(2);
+            expect(vectorDatabase.allDocuments()).toHaveLength(1);
+            expect(snapshot.failedInsertBatches).toBe(1);
+            expect(snapshot.failedBatches).toBeGreaterThanOrEqual(1);
+            expect(snapshot.completedBatches).toBe(1);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(unhandledRejections).toHaveLength(0);
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
     });
 
     it('uses accepted BGE-M3 worker count as default embedding concurrency', async () => {

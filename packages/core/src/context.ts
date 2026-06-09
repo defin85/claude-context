@@ -508,6 +508,9 @@ export class Context {
         session.synchronizer?.updateSupportedExtensions(
             session.effectiveExtensions,
         );
+        session.synchronizer?.updateOneCIndexScopeProfile(
+            session.oneCIndexScopeProfile,
+        );
     }
 
     configureCodebaseSession(
@@ -568,6 +571,7 @@ export class Context {
         const session = this.getOrCreateCodebaseSession(normalizedPath);
         synchronizer.updateIgnorePatterns(session.effectiveIgnorePatterns);
         synchronizer.updateSupportedExtensions(session.effectiveExtensions);
+        synchronizer.updateOneCIndexScopeProfile(session.oneCIndexScopeProfile);
         session.synchronizer = synchronizer;
         this.synchronizers.set(
             this.getCollectionName(normalizedPath),
@@ -1054,6 +1058,7 @@ export class Context {
             codebasePath,
             session.effectiveIgnorePatterns,
             session.effectiveExtensions,
+            session.oneCIndexScopeProfile,
         );
         await synchronizer.initialize(preIndexTraversal);
         session.synchronizer = synchronizer;
@@ -1185,6 +1190,7 @@ export class Context {
                 codebasePath,
                 session.effectiveIgnorePatterns,
                 session.effectiveExtensions,
+                session.oneCIndexScopeProfile,
             );
             await newSynchronizer.initialize();
             session.synchronizer = newSynchronizer;

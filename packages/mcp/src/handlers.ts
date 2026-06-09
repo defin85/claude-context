@@ -981,7 +981,12 @@ export class ToolHandlers {
             const ignorePatterns = this.context.getIgnorePatterns(absolutePath) || [];
             const supportedExtensions = this.context.getSupportedExtensions(absolutePath) || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
-            const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns, supportedExtensions);
+            const synchronizer = new FileSynchronizer(
+                absolutePath,
+                ignorePatterns,
+                supportedExtensions,
+                persistedConfig.oneCIndexScopeProfile,
+            );
             await synchronizer.initialize();
             throwIfCancelled();
 

@@ -336,6 +336,166 @@ describe('EmbeddingBatchScheduler', () => {
         expect(snapshot.runningInsertBatches).toBe(0);
     });
 
+    it('rejects queued inserts after the first insert failure and waits for running inserts', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 3,
+            insertConcurrency: 2,
+            queueCapacity: 4,
+            insertQueueCapacity: 2,
+        });
+        const runningInsert = deferred<void>();
+        const failingInsert = deferred<void>();
+        const firstInsertError = new Error('first insert failure');
+        const laterInsertError = new Error('later insert failure');
+        let queuedInsertStarted = false;
+        let drainSettled = false;
+
+        const runningCompletion = (await scheduler.submit({
+            metadata: { id: 1, chunkCount: 1 },
+            runEmbedding: async () => 'running',
+            runInsert: () => runningInsert.promise,
+        })).completion;
+        const failingCompletion = (await scheduler.submit({
+            metadata: { id: 2, chunkCount: 1 },
+            runEmbedding: async () => 'failing',
+            runInsert: () => failingInsert.promise,
+        })).completion;
+        const queuedCompletion = (await scheduler.submit({
+            metadata: { id: 3, chunkCount: 1 },
+            runEmbedding: async () => 'queued',
+            runInsert: async () => {
+                queuedInsertStarted = true;
+            },
+        })).completion;
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(runtime.getSnapshot().runningInsertBatches).toBe(2);
+        expect(runtime.getSnapshot().queuedInsertBatches).toBe(1);
+
+        const drainPromise = scheduler.drain()
+            .then(
+                () => ({ status: 'fulfilled' as const }),
+                (error) => ({ status: 'rejected' as const, error }),
+            )
+            .finally(() => {
+                drainSettled = true;
+            });
+        failingInsert.reject(firstInsertError);
+        const failingResult = await Promise.resolve(failingCompletion).then(
+            () => ({ status: 'fulfilled' as const }),
+            (error) => ({ status: 'rejected' as const, error }),
+        );
+        const queuedResult = await Promise.resolve(queuedCompletion).then(
+            () => ({ status: 'fulfilled' as const }),
+            (error) => ({ status: 'rejected' as const, error }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const drainSettledBeforeRunningInsert = drainSettled;
+
+        runningInsert.reject(laterInsertError);
+        const runningResult = await Promise.resolve(runningCompletion).then(
+            () => ({ status: 'fulfilled' as const }),
+            (error) => ({ status: 'rejected' as const, error }),
+        );
+        const drainResult = await drainPromise;
+
+        expect(failingResult.status).toBe('rejected');
+        expect(failingResult.status === 'rejected' ? String(failingResult.error) : '').toContain('first insert failure');
+        expect(queuedResult.status).toBe('rejected');
+        expect(queuedResult.status === 'rejected' ? String(queuedResult.error) : '').toContain('first insert failure');
+        expect(runningResult.status).toBe('rejected');
+        expect(runningResult.status === 'rejected' ? String(runningResult.error) : '').toContain('first insert failure');
+        expect(runningResult.status === 'rejected' ? String(runningResult.error) : '').not.toContain('later insert failure');
+        expect(queuedInsertStarted).toBe(false);
+        expect(drainSettledBeforeRunningInsert).toBe(false);
+        expect(drainResult.status).toBe('rejected');
+        expect(drainResult.status === 'rejected' ? String(drainResult.error) : '').toContain('first insert failure');
+        expect(drainResult.status === 'rejected' ? String(drainResult.error) : '').not.toContain('later insert failure');
+        expect(runtime.getSnapshot().queuedInsertBatches).toBe(0);
+
+        const snapshot = runtime.getSnapshot();
+        expect(snapshot.completedBatches).toBe(0);
+        expect(snapshot.failedInsertBatches).toBe(2);
+        expect(snapshot.failedBatches).toBe(3);
+        expect(snapshot.batches.find((batch) => batch.id === 1)?.state).toBe('failed');
+        expect(snapshot.batches.find((batch) => batch.id === 3)?.state).toBe('failed');
+        expect(snapshot.runningInsertBatches).toBe(0);
+    });
+
+    it('rejects queued embedding batches after the first insert failure without starting embedding', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 1,
+            insertConcurrency: 1,
+            queueCapacity: 3,
+        });
+        const runningEmbedding = deferred<string>();
+        const failingInsert = deferred<void>();
+        const insertError = new Error('insert closes scheduler');
+        let queuedEmbeddingStarted = false;
+
+        const failingCompletion = (await scheduler.submit({
+            metadata: { id: 1, chunkCount: 1 },
+            runEmbedding: async () => 'failing',
+            runInsert: () => failingInsert.promise,
+        })).completion;
+        const runningEmbeddingCompletion = (await scheduler.submit({
+            metadata: { id: 2, chunkCount: 1 },
+            runEmbedding: () => runningEmbedding.promise,
+            runInsert: async () => {},
+        })).completion;
+        const queuedCompletion = (await scheduler.submit({
+            metadata: { id: 3, chunkCount: 1 },
+            runEmbedding: async () => {
+                queuedEmbeddingStarted = true;
+                return 'queued';
+            },
+            runInsert: async () => {},
+        })).completion;
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(runtime.getSnapshot().runningInsertBatches).toBe(1);
+        expect(runtime.getSnapshot().runningEmbeddingBatches).toBe(1);
+        expect(runtime.getSnapshot().queuedBatches).toBe(1);
+
+        failingInsert.reject(insertError);
+        await expect(failingCompletion).rejects.toThrow('insert closes scheduler');
+        const queuedResultBeforeRunningEmbeddingSettles = await Promise.race([
+            Promise.resolve(queuedCompletion).then(
+                () => ({ status: 'fulfilled' as const }),
+                (error) => ({ status: 'rejected' as const, error }),
+            ),
+            new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 20)),
+        ]);
+        runningEmbedding.resolve('running');
+        const runningEmbeddingResult = await Promise.resolve(runningEmbeddingCompletion).then(
+            () => ({ status: 'fulfilled' as const }),
+            (error) => ({ status: 'rejected' as const, error }),
+        );
+        const queuedResult = await Promise.resolve(queuedCompletion).then(
+            () => ({ status: 'fulfilled' as const }),
+            (error) => ({ status: 'rejected' as const, error }),
+        );
+
+        const snapshot = runtime.getSnapshot();
+        expect(queuedResultBeforeRunningEmbeddingSettles.status).toBe('rejected');
+        expect(queuedResultBeforeRunningEmbeddingSettles.status === 'rejected'
+            ? String(queuedResultBeforeRunningEmbeddingSettles.error)
+            : '').toContain('insert closes scheduler');
+        expect(runningEmbeddingResult.status).toBe('rejected');
+        expect(runningEmbeddingResult.status === 'rejected' ? String(runningEmbeddingResult.error) : '').toContain('insert closes scheduler');
+        expect(queuedResult.status).toBe('rejected');
+        expect(queuedResult.status === 'rejected' ? String(queuedResult.error) : '').toContain('insert closes scheduler');
+        expect(queuedEmbeddingStarted).toBe(false);
+        expect(snapshot.failedInsertBatches).toBe(1);
+        expect(snapshot.failedBatches).toBe(3);
+        expect(snapshot.batches.find((batch) => batch.id === 3)?.state).toBe('failed');
+        expect(snapshot.runningEmbeddingBatches).toBe(0);
+    });
+
     it('uses adaptive effective concurrency and queue capacity for producer admission', async () => {
         const runtime = createRuntime();
         const scheduler = new EmbeddingBatchScheduler({

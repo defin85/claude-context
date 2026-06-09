@@ -55,6 +55,7 @@ export class EmbeddingBatchScheduler {
     private runningInsert = 0;
     private pendingAdmissions = 0;
     private cancelledError?: Error;
+    private terminalInsertError?: unknown;
 
     constructor(private readonly options: EmbeddingBatchSchedulerOptions) {
         this.embeddingConcurrency = Math.max(1, options.embeddingConcurrency);
@@ -83,10 +84,10 @@ export class EmbeddingBatchScheduler {
     }
 
     async submit<T>(options: EmbeddingBatchSchedulerSubmitOptions<T>): Promise<EmbeddingBatchSchedulerSubmitHandle> {
-        this.throwIfCancelled();
+        this.throwIfClosed();
         await this.waitForCapacityAndReserve();
         try {
-            this.throwIfCancelled();
+            this.throwIfClosed();
         } catch (error) {
             this.releaseAdmissionReservation();
             throw error;
@@ -124,7 +125,14 @@ export class EmbeddingBatchScheduler {
     }
 
     async drain(): Promise<void> {
-        await Promise.all([...this.completionPromises]);
+        const results = await Promise.allSettled([...this.completionPromises]);
+        if (this.terminalInsertError) {
+            throw this.terminalInsertError;
+        }
+        const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (rejected) {
+            throw rejected.reason;
+        }
     }
 
     async cancel(reason?: Error): Promise<void> {
@@ -179,11 +187,12 @@ export class EmbeddingBatchScheduler {
     private async waitForCapacityAndReserve(): Promise<void> {
         const startedAt = Date.now();
         while (this.getReservedEmbeddingCount() >= this.getEffectiveQueueCapacity()) {
-            this.throwIfCancelled();
+            this.throwIfClosed();
             await new Promise<void>((resolve) => {
                 this.capacityWaiters.push(resolve);
             });
         }
+        this.throwIfClosed();
         this.pendingAdmissions++;
         const waitedMs = Date.now() - startedAt;
         if (waitedMs > 0) {
@@ -195,6 +204,7 @@ export class EmbeddingBatchScheduler {
     private scheduleEmbedding(): void {
         while (
             !this.cancelledError &&
+            !this.terminalInsertError &&
             this.runningEmbedding < this.getEffectiveEmbeddingConcurrency() &&
             this.queue.length > 0 &&
             this.hasInsertBacklogCapacity()
@@ -214,14 +224,22 @@ export class EmbeddingBatchScheduler {
         try {
             const embeddingResult = await item.runEmbedding();
             this.runningEmbedding = Math.max(0, this.runningEmbedding - 1);
+            if (this.terminalInsertError) {
+                this.options.runtime.recordBatchFailed(item.metadata.id);
+                item.reject(this.terminalInsertError);
+                this.notifyCapacityWaiters();
+                this.publish();
+                return;
+            }
             this.notifyCapacityWaiters();
             this.publish();
             this.scheduleEmbedding();
             await this.enqueueInsert(item, embeddingResult);
         } catch (error) {
             this.runningEmbedding = Math.max(0, this.runningEmbedding - 1);
+            const failure = this.terminalInsertError ?? error;
             this.options.runtime.recordBatchFailed(item.metadata.id);
-            item.reject(error);
+            item.reject(failure);
             this.notifyCapacityWaiters();
             this.publish();
             this.scheduleEmbedding();
@@ -229,7 +247,17 @@ export class EmbeddingBatchScheduler {
     }
 
     private async enqueueInsert<T>(item: QueuedBatch<T>, embeddingResult: T): Promise<void> {
-        await this.waitForInsertQueueCapacity();
+        try {
+            this.throwIfTerminalInsertFailure();
+            await this.waitForInsertQueueCapacity();
+            this.throwIfTerminalInsertFailure();
+        } catch (error) {
+            this.options.runtime.recordBatchFailed(item.metadata.id);
+            item.reject(error);
+            this.notifyCapacityWaiters();
+            this.publish();
+            return;
+        }
         this.insertQueue.push({ item, embeddingResult } as QueuedInsert<unknown>);
         this.options.runtime.recordBatchQueuedInsert(item.metadata.id);
         this.publish();
@@ -238,6 +266,7 @@ export class EmbeddingBatchScheduler {
 
     private scheduleInsert(): void {
         while (
+            !this.terminalInsertError &&
             this.runningInsert < this.insertConcurrency &&
             this.insertQueue.length > 0
         ) {
@@ -263,7 +292,8 @@ export class EmbeddingBatchScheduler {
         } catch (error) {
             this.options.runtime.recordInsertFailed();
             this.options.runtime.recordBatchFailed(item.metadata.id);
-            item.reject(error);
+            const failure = this.recordTerminalInsertFailure(error);
+            item.reject(failure);
         } finally {
             this.runningInsert = Math.max(0, this.runningInsert - 1);
             this.notifyInsertCapacityWaiters();
@@ -276,11 +306,12 @@ export class EmbeddingBatchScheduler {
 
     private async waitForInsertQueueCapacity(): Promise<void> {
         while (!this.hasInsertBacklogCapacity()) {
-            this.throwIfCancelled();
+            this.throwIfTerminalInsertFailure();
             await new Promise<void>((resolve) => {
                 this.insertCapacityWaiters.push(resolve);
             });
         }
+        this.throwIfTerminalInsertFailure();
     }
 
     private getQueuedAndRunningEmbeddingCount(): number {
@@ -297,7 +328,7 @@ export class EmbeddingBatchScheduler {
     }
 
     private notifyCapacityWaiters(): void {
-        if (this.cancelledError || this.options.abortSignal?.aborted) {
+        if (this.cancelledError || this.terminalInsertError || this.options.abortSignal?.aborted) {
             while (this.capacityWaiters.length > 0) {
                 this.capacityWaiters.shift()?.();
             }
@@ -316,7 +347,7 @@ export class EmbeddingBatchScheduler {
     }
 
     private notifyInsertCapacityWaiters(): void {
-        if (this.cancelledError || this.options.abortSignal?.aborted) {
+        if (this.cancelledError || this.terminalInsertError || this.options.abortSignal?.aborted) {
             while (this.insertCapacityWaiters.length > 0) {
                 this.insertCapacityWaiters.shift()?.();
             }
@@ -368,6 +399,47 @@ export class EmbeddingBatchScheduler {
         if (this.options.abortSignal?.aborted) {
             throw this.getAbortError();
         }
+    }
+
+    private throwIfClosed(): void {
+        this.throwIfCancelled();
+        this.throwIfTerminalInsertFailure();
+    }
+
+    private throwIfTerminalInsertFailure(): void {
+        if (this.terminalInsertError) {
+            throw this.terminalInsertError;
+        }
+    }
+
+    private recordTerminalInsertFailure(error: unknown): unknown {
+        if (!this.terminalInsertError) {
+            this.terminalInsertError = error;
+            this.rejectQueuedWork(error);
+        }
+        return this.terminalInsertError;
+    }
+
+    private rejectQueuedWork(error: unknown): void {
+        while (this.queue.length > 0) {
+            const queued = this.queue.shift();
+            if (!queued) {
+                continue;
+            }
+            this.options.runtime.recordBatchFailed(queued.metadata.id);
+            queued.reject(error);
+        }
+        while (this.insertQueue.length > 0) {
+            const queuedInsert = this.insertQueue.shift();
+            if (!queuedInsert) {
+                continue;
+            }
+            this.options.runtime.recordBatchFailed(queuedInsert.item.metadata.id);
+            queuedInsert.item.reject(error);
+        }
+        this.notifyCapacityWaiters();
+        this.notifyInsertCapacityWaiters();
+        this.publish();
     }
 
     private getAbortError(): Error {

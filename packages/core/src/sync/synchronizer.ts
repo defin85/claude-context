@@ -8,6 +8,7 @@ import {
     PreIndexTraversalResult,
     traversePreIndex,
 } from './preindex-traversal';
+import type { OneCIndexScopeProfile } from './one-c-scope';
 
 export class FileSynchronizer {
     private fileHashes: Map<string, string>;
@@ -17,8 +18,14 @@ export class FileSynchronizer {
     private ignorePatterns: string[];
     private supportedExtensions: string[];
     private ignoreMatcher: PreIndexIgnoreMatcher;
+    private oneCIndexScopeProfile?: OneCIndexScopeProfile;
 
-    constructor(rootDir: string, ignorePatterns: string[] = [], supportedExtensions: string[] = []) {
+    constructor(
+        rootDir: string,
+        ignorePatterns: string[] = [],
+        supportedExtensions: string[] = [],
+        oneCIndexScopeProfile?: OneCIndexScopeProfile,
+    ) {
         this.rootDir = rootDir;
         this.snapshotPath = this.getSnapshotPath(rootDir);
         this.fileHashes = new Map();
@@ -26,6 +33,7 @@ export class FileSynchronizer {
         this.ignorePatterns = ignorePatterns;
         this.supportedExtensions = this.normalizeExtensions(supportedExtensions);
         this.ignoreMatcher = new PreIndexIgnoreMatcher(ignorePatterns);
+        this.oneCIndexScopeProfile = oneCIndexScopeProfile;
     }
 
     public updateIgnorePatterns(ignorePatterns: string[]): void {
@@ -35,6 +43,10 @@ export class FileSynchronizer {
 
     public updateSupportedExtensions(supportedExtensions: string[]): void {
         this.supportedExtensions = this.normalizeExtensions(supportedExtensions);
+    }
+
+    public updateOneCIndexScopeProfile(oneCIndexScopeProfile?: OneCIndexScopeProfile): void {
+        this.oneCIndexScopeProfile = oneCIndexScopeProfile;
     }
 
     private normalizeExtensions(extensions: string[]): string[] {
@@ -74,6 +86,7 @@ export class FileSynchronizer {
             supportedExtensions: this.supportedExtensions,
             includeHashes: true,
             concurrency,
+            oneCIndexScopeProfile: this.oneCIndexScopeProfile,
         });
         return this.fileHashesFromTraversal(traversal);
     }
@@ -169,6 +182,11 @@ export class FileSynchronizer {
 
     public async initialize(preIndexResult?: PreIndexTraversalResult) {
         console.log(`Initializing file synchronizer for ${this.rootDir}`);
+        if (preIndexResult) {
+            await this.initializeFromTraversal(preIndexResult);
+            console.log(`[Synchronizer] File synchronizer initialized. Loaded ${this.fileHashes.size} file hashes.`);
+            return;
+        }
         await this.loadSnapshot(preIndexResult);
         this.merkleDAG = this.buildMerkleDAG(this.fileHashes);
         console.log(`[Synchronizer] File synchronizer initialized. Loaded ${this.fileHashes.size} file hashes.`);

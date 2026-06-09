@@ -384,6 +384,39 @@ describe('Context per-codebase options and ignore handling', () => {
         ).toHaveLength(0);
     });
 
+    test('1C reduced scope remains applied during incremental sync', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+
+        await writeFixtureFile(project, 'Configuration.xml', '<MetaDataObject />');
+        await writeFixtureFile(project, 'CommonModules/Exchange/Ext/Module.bsl', 'Procedure Run()\nEndProcedure');
+        await writeFixtureFile(project, 'Catalogs/Products/Ext/Help/en.html', '<p>generated help</p>');
+
+        context.configureCodebaseSession(project, {
+            customExtensions: ['.xml', '.html'],
+            oneCIndexScopeProfile: 'developer',
+        });
+        const initialStats = await context.indexCodebase(project, undefined, true);
+        const collectionName = context.getCollectionName(project);
+        const initialDocuments = vectorDatabase.documents.get(collectionName) || [];
+
+        expect(initialStats.oneCIndexScopeProfile).toBe('developer');
+        expect(initialStats.oneCIndexScope?.excludedByReason['one-c-generated-or-low-value']).toBe(1);
+        expect(initialDocuments.map((document) => document.relativePath).sort()).toEqual([
+            'CommonModules/Exchange/Ext/Module.bsl',
+            'Configuration.xml',
+        ]);
+
+        const syncStats = await context.reindexByChange(project);
+
+        expect(syncStats).toEqual({ added: 0, removed: 0, modified: 0 });
+        expect((vectorDatabase.documents.get(collectionName) || []).map((document) => document.relativePath).sort()).toEqual([
+            'CommonModules/Exchange/Ext/Module.bsl',
+            'Configuration.xml',
+        ]);
+    });
+
     test('CODE_CHUNK_LIMIT stops indexing at the configured chunk count', async () => {
         process.env.CODE_CHUNK_LIMIT = '2';
 
