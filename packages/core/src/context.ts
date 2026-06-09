@@ -40,6 +40,7 @@ import {
     IndexingAcceleratorRuntime,
     IndexingAcceleratorSnapshot,
     IndexingAcceleratorWorkerSnapshot,
+    getEffectiveEmbeddingPayloadLimits,
     getIndexingAcceleratorConfig,
     shouldAccelerateIndexing,
 } from "./indexing-accelerator";
@@ -96,6 +97,11 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
         (error as { code?: unknown }).code ===
             "EMBEDDING_CONTEXT_LIMIT_EXCEEDED"
     );
+}
+
+function isPayloadSizeEmbeddingError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /Cannot create a string longer than|payload too large|request entity too large|body too large|content length|413/i.test(message);
 }
 
 export function parseCodeChunkLimit(rawLimit?: string): number {
@@ -1904,11 +1910,16 @@ export class Context {
             ...acceleratorConfig,
             embeddingConcurrency: effectiveEmbeddingConcurrency,
         };
+        const effectivePayloadLimits = getEffectiveEmbeddingPayloadLimits(
+            acceleratorConfig,
+            this.getRetrievalMode(),
+        );
         const acceleratorRuntime = new IndexingAcceleratorRuntime(
             effectiveAcceleratorConfig,
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        acceleratorRuntime.recordEffectivePayloadLimits(effectivePayloadLimits);
         acceleratorRuntime.recordChunkLimit(CODE_CHUNK_LIMIT);
         if (options.preIndexTraversal) {
             acceleratorRuntime.recordPreIndex({
@@ -1947,6 +1958,7 @@ export class Context {
         let batchSequence = 0;
         let chunkSequence = 0;
         let productionComplete = false;
+        let pendingPayloadSplitReason: IndexingBatchMetadata['payloadSplitReason'];
         const documentIdOccurrences = new Map<string, number>();
         const publishBatchProgress = () => {
             this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
@@ -1955,16 +1967,24 @@ export class Context {
                 productionComplete,
             });
         };
-        const createBatchMetadata = (batch: Array<{ chunk: CodeChunk; codebasePath: string }>): IndexingBatchMetadata => {
+        const createBatchMetadata = (
+            batch: Array<{ chunk: CodeChunk; codebasePath: string }>,
+            payloadSplitReason?: IndexingBatchMetadata['payloadSplitReason'],
+        ): IndexingBatchMetadata => {
+            const chunks = batch.map((item) => item.chunk);
             const filePaths = batch
                 .map((item) => item.chunk.metadata.filePath)
                 .filter((filePath): filePath is string => typeof filePath === "string");
             return {
                 id: ++batchSequence,
                 chunkCount: batch.length,
-                estimatedTokens: this.estimateChunkTokens(batch.map((item) => item.chunk)),
+                contentCharCount: this.countChunkContentChars(chunks),
+                estimatedTokens: this.estimateChunkTokens(chunks),
                 firstFile: filePaths[0],
                 lastFile: filePaths[filePaths.length - 1],
+                effectiveMaxContentChars: effectivePayloadLimits.maxContentChars,
+                effectiveMaxEstimatedTokens: effectivePayloadLimits.maxEstimatedTokens,
+                payloadSplitReason,
             };
         };
         const recordAcceleratedBatchFailure = (error: unknown) => {
@@ -2052,6 +2072,62 @@ export class Context {
             publishBatchProgress();
             await submittedBatch;
         };
+        const submitCurrentBatch = async (
+            finalBatch: boolean,
+            payloadSplitReason?: IndexingBatchMetadata['payloadSplitReason'],
+        ): Promise<void> => {
+            if (chunkBuffer.length === 0) {
+                return;
+            }
+            const batch = chunkBuffer;
+            const batchMetadata = createBatchMetadata(
+                batch,
+                payloadSplitReason ?? pendingPayloadSplitReason,
+            );
+            chunkBuffer = [];
+            pendingPayloadSplitReason = undefined;
+            await submitBatch(batch, batchMetadata, finalBatch);
+        };
+        const getPayloadLimitExceedReason = (
+            batch: Array<{ chunk: CodeChunk; codebasePath: string }>,
+            nextChunk: CodeChunk,
+        ): IndexingBatchMetadata['payloadSplitReason'] | undefined => {
+            const nextContentCharCount = this.countChunkContentChars(batch.map((item) => item.chunk)) + nextChunk.content.length;
+            if (
+                effectivePayloadLimits.maxContentChars !== undefined &&
+                nextContentCharCount > effectivePayloadLimits.maxContentChars
+            ) {
+                return 'content_chars';
+            }
+            const nextEstimatedTokens = this.estimateChunkTokens([
+                ...batch.map((item) => item.chunk),
+                nextChunk,
+            ]);
+            if (
+                effectivePayloadLimits.maxEstimatedTokens !== undefined &&
+                nextEstimatedTokens > effectivePayloadLimits.maxEstimatedTokens
+            ) {
+                return 'estimated_tokens';
+            }
+            return undefined;
+        };
+        const getSingleChunkPayloadReason = (
+            chunk: CodeChunk,
+        ): IndexingBatchMetadata['payloadSplitReason'] | undefined => {
+            if (
+                effectivePayloadLimits.maxContentChars !== undefined &&
+                chunk.content.length > effectivePayloadLimits.maxContentChars
+            ) {
+                return 'single_chunk_limit_exceeded';
+            }
+            if (
+                effectivePayloadLimits.maxEstimatedTokens !== undefined &&
+                this.estimateChunkTokens([chunk]) > effectivePayloadLimits.maxEstimatedTokens
+            ) {
+                return 'single_chunk_limit_exceeded';
+            }
+            return undefined;
+        };
 
         try {
             for (let i = 0; i < filePaths.length; i++) {
@@ -2102,18 +2178,30 @@ export class Context {
                             chunkSequence,
                             documentIdOccurrences,
                         );
+                        const payloadExceedReason = getPayloadLimitExceedReason(chunkBuffer, indexedChunk);
+                        if (chunkBuffer.length > 0 && payloadExceedReason) {
+                            throwIfOperationAborted(abortSignal);
+                            throwIfAcceleratedBatchFailed();
+                            await submitCurrentBatch(false, payloadExceedReason);
+                            pendingPayloadSplitReason = payloadExceedReason;
+                        }
                         chunkBuffer.push({ chunk: indexedChunk, codebasePath });
                         chunkSequence++;
                         totalChunks++;
+                        const singleChunkPayloadReason = chunkBuffer.length === 1
+                            ? getSingleChunkPayloadReason(indexedChunk)
+                            : undefined;
+                        if (singleChunkPayloadReason) {
+                            throwIfOperationAborted(abortSignal);
+                            throwIfAcceleratedBatchFailed();
+                            await submitCurrentBatch(false, singleChunkPayloadReason);
+                        }
 
                         // Process batch when buffer reaches INDEX_EMBEDDING_BATCH_SIZE.
                         if (chunkBuffer.length >= embeddingBatchSize) {
                             throwIfOperationAborted(abortSignal);
                             throwIfAcceleratedBatchFailed();
-                            const batch = chunkBuffer;
-                            const batchMetadata = createBatchMetadata(batch);
-                            chunkBuffer = [];
-                            await submitBatch(batch, batchMetadata, false);
+                            await submitCurrentBatch(false, 'chunk_count');
                         }
 
                         // Check if chunk limit is reached
@@ -2156,10 +2244,7 @@ export class Context {
                 console.log(
                     `📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`,
                 );
-                const finalBatch = chunkBuffer;
-                const finalBatchMetadata = createBatchMetadata(finalBatch);
-                chunkBuffer = [];
-                await submitBatch(finalBatch, finalBatchMetadata, true);
+                await submitCurrentBatch(true);
             }
         } catch (error) {
             if (scheduler) {
@@ -2319,6 +2404,66 @@ export class Context {
         );
     }
 
+    private async runPayloadSafeEmbeddingBatch<T>(
+        chunks: CodeChunk[],
+        codebasePath: string,
+        acceleratorRuntime: IndexingAcceleratorRuntime | undefined,
+        batchId: number | undefined,
+        embed: (texts: string[]) => Promise<T[]>,
+    ): Promise<T[]> {
+        try {
+            return await embed(chunks.map((chunk) => chunk.content));
+        } catch (error) {
+            if (!isPayloadSizeEmbeddingError(error)) {
+                throw error;
+            }
+
+            if (chunks.length <= 1) {
+                throw this.createSingleChunkPayloadEmbeddingError(chunks[0], codebasePath, error);
+            }
+
+            acceleratorRuntime?.recordBatchPayloadRetrySplit(batchId);
+            const midpoint = Math.ceil(chunks.length / 2);
+            const left = await this.runPayloadSafeEmbeddingBatch(
+                chunks.slice(0, midpoint),
+                codebasePath,
+                acceleratorRuntime,
+                batchId,
+                embed,
+            );
+            const right = await this.runPayloadSafeEmbeddingBatch(
+                chunks.slice(midpoint),
+                codebasePath,
+                acceleratorRuntime,
+                batchId,
+                embed,
+            );
+            return [...left, ...right];
+        }
+    }
+
+    private createSingleChunkPayloadEmbeddingError(
+        chunk: CodeChunk,
+        codebasePath: string,
+        cause: unknown,
+    ): Error {
+        const filePath = chunk.metadata.filePath
+            ? path.relative(codebasePath, chunk.metadata.filePath)
+            : 'unknown';
+        const chunkIndex = chunk.metadata.chunkIndex ?? 'unknown';
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const error = new Error(
+            `Single embedding chunk exceeded payload-safe retry capacity: ` +
+            `file=${filePath}, chunkIndex=${chunkIndex}, ` +
+            `contentChars=${chunk.content.length}, estimatedTokens=${this.estimateChunkTokens([chunk])}, ` +
+            `retrievalMode=${this.getRetrievalMode()}, provider=${this.embedding.getProvider()}: ${message}`,
+        );
+        if (cause instanceof Error && cause.stack) {
+            error.stack = `${error.stack}\nCaused by: ${cause.stack}`;
+        }
+        return error;
+    }
+
     private async buildPreparedChunkBatchInsert(
         chunks: CodeChunk[],
         codebasePath: string,
@@ -2329,7 +2474,6 @@ export class Context {
         const isHybrid = retrievalMode === "hybrid_bm25";
 
         // Generate embedding vectors
-        const chunkContents = chunks.map((chunk) => chunk.content);
         if (retrievalMode === "bge_m3_full") {
             const multiVectorEmbedding = this.getMultiVectorBatchEmbeddingProvider();
             if (!multiVectorEmbedding) {
@@ -2338,16 +2482,22 @@ export class Context {
 
             let embeddings: MultiVectorEmbedding[];
             try {
-                embeddings = acceleratorRuntime?.getSnapshot().active && multiVectorEmbedding.embedMultiBatchWithWorkerPool
-                    ? await acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(
-                        chunkContents,
-                        (_workerEndpoint, _error, failure) => acceleratorRuntime.recordBatchRetried(
-                            batchId,
-                            failure?.reason || "unknown",
-                            failure?.retrySafe ?? true,
-                        ),
-                    ))
-                    : await multiVectorEmbedding.embedMultiBatch(chunkContents);
+                embeddings = await this.runPayloadSafeEmbeddingBatch(
+                    chunks,
+                    codebasePath,
+                    acceleratorRuntime,
+                    batchId,
+                    (texts) => acceleratorRuntime?.getSnapshot().active && multiVectorEmbedding.embedMultiBatchWithWorkerPool
+                        ? acceleratorRuntime.trackEmbedding(() => multiVectorEmbedding.embedMultiBatchWithWorkerPool!(
+                            texts,
+                            (_workerEndpoint, _error, failure) => acceleratorRuntime.recordBatchRetried(
+                                batchId,
+                                failure?.reason || "unknown",
+                                failure?.retrySafe ?? true,
+                            ),
+                        ))
+                        : multiVectorEmbedding.embedMultiBatch(texts),
+                );
             } catch (error) {
                 throw this.createBatchStageError("embedding", batchId, error);
             }
@@ -2410,9 +2560,15 @@ export class Context {
 
         let embeddings: EmbeddingVector[];
         try {
-            embeddings = acceleratorRuntime
-                ? await acceleratorRuntime.trackEmbedding(() => this.embedding.embedBatch(chunkContents))
-                : await this.embedding.embedBatch(chunkContents);
+            embeddings = await this.runPayloadSafeEmbeddingBatch(
+                chunks,
+                codebasePath,
+                acceleratorRuntime,
+                batchId,
+                (texts) => acceleratorRuntime
+                    ? acceleratorRuntime.trackEmbedding(() => this.embedding.embedBatch(texts))
+                    : this.embedding.embedBatch(texts),
+            );
         } catch (error) {
             throw this.createBatchStageError("embedding", batchId, error);
         }
@@ -2570,6 +2726,10 @@ export class Context {
             (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
             0,
         );
+    }
+
+    private countChunkContentChars(chunks: CodeChunk[]): number {
+        return chunks.reduce((sum, chunk) => sum + chunk.content.length, 0);
     }
 
     private splitVectorDocuments(documents: VectorDocument[], batchSize: number): VectorDocument[][] {

@@ -215,6 +215,17 @@ You can set the embedding batch size to optimize the performance of the MCP serv
 EMBEDDING_BATCH_SIZE=512
 ```
 
+For payload-sensitive providers, you can also cap the total content characters
+or estimated tokens sent in one embedding request:
+
+```bash
+INDEX_EMBEDDING_MAX_CONTENT_CHARS=1000000
+INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS=250000
+```
+
+Unset or `auto` values leave dense-only modes unchanged. BGE-M3 full uses these
+conservative effective defaults when the variables are unset.
+
 #### Code Chunk Limit
 
 You can set the maximum number of code chunks to index per codebase. The default value is 450000.

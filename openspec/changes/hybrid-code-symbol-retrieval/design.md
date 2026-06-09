@@ -149,6 +149,27 @@ Rationale:
 
 Alternative considered: RRF only. RRF is simple but may not guarantee exact symbol dominance when the exact lexical candidate enters with a low rank or only one source.
 
+### Decision: Validate with a fixed 1C relevance eval
+
+The implementation SHALL include a small hand-labeled 1C relevance eval for `demo-1c` or an equivalent stable exported 1C configuration fixture. The labels SHALL be test truth only: production search must not inspect the labels and must not route arbitrary user queries through pre-authored path prefixes.
+
+Eval shape:
+- Use representative 1C search intents, including exact symbol lookup, object/form/command lookup, and natural-language navigation queries.
+- Store expected results as `expectedPathPrefixes` against returned `relativePath` values. Prefixes are acceptable because 1C objects expand into nested module/form/command files.
+- Report Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@3, Precision@5, Precision@10, relevant hits at 10, first relevant rank, top result paths, latency, and per-query misses.
+- Do not report recall unless labels become exhaustive relevant-document sets. The small eval is a control set, not a complete relevance corpus.
+
+The eval should include known weak cases observed in current backend-only comparisons, for example:
+- `печать расходной накладной` should find `Documents/РасходТовара/Commands/ПечатьРасходнойНакладной`.
+- `настройки мобильного устройства` should find `CommonForms/НастройкиМобильногоУстройства`.
+- `остатки товаров на складах` should reach the inventory report/command/form area instead of only sales document object modules.
+- `карточка товара` should reach `Catalogs/Товары` form/object paths instead of unrelated document modules.
+
+Rationale:
+- Backend replacement alone can improve latency and some ranks, but the main quality gap is code-symbol/path/object ranking.
+- A fixed eval makes that gap visible without pretending that all possible future queries can be manually labeled.
+- Per-query miss reports are more useful than a single aggregate number for 1C navigation quality.
+
 ## Risks / Trade-offs
 
 - [Risk] `rlm-tools-bsl` may be absent, stale, busy, or not indexed for the current codebase. → Mitigation: provider status diagnostics, strict timeouts, and fail-open to semantic retrieval plus no-reindex lexical fallback.
@@ -164,16 +185,19 @@ Alternative considered: RRF only. RRF is simple but may not guarantee exact symb
 - [Risk] Lexical boosts can overpower semantic relevance for broad natural-language queries. → Mitigation: apply strong boosts only for query tokens that look like code identifiers, paths, or exact quoted/single-token symbols.
 - [Risk] Adding a generic sidecar too early duplicates `rlm-tools-bsl` and creates two BSL truth sources. → Mitigation: defer generic sidecar implementation and keep BSL provider integration first.
 - [Risk] Additional lexical pass increases search latency. → Mitigation: execute lexical and vector retrieval in parallel where possible, enforce small candidate limits, and measure p50/p95 search latency in tests or local benchmarks.
+- [Risk] Eval path-prefix labels can be mistaken for production ranking rules or become stale when fixtures move. → Mitigation: keep labels in eval fixtures only, version them with the fixture, and assert production search has no dependency on eval labels.
 
 ## Migration Plan
 
 1. Implement no-reindex lexical candidate retrieval and fusion using existing fields.
 2. Add regression tests using fixture BSL chunks with long Cyrillic symbols.
-3. Add optional diagnostics in structured search result metadata.
-4. Add the `CodeSymbolProvider` contract and candidate-to-chunk mapping.
-5. Add the `rlm-tools-bsl` adapter behind the provider contract when a fresh provider/index and stable machine-readable transport are available.
-6. Document that existing indexes work with fallback mode, while deterministic BSL symbol boosts require an available `rlm-tools-bsl` provider/index.
-7. Rollback path: disable provider querying or lexical fusion with a config flag and default back to the existing semantic-only path.
+3. Add the fixed 1C relevance eval dataset and capture the current semantic-only baseline.
+4. Add optional diagnostics in structured search result metadata.
+5. Add the `CodeSymbolProvider` contract and candidate-to-chunk mapping.
+6. Add the `rlm-tools-bsl` adapter behind the provider contract when a fresh provider/index and stable machine-readable transport are available.
+7. Re-run the 1C relevance eval and compare hybrid-symbol metrics plus key per-query misses against the captured baseline.
+8. Document that existing indexes work with fallback mode, while deterministic BSL symbol boosts require an available `rlm-tools-bsl` provider/index.
+9. Rollback path: disable provider querying or lexical fusion with a config flag and default back to the existing semantic-only path.
 
 ## Open Questions
 

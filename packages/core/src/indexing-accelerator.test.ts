@@ -5,6 +5,7 @@ import {
     createAdaptivePressureSignals,
     createDefaultAdaptiveBackpressureConfig,
     evaluateAdaptivePressure,
+    getEffectiveEmbeddingPayloadLimits,
     getIndexingAcceleratorConfig,
     IndexingAcceleratorRuntime,
     shouldAccelerateIndexing,
@@ -40,6 +41,8 @@ describe('indexing accelerator configuration', () => {
             vramLimitPercent: 75,
             retryBudget: 1,
             accelerateBackgroundSync: false,
+            embeddingMaxContentChars: undefined,
+            embeddingMaxEstimatedTokens: undefined,
             adaptiveBackpressure: createDefaultAdaptiveBackpressureConfig(false),
         });
         expect(shouldAccelerateIndexing(config, {
@@ -59,6 +62,8 @@ describe('indexing accelerator configuration', () => {
             INDEX_EMBEDDING_CONCURRENCY: '4',
             INDEX_INSERT_CONCURRENCY: '2',
             INDEX_INSERT_QUEUE_CAPACITY: '8',
+            INDEX_EMBEDDING_MAX_CONTENT_CHARS: '1000000',
+            INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS: '250000',
             BGE_M3_ACCELERATOR_MAX_WORKERS: '3',
             BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT: '75',
             INDEX_ACCELERATOR_RETRY_BUDGET: '5',
@@ -85,6 +90,8 @@ describe('indexing accelerator configuration', () => {
                 vramLimitPercent: 75,
                 retryBudget: 5,
                 accelerateBackgroundSync: true,
+                embeddingMaxContentChars: 1000000,
+                embeddingMaxEstimatedTokens: 250000,
                 adaptiveBackpressure: {
                     enabled: true,
                     minEmbeddingConcurrency: 1,
@@ -126,6 +133,8 @@ describe('indexing accelerator configuration', () => {
             INDEX_INSERT_BATCH_SIZE: '20000',
             INDEX_EMBEDDING_CONCURRENCY: 'bad',
             INDEX_INSERT_CONCURRENCY: '-1',
+            INDEX_EMBEDDING_MAX_CONTENT_CHARS: '0',
+            INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS: '999999999999',
             BGE_M3_ACCELERATOR_MAX_WORKERS: '0',
             BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT: '500',
             INDEX_ACCELERATOR_RETRY_BUDGET: 'nope',
@@ -143,6 +152,43 @@ describe('indexing accelerator configuration', () => {
         expect(config.vramLimitPercent).toBe(100);
         expect(config.retryBudget).toBe(1);
         expect(config.accelerateBackgroundSync).toBe(false);
+        expect(config.embeddingMaxContentChars).toBeUndefined();
+        expect(config.embeddingMaxEstimatedTokens).toBeLessThan(999999999999);
+    });
+
+    it('applies BGE-M3 full payload-safe effective limits without reducing dense-only defaults', () => {
+        const config = getIndexingAcceleratorConfig();
+
+        expect(getEffectiveEmbeddingPayloadLimits(config, 'dense')).toEqual({
+            maxContentChars: undefined,
+            maxEstimatedTokens: undefined,
+        });
+        expect(getEffectiveEmbeddingPayloadLimits(config, 'bge_m3_dense')).toEqual({
+            maxContentChars: undefined,
+            maxEstimatedTokens: undefined,
+        });
+        expect(getEffectiveEmbeddingPayloadLimits(config, 'bge_m3_full')).toEqual({
+            maxContentChars: expect.any(Number),
+            maxEstimatedTokens: expect.any(Number),
+        });
+    });
+
+    it('lets explicit payload limit overrides apply to all retrieval modes', () => {
+        mockEnv({
+            INDEX_EMBEDDING_MAX_CONTENT_CHARS: '12345',
+            INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS: '3456',
+        });
+
+        const config = getIndexingAcceleratorConfig();
+
+        expect(getEffectiveEmbeddingPayloadLimits(config, 'dense')).toEqual({
+            maxContentChars: 12345,
+            maxEstimatedTokens: 3456,
+        });
+        expect(getEffectiveEmbeddingPayloadLimits(config, 'bge_m3_full')).toEqual({
+            maxContentChars: 12345,
+            maxEstimatedTokens: 3456,
+        });
     });
 
     it('scores pressure from explicit downstream and guardrail signals', () => {

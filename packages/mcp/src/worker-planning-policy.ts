@@ -27,6 +27,15 @@ export interface WorkerPlanningPolicySnapshot {
             'accelerator.failedInsertBatches',
             'accelerator.insertMs',
         ];
+        payloadBatching: [
+            'accelerator.embeddingMaxContentChars',
+            'accelerator.embeddingMaxEstimatedTokens',
+            'accelerator.effectiveEmbeddingMaxContentChars',
+            'accelerator.effectiveEmbeddingMaxEstimatedTokens',
+            'accelerator.batches[].contentCharCount',
+            'accelerator.batches[].payloadSplitReason',
+            'accelerator.batches[].payloadRetrySplitCount',
+        ];
         adaptiveBackpressure: [
             'accelerator.adaptiveBackpressureEnabled',
             'accelerator.configuredEmbeddingConcurrency',
@@ -87,6 +96,15 @@ export function createWorkerPlanningPolicy(): WorkerPlanningPolicySnapshot {
                 'accelerator.failedInsertBatches',
                 'accelerator.insertMs',
             ],
+            payloadBatching: [
+                'accelerator.embeddingMaxContentChars',
+                'accelerator.embeddingMaxEstimatedTokens',
+                'accelerator.effectiveEmbeddingMaxContentChars',
+                'accelerator.effectiveEmbeddingMaxEstimatedTokens',
+                'accelerator.batches[].contentCharCount',
+                'accelerator.batches[].payloadSplitReason',
+                'accelerator.batches[].payloadRetrySplitCount',
+            ],
             adaptiveBackpressure: [
                 'accelerator.adaptiveBackpressureEnabled',
                 'accelerator.configuredEmbeddingConcurrency',
@@ -143,6 +161,8 @@ export function createDaemonStatusResult(
             `Accelerator: mode=${accelerator.mode} active=${accelerator.active} ` +
             `embeddingInFlight=${accelerator.inFlightEmbeddingBatches} insertInFlight=${accelerator.inFlightInsertBatches}` +
             ` effectiveEmbeddingConcurrency=${accelerator.effectiveEmbeddingConcurrency ?? accelerator.embeddingConcurrency}` +
+            ` effectiveMaxContentChars=${accelerator.effectiveEmbeddingMaxContentChars ?? 'none'}` +
+            ` effectiveMaxEstimatedTokens=${accelerator.effectiveEmbeddingMaxEstimatedTokens ?? 'none'}` +
             ` pressure=${accelerator.adaptivePressureScore ?? 0}` +
             ` throttle=${accelerator.adaptiveThrottleReason ?? 'none'}` +
             ` throttleMs=${accelerator.adaptiveThrottleTimeMs ?? 0}` +

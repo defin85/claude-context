@@ -12,6 +12,7 @@ console.warn = (...args: unknown[]) => {
 
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
+import * as path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -19,7 +20,7 @@ import {
     ListToolsRequestSchema,
     CallToolRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
-import { Context, MilvusVectorDatabase } from '@zilliz/claude-context-core';
+import { Context, LanceDbVectorDatabase, MilvusVectorDatabase, QdrantVectorDatabase } from '@zilliz/claude-context-core';
 
 import { CodebaseAccessPolicy } from './access-policy.js';
 import {
@@ -127,10 +128,7 @@ class ContextMcpServer {
 
         const vectorDatabase = idleBenchmarkStubMode
             ? createIdleBenchmarkVectorDatabaseStub()
-            : new MilvusVectorDatabase({
-                address: config.milvusAddress,
-                ...(config.milvusToken && { token: config.milvusToken })
-            });
+            : createVectorDatabase(config);
 
         this.context = new Context({
             embedding: embedding as ContextOptions['embedding'],
@@ -897,6 +895,29 @@ This tool is versatile and can be used before completing various tasks to retrie
         await this.daemonClientConfigManager?.remove();
         await this.managedBgeM3WorkerManager?.stopAll('daemon shutdown');
     }
+}
+
+function createVectorDatabase(config: ContextMcpConfig) {
+    if (config.vectorDatabaseBackend === 'lancedb') {
+        const uri = config.lancedbUri || path.join(process.cwd(), '.context', 'lancedb');
+        console.log(`[VECTORDB] Using LanceDB backend at ${uri}`);
+        return new LanceDbVectorDatabase({ uri });
+    }
+
+    if (config.vectorDatabaseBackend === 'qdrant') {
+        const url = config.qdrantUrl || 'http://127.0.0.1:6333';
+        console.log(`[VECTORDB] Using Qdrant backend at ${url}`);
+        return new QdrantVectorDatabase({
+            url,
+            apiKey: config.qdrantApiKey,
+        });
+    }
+
+    console.log('[VECTORDB] Using Milvus backend');
+    return new MilvusVectorDatabase({
+        address: config.milvusAddress,
+        ...(config.milvusToken && { token: config.milvusToken })
+    });
 }
 
 let activeServer: ContextMcpServer | null = null;

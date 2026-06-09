@@ -3,6 +3,8 @@
 - [ ] 1.1 Add focused regression fixtures for BSL chunks containing `ПараметрыЗаполненияЗаписейСкладскогоЖурнала`, related `ЗаписьСкладскогоЖурнала` chunks, and module/path distractors.
 - [ ] 1.2 Add a failing core search test proving exact-symbol queries currently miss or under-rank the exact BSL declaration.
 - [ ] 1.3 Add baseline assertions that broad semantic queries still return vector-search results.
+- [ ] 1.4 Add a fixed `demo-1c` relevance eval dataset with 30-50 representative queries and eval-only `expectedPathPrefixes`.
+- [ ] 1.5 Capture current semantic-only or current-backend baseline metrics for the fixed 1C relevance eval before changing ranking.
 
 ## 2. No-Reindex Lexical Candidate Layer
 
@@ -56,3 +58,6 @@
 - [ ] 6.8 Verify subprocess/CLI adapter tests cover spaces and Cyrillic characters without shell interpolation if that transport is selected.
 - [ ] 6.9 Run targeted core tests and typecheck: `pnpm --filter @zilliz/claude-context-core test -- <relevant-test> --runInBand` and `pnpm --filter @zilliz/claude-context-core typecheck`.
 - [ ] 6.10 If MCP structured diagnostics are touched, run `pnpm --filter @zilliz/claude-context-mcp typecheck` and relevant MCP tests.
+- [ ] 6.11 Run the fixed 1C relevance eval and report Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@3, Precision@5, Precision@10, relevant hits at 10, per-query first relevant rank, top result paths, latency, and failures.
+- [ ] 6.12 Verify known 1C misses such as `печать расходной накладной`, `настройки мобильного устройства`, `остатки товаров на складах`, and `карточка товара` are reported explicitly and improve or remain explainable versus baseline.
+- [ ] 6.13 Verify eval path-prefix labels live only in eval fixtures and are not used by production search routing, filtering, boosting, or ranking.

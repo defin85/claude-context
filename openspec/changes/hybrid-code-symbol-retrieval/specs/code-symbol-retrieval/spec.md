@@ -96,3 +96,27 @@ The system SHALL attach optional diagnostics to search result metadata that iden
 #### Scenario: Diagnostics remain optional for clients
 - **WHEN** a client ignores the new diagnostics fields
 - **THEN** the existing `search_code` response shape SHALL remain usable without client changes
+
+### Requirement: Hybrid retrieval is validated by fixed 1C relevance eval
+The system SHALL include a small fixed 1C relevance eval that measures retrieval quality for representative 1C navigation queries without using eval labels in production search.
+
+#### Scenario: Eval path prefixes are test truth only
+- **WHEN** a control query has hand-labeled expected path prefixes
+- **THEN** the eval SHALL score returned `relativePath` values against those prefixes
+- **AND** production search SHALL NOT use those labels as routing, filtering, boosting, or ranking rules
+
+#### Scenario: Eval reports ranking quality metrics
+- **WHEN** the 1C relevance eval runs against a search backend or hybrid retrieval mode
+- **THEN** it SHALL report Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@3, Precision@5, Precision@10, relevant hits at 10, per-query first relevant rank, top result paths, latency, and failures
+- **AND** it SHALL omit recall unless the labels become exhaustive relevant-document sets
+
+#### Scenario: Eval covers known 1C navigation misses
+- **WHEN** the fixed eval includes queries such as `печать расходной накладной`, `настройки мобильного устройства`, `остатки товаров на складах`, and `карточка товара`
+- **THEN** validation SHALL record whether the expected 1C object, command, form, report, or catalog path prefixes appear in the top 5 and top 10 results
+- **AND** missing expected prefixes SHALL be reported as per-query quality failures
+
+#### Scenario: Hybrid-symbol quality is compared with baseline
+- **WHEN** hybrid-symbol retrieval is implemented
+- **THEN** validation SHALL compare it against a captured semantic-only baseline on the fixed 1C relevance eval
+- **AND** exact-symbol regressions SHALL fail validation
+- **AND** broad semantic queries SHOULD not regress in aggregate Hit@k, MRR@10, or Precision@k metrics

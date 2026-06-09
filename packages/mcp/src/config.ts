@@ -8,6 +8,7 @@ import { normalizeCodebasePath } from './utils.js';
 
 export type EmbeddingProviderName = 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama' | 'BGE_M3';
 export type BgeM3Mode = 'full' | 'dense';
+export type VectorDatabaseBackend = 'milvus' | 'lancedb' | 'qdrant';
 
 export interface ContextMcpConfig {
     name: string;
@@ -71,6 +72,10 @@ export interface ContextMcpConfig {
     bgeM3Device?: string;
     bgeM3UseFp16: boolean;
     // Vector database configuration
+    vectorDatabaseBackend?: VectorDatabaseBackend;
+    lancedbUri?: string;
+    qdrantUrl?: string;
+    qdrantApiKey?: string;
     milvusAddress?: string; // Optional, can be auto-resolved from token
     milvusToken?: string;
 }
@@ -289,6 +294,9 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   BGE_M3_ENDPOINT: ${envManager.get('BGE_M3_ENDPOINT') || 'NOT SET'}`);
     console.log(`[DEBUG]   BGE_M3_MODEL: ${envManager.get('BGE_M3_MODEL') || 'NOT SET'}`);
     console.log(`[DEBUG]   BGE_M3_MODE: ${envManager.get('BGE_M3_MODE') || 'NOT SET'}`);
+    console.log(`[DEBUG]   VECTOR_DATABASE_BACKEND: ${envManager.get('VECTOR_DATABASE_BACKEND') || 'NOT SET'}`);
+    console.log(`[DEBUG]   LANCEDB_URI: ${envManager.get('LANCEDB_URI') || 'NOT SET'}`);
+    console.log(`[DEBUG]   QDRANT_URL: ${envManager.get('QDRANT_URL') || 'NOT SET'}`);
     console.log(`[DEBUG]   GEMINI_API_KEY: ${envManager.get('GEMINI_API_KEY') ? 'SET (length: ' + envManager.get('GEMINI_API_KEY')!.length + ')' : 'NOT SET'}`);
     console.log(`[DEBUG]   OPENAI_API_KEY: ${envManager.get('OPENAI_API_KEY') ? 'SET (length: ' + envManager.get('OPENAI_API_KEY')!.length + ')' : 'NOT SET'}`);
     console.log(`[DEBUG]   MILVUS_ADDRESS: ${envManager.get('MILVUS_ADDRESS') || 'NOT SET'}`);
@@ -360,7 +368,11 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3SidecarScript: envManager.get('BGE_M3_SIDECAR_SCRIPT') || path.resolve(process.cwd(), 'python', 'bge_m3_sidecar.py'),
         bgeM3Device: envManager.get('BGE_M3_DEVICE'),
         bgeM3UseFp16: getBooleanFromEnv('BGE_M3_USE_FP16', true),
-        // Vector database configuration - address can be auto-resolved from token
+        // Vector database configuration
+        vectorDatabaseBackend: parseVectorDatabaseBackend(envManager.get('VECTOR_DATABASE_BACKEND')),
+        lancedbUri: envManager.get('LANCEDB_URI') || path.join(os.homedir(), '.context', 'lancedb'),
+        qdrantUrl: envManager.get('QDRANT_URL') || 'http://127.0.0.1:6333',
+        qdrantApiKey: envManager.get('QDRANT_API_KEY'),
         milvusAddress: envManager.get('MILVUS_ADDRESS'), // Optional, can be resolved from token
         milvusToken: envManager.get('MILVUS_TOKEN')
     };
@@ -370,6 +382,19 @@ export function createMcpConfig(): ContextMcpConfig {
     }
 
     return config;
+}
+
+function parseVectorDatabaseBackend(rawValue: string | undefined): VectorDatabaseBackend {
+    if (!rawValue || rawValue === 'milvus') {
+        return 'milvus';
+    }
+    if (rawValue === 'lancedb') {
+        return 'lancedb';
+    }
+    if (rawValue === 'qdrant') {
+        return 'qdrant';
+    }
+    throw new Error(`Invalid VECTOR_DATABASE_BACKEND '${rawValue}'. Expected 'milvus', 'lancedb', or 'qdrant'.`);
 }
 
 function parseAcceleratorMode(rawValue: string | undefined): 'off' | 'auto' {
@@ -737,6 +762,8 @@ Environment Variables:
   INDEX_ACCELERATOR_MODE  Accelerator mode: off or auto (default: off)
   INDEX_EMBEDDING_BATCH_SIZE Chunks per embedding request (default: EMBEDDING_BATCH_SIZE or 100)
   INDEX_INSERT_BATCH_SIZE Chunks per vector insert request (default: INDEX_EMBEDDING_BATCH_SIZE)
+  INDEX_EMBEDDING_MAX_CONTENT_CHARS Payload-safe content-character cap per embedding request (default: auto; BGE-M3 full effective default: 1000000)
+  INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS Payload-safe estimated-token cap per embedding request (default: auto; BGE-M3 full effective default: 250000)
   INDEX_EMBEDDING_CONCURRENCY Max in-flight embedding batches (default: 2 in auto, else 1)
   INDEX_INSERT_CONCURRENCY Max in-flight insert batches (default: 1; raise only after Milvus safety validation)
   INDEX_INSERT_QUEUE_CAPACITY Max queued insert batches waiting for insert lanes (default: 2)

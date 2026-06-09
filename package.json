@@ -22,6 +22,7 @@
         "example:basic": "pnpm --filter claude-context-basic-example start",
         "benchmark": "node scripts/build-benchmark.js",
         "benchmark:daemon-idle": "node scripts/daemon-idle-benchmark.js",
+        "benchmark:bge-m3-vector-backends": "node scripts/benchmark-bge-m3-vector-backends.js",
         "benchmark:indexing-baseline": "node scripts/measure-indexing-baseline.js",
         "benchmark:preindex": "node scripts/preindex-diagnostic.js",
         "milvus:storage-audit": "node scripts/milvus-storage-audit.js",
@@ -30,6 +31,7 @@
     },
     "devDependencies": {
         "@eslint/js": "^9.28.0",
+        "@lancedb/lancedb": "0.30.0",
         "@types/node": "^20.0.0",
         "@typescript-eslint/eslint-plugin": "^8.31.1",
         "@typescript-eslint/parser": "^8.31.1",

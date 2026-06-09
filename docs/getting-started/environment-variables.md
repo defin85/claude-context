@@ -45,6 +45,10 @@ Claude Context supports a global configuration file at `~/.context/.env` to simp
 ### Vector Database
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `VECTOR_DATABASE_BACKEND` | Vector database backend: `milvus`, `lancedb`, or `qdrant` | `milvus` |
+| `LANCEDB_URI` | Local LanceDB directory when `VECTOR_DATABASE_BACKEND=lancedb` | `~/.context/lancedb` |
+| `QDRANT_URL` | Qdrant endpoint when `VECTOR_DATABASE_BACKEND=qdrant` | `http://127.0.0.1:6333` |
+| `QDRANT_API_KEY` | Optional Qdrant API key | None |
 | `MILVUS_TOKEN` | Milvus authentication token. Get [Zilliz Personal API Key](https://github.com/zilliztech/claude-context/blob/master/assets/signup_and_get_apikey.png) | Recommended |
 | `MILVUS_ADDRESS` | Milvus server address. Optional when using Zilliz Personal API Key | Auto-resolved from token |
 
@@ -95,6 +99,8 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | `EMBEDDING_BATCH_SIZE` | Legacy embedding batch size. Used only when `INDEX_EMBEDDING_BATCH_SIZE` is unset | `100` |
 | `INDEX_EMBEDDING_BATCH_SIZE` | Chunks grouped per embedding request. Values above `10000` are clamped by the core indexer | `EMBEDDING_BATCH_SIZE` or `100` |
 | `INDEX_INSERT_BATCH_SIZE` | Embedded documents grouped per vector database insert request. Defaults to the effective embedding batch size to preserve existing write behavior | `INDEX_EMBEDDING_BATCH_SIZE` |
+| `INDEX_EMBEDDING_MAX_CONTENT_CHARS` | Optional payload-safe cap on total chunk content characters per embedding request. `auto`/unset leaves dense-only providers unchanged; BGE-M3 full applies its conservative effective default. | `auto` |
+| `INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS` | Optional payload-safe cap on estimated tokens per embedding request. `auto`/unset leaves dense-only providers unchanged; BGE-M3 full applies its conservative effective default. | `auto` |
 | `CODE_CHUNK_LIMIT` | Maximum number of code chunks to index per codebase. Increase for very large repositories when you accept extra indexing time and vector database storage. If a previous run stopped at a lower limit, run a force reindex after raising this value to include chunks that were skipped before. | `450000` |
 | `1C_INDEX_SCOPE_PROFILE` | Scope profile for exported 1C configuration trees: `full`, `developer`, or `minimal`. Reduced profiles must be selected explicitly and require `force=true` when changing an existing index profile. | `full` |
 | `SPLITTER_TYPE` | Code splitter type: `ast`, `langchain` | `ast` |
@@ -129,6 +135,8 @@ maximums stay visible in status and remain the upper bound.
 | `INDEX_ACCELERATOR_MODE` | Accelerator mode: `off` or `auto` | `off` |
 | `INDEX_EMBEDDING_BATCH_SIZE` | Chunks submitted per embedding batch. Defaults preserve the legacy `EMBEDDING_BATCH_SIZE` behavior | `EMBEDDING_BATCH_SIZE` or `100` |
 | `INDEX_INSERT_BATCH_SIZE` | Chunks submitted per vector insert batch. Lower values split embedded batches before writing while preserving document IDs and metadata | `INDEX_EMBEDDING_BATCH_SIZE` |
+| `INDEX_EMBEDDING_MAX_CONTENT_CHARS` | Optional payload-safe cap on embedding request content characters. Explicit values apply to all retrieval modes. When unset, BGE-M3 full uses `1000000`; dense-only modes are not reduced. | `auto` |
+| `INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS` | Optional payload-safe cap on embedding request estimated tokens. Explicit values apply to all retrieval modes. When unset, BGE-M3 full uses `250000`; dense-only modes are not reduced. | `auto` |
 | `INDEX_EMBEDDING_CONCURRENCY` | Configured maximum in-flight embedding batches | `2` in auto, else `1` |
 | `INDEX_INSERT_CONCURRENCY` | Configured maximum in-flight vector insert batches | `1` |
 | `INDEX_INSERT_QUEUE_CAPACITY` | Maximum insert backlog waiting for insert lanes | `2` |

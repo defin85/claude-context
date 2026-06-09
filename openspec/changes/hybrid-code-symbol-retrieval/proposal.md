@@ -11,12 +11,14 @@ The current BGE-M3 full retrieval path works for semantic search, but it can mis
 - Keep the existing BGE-M3 dense+sparse+ColBERT retrieval as the semantic layer, then fuse lexical and semantic candidates into a single ranked result list.
 - Keep a no-reindex Milvus/content lexical pass as a bootstrap and compatibility fallback while no symbol provider is available or trusted.
 - Add regression coverage using the observed 1C/BSL miss: `ПараметрыЗаполненияЗаписейСкладскогоЖурнала` must return `src/cf/CommonModules/ЗаполнениеДокументовВЕТИС/Ext/Module.bsl` near the top.
+- Add a fixed 1C relevance eval for representative natural-language and code-navigation queries, using hand-labeled expected `relativePath` prefixes only as eval truth for metrics such as Hit@k, MRR@10, and Precision@k.
 - Non-goals:
   - Do not replace BGE-M3, ColBERT reranking, or Milvus vector retrieval.
   - Do not duplicate the full `rlm-tools-bsl` BSL structural index inside `claude-context`.
   - Do not require Rust, LSP, or a new external search service for the first implementation.
   - Do not make agents start, build, or manage symbol indexes directly.
   - Do not force immediate reindexing for the minimal lexical fallback path.
+  - Do not use hand-labeled eval path prefixes as production routing/ranking rules or try to pre-label arbitrary user queries.
 
 ## Capabilities
 
@@ -42,3 +44,6 @@ None.
   - Minimal phase: no collection migration or reindex required; lexical candidates can be derived from stored `content`, `relativePath`, and existing metadata.
   - Provider phase: existing indexes remain searchable; deterministic BSL symbol search requires an available, fresh, machine-readable `rlm-tools-bsl` provider/index whose paths can be mapped to the `claude-context` codebase root.
   - Generic sidecar phase, if later implemented: language-neutral symbol metadata may require reindexing or an explicit sidecar rebuild, but it is not the primary BSL path.
+- Evaluation impact:
+  - Add or reuse a small `demo-1c` relevance eval dataset with eval-only expected path prefixes.
+  - Report aggregate metrics plus per-query misses so backend changes and hybrid-symbol changes can be compared against the same control set.

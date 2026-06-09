@@ -57,6 +57,31 @@ class DelayedEmbedding extends Embedding {
     }
 }
 
+class PayloadSizeFailingEmbedding extends DelayedEmbedding {
+    constructor(private readonly maxTextsPerBatch: number) {
+        super(1);
+    }
+
+    async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+        this.batchSizes.push(texts.length);
+        if (texts.length > this.maxTextsPerBatch) {
+            throw new Error('Cannot create a string longer than 0x1fffffe8 characters');
+        }
+        return texts.map(() => ({ vector: [1, 0, 0], dimension: 3 }));
+    }
+}
+
+class NonPayloadFailingEmbedding extends DelayedEmbedding {
+    constructor() {
+        super(1);
+    }
+
+    async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+        this.batchSizes.push(texts.length);
+        throw new Error('temporary embedding transport failure');
+    }
+}
+
 class DelayedBgeM3Embedding extends Embedding {
     protected maxTokens = 8192;
     private active = 0;
@@ -309,6 +334,8 @@ describe('Context accelerated batch pipeline', () => {
         'EMBEDDING_BATCH_SIZE',
         'INDEX_EMBEDDING_BATCH_SIZE',
         'INDEX_INSERT_BATCH_SIZE',
+        'INDEX_EMBEDDING_MAX_CONTENT_CHARS',
+        'INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS',
         'INDEX_ACCELERATOR_MODE',
         'INDEX_EMBEDDING_CONCURRENCY',
         'INDEX_INSERT_CONCURRENCY',
@@ -325,6 +352,8 @@ describe('Context accelerated batch pipeline', () => {
         process.env.EMBEDDING_BATCH_SIZE = '1';
         delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
         delete process.env.INDEX_INSERT_BATCH_SIZE;
+        delete process.env.INDEX_EMBEDDING_MAX_CONTENT_CHARS;
+        delete process.env.INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS;
         delete process.env.INDEX_EMBEDDING_CONCURRENCY;
         process.env.INDEX_INSERT_CONCURRENCY = '1';
         delete process.env.INDEX_INSERT_QUEUE_CAPACITY;
@@ -363,6 +392,19 @@ describe('Context accelerated batch pipeline', () => {
         process.env.INDEX_INSERT_CONCURRENCY = '2';
         process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
         process.env.EMBEDDING_BATCH_SIZE = '1';
+    }
+
+    function enablePayloadBoundedBatches(maxContentChars?: number, maxEstimatedTokens?: number): void {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '4';
+        process.env.INDEX_INSERT_BATCH_SIZE = '4';
+        if (maxContentChars !== undefined) {
+            process.env.INDEX_EMBEDDING_MAX_CONTENT_CHARS = String(maxContentChars);
+        }
+        if (maxEstimatedTokens !== undefined) {
+            process.env.INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS = String(maxEstimatedTokens);
+        }
     }
 
     it('runs multiple embedding batches concurrently when acceleration is active', async () => {
@@ -511,6 +553,128 @@ describe('Context accelerated batch pipeline', () => {
         }));
         expect(vectorDatabase.allDocuments()).toHaveLength(4);
         expect(new Set(vectorDatabase.allDocuments().map((document) => document.id)).size).toBe(4);
+    });
+
+    it('flushes payload-bounded embedding batches before exceeding content character limits', async () => {
+        enablePayloadBoundedBatches(50);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(await createCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.batches.map((batch) => batch.chunkCount)).toEqual([2, 2]);
+        expect(snapshot.batches.map((batch) => batch.contentCharCount)).toEqual([48, 48]);
+        expect(snapshot.batches.every((batch) => batch.payloadSplitReason === 'content_chars')).toBe(true);
+    });
+
+    it('flushes payload-bounded embedding batches before exceeding estimated token limits', async () => {
+        enablePayloadBoundedBatches(undefined, 10);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(await createCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.batches.map((batch) => batch.chunkCount)).toEqual([1, 1, 1, 1]);
+        expect(snapshot.batches.map((batch) => batch.estimatedTokens)).toEqual([6, 6, 6, 6]);
+        expect(snapshot.batches.every((batch) => batch.payloadSplitReason === 'estimated_tokens')).toBe(true);
+    });
+
+    it('submits a single chunk that exceeds payload limits and records the single-chunk pressure', async () => {
+        enablePayloadBoundedBatches(10, 2);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(await createCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(snapshot.batches.map((batch) => batch.chunkCount)).toEqual([1, 1, 1, 1]);
+        expect(snapshot.batches.every((batch) => batch.payloadSplitReason === 'single_chunk_limit_exceeded')).toBe(true);
+        expect(vectorDatabase.allDocuments()).toHaveLength(4);
+    });
+
+    it('recursively retries recognized payload-size embedding failures with smaller ordered batches', async () => {
+        enablePayloadBoundedBatches();
+        const embedding = new PayloadSizeFailingEmbedding(2);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(await createCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(embedding.batchSizes).toEqual([4, 2, 2]);
+        expect(snapshot.batches).toHaveLength(1);
+        expect(snapshot.batches[0]).toEqual(expect.objectContaining({
+            chunkCount: 4,
+            payloadRetrySplitCount: 1,
+        }));
+        expect(vectorDatabase.allDocuments().map((document) => document.metadata.chunkIndex)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('keeps recursively splitting repeated payload-size embedding failures until chunks fit', async () => {
+        enablePayloadBoundedBatches();
+        const embedding = new PayloadSizeFailingEmbedding(1);
+        const vectorDatabase = new TrackingVectorDatabase();
+        const context = new Context({
+            embedding,
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await context.indexCodebase(await createCodebase());
+
+        const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
+        expect(embedding.batchSizes).toEqual([4, 2, 1, 1, 2, 1, 1]);
+        expect(snapshot.batches[0]).toEqual(expect.objectContaining({
+            chunkCount: 4,
+            payloadRetrySplitCount: 3,
+        }));
+        expect(vectorDatabase.allDocuments().map((document) => document.metadata.chunkIndex)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('does not split retry non-payload embedding failures', async () => {
+        enablePayloadBoundedBatches();
+        const embedding = new NonPayloadFailingEmbedding();
+        const context = new Context({
+            embedding,
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await expect(context.indexCodebase(await createCodebase()))
+            .rejects
+            .toThrow(/Indexing batch \d+ failed during embedding: temporary embedding transport failure/);
+        expect(embedding.batchSizes).toEqual([4]);
+    });
+
+    it('fails a single-chunk payload-size embedding error with actionable diagnostics', async () => {
+        enablePayloadBoundedBatches();
+        const context = new Context({
+            embedding: new PayloadSizeFailingEmbedding(0),
+            vectorDatabase: new TrackingVectorDatabase(),
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        await expect(context.indexCodebase(await createSingleFileCodebase()))
+            .rejects
+            .toThrow(/Single embedding chunk exceeded payload-safe retry capacity.*large\.ts.*chunkIndex=0.*contentChars=29.*estimatedTokens=8.*retrievalMode=dense.*provider=test/s);
     });
 
     it('falls back to legacy EMBEDDING_BATCH_SIZE when the new embedding batch size is unset', async () => {

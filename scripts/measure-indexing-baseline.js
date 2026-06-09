@@ -12,6 +12,7 @@ const terminalStatuses = new Set(['indexed', 'indexfailed']);
 const sensitiveEnvNames = new Set([
     'MCP_DAEMON_TOKEN',
     'MILVUS_TOKEN',
+    'QDRANT_API_KEY',
     'OPENAI_API_KEY',
     'VOYAGEAI_API_KEY',
     'GEMINI_API_KEY'
@@ -33,6 +34,10 @@ Options:
                           INDEX_EMBEDDING_BATCH_SIZE for daemon restart (default: 100)
   --insert-batch-size <n>
                           INDEX_INSERT_BATCH_SIZE for daemon restart (default: embedding batch size)
+  --embedding-max-content-chars <n|auto>
+                          INDEX_EMBEDDING_MAX_CONTENT_CHARS for daemon restart (default: current env/auto)
+  --embedding-max-estimated-tokens <n|auto>
+                          INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS for daemon restart (default: current env/auto)
   --embedding-concurrency <n>
                           INDEX_EMBEDDING_CONCURRENCY for daemon restart (default: 1)
   --insert-concurrency <n>
@@ -60,12 +65,17 @@ Options:
 
 Default daemon env overrides:
   INDEX_ACCELERATOR_MODE=<--accelerator-mode>
+  INDEX_EMBEDDING_MAX_CONTENT_CHARS=<--embedding-max-content-chars when set>
+  INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS=<--embedding-max-estimated-tokens when set>
   INDEX_EMBEDDING_CONCURRENCY=<--embedding-concurrency>
   INDEX_INSERT_CONCURRENCY=<--insert-concurrency>
   INDEX_INSERT_QUEUE_CAPACITY=<--insert-queue-capacity>
   INDEX_ADAPTIVE_BACKPRESSURE=<--adaptive-backpressure>
   BGE_M3_ACCELERATOR_MANAGED_WORKERS=<--managed-workers>
   BGE_M3_ACCELERATOR_MAX_WORKERS=<--max-workers>
+  VECTOR_DATABASE_BACKEND=<current env or milvus>
+  LANCEDB_URI=<current env when set>
+  QDRANT_URL=<current env when set>
 `);
 }
 
@@ -79,6 +89,8 @@ function parseArgs(argv) {
         acceleratorMode: 'off',
         embeddingBatchSize: 100,
         insertBatchSize: undefined,
+        embeddingMaxContentChars: undefined,
+        embeddingMaxEstimatedTokens: undefined,
         embeddingConcurrency: 1,
         insertConcurrency: 1,
         insertQueueCapacity: 2,
@@ -133,6 +145,12 @@ function parseArgs(argv) {
                 break;
             case '--insert-batch-size':
                 options.insertBatchSize = Number(next());
+                break;
+            case '--embedding-max-content-chars':
+                options.embeddingMaxContentChars = parsePayloadLimitArg(next(), '--embedding-max-content-chars');
+                break;
+            case '--embedding-max-estimated-tokens':
+                options.embeddingMaxEstimatedTokens = parsePayloadLimitArg(next(), '--embedding-max-estimated-tokens');
                 break;
             case '--embedding-concurrency':
                 options.embeddingConcurrency = Number(next());
@@ -242,6 +260,17 @@ function parseBooleanArg(value, name) {
     throw new Error(`${name} must be true or false`);
 }
 
+function parsePayloadLimitArg(value, name) {
+    if (value === 'auto') {
+        return 'auto';
+    }
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+    }
+    throw new Error(`${name} must be a positive number or auto`);
+}
+
 function selfTestCompactOutput() {
     const compacted = compactStructuredContent({
         status: 'indexing',
@@ -252,6 +281,10 @@ function selfTestCompactOutput() {
             insertQueueCapacity: 4,
             embeddingBatchSize: 100,
             insertBatchSize: 50,
+            embeddingMaxContentChars: undefined,
+            embeddingMaxEstimatedTokens: undefined,
+            effectiveEmbeddingMaxContentChars: 1000000,
+            effectiveEmbeddingMaxEstimatedTokens: 250000,
             queuedInsertBatches: 1,
             runningInsertBatches: 1,
             completedInsertBatches: 3,
@@ -273,8 +306,32 @@ function selfTestCompactOutput() {
                 recoveryAttempts: 1,
             }],
             batches: [
-                { id: 1, state: 'completed', attempts: 1, chunkCount: 100, estimatedTokens: 450, insertChunkCounts: [50, 50] },
-                { id: 2, state: 'failed', attempts: 2, chunkCount: 100, estimatedTokens: 520, insertChunkCounts: [50, 50] },
+                {
+                    id: 1,
+                    state: 'completed',
+                    attempts: 1,
+                    chunkCount: 100,
+                    contentCharCount: 1800,
+                    estimatedTokens: 450,
+                    effectiveMaxContentChars: 1000000,
+                    effectiveMaxEstimatedTokens: 250000,
+                    payloadSplitReason: 'content_chars',
+                    payloadRetrySplitCount: 1,
+                    insertChunkCounts: [50, 50],
+                },
+                {
+                    id: 2,
+                    state: 'failed',
+                    attempts: 2,
+                    chunkCount: 100,
+                    contentCharCount: 2080,
+                    estimatedTokens: 520,
+                    effectiveMaxContentChars: 1000000,
+                    effectiveMaxEstimatedTokens: 250000,
+                    payloadSplitReason: 'single_chunk_limit_exceeded',
+                    payloadRetrySplitCount: 2,
+                    insertChunkCounts: [50, 50],
+                },
             ],
         },
     });
@@ -300,8 +357,26 @@ function selfTestCompactOutput() {
     if (compacted.accelerator.batchSizeSummary.embeddingBatchSize !== 100) {
         throw new Error('Expected batchSizeSummary embedding batch size to be preserved.');
     }
+    if (compacted.accelerator.batchSizeSummary.effectiveEmbeddingMaxContentChars !== 1000000) {
+        throw new Error('Expected batchSizeSummary effective content cap to be preserved.');
+    }
+    if (compacted.accelerator.batchesSummary.contentChars.max !== 2080) {
+        throw new Error('Expected batchesSummary content characters to be summarized.');
+    }
     if (compacted.accelerator.batchesSummary.tokenEstimate.max !== 520) {
         throw new Error('Expected batchesSummary token estimates to be summarized.');
+    }
+    if (compacted.accelerator.batchesSummary.byPayloadSplitReason.content_chars !== 1) {
+        throw new Error('Expected batchesSummary payload split reasons to be counted.');
+    }
+    if (compacted.accelerator.batchesSummary.payloadRetrySplits.max !== 2) {
+        throw new Error('Expected batchesSummary payload retry split counts to be summarized.');
+    }
+    if (compacted.accelerator.batchesSummary.singleChunkFatal !== true) {
+        throw new Error('Expected batchesSummary single-chunk fatal flag to be preserved.');
+    }
+    if (compacted.accelerator.batchesSummary.latestTail[0].effectiveMaxContentChars !== 1000000) {
+        throw new Error('Expected compact batch tail to preserve effective payload caps.');
     }
     if (compacted.accelerator.batchesSummary.insertChunks.max !== 50) {
         throw new Error('Expected batchesSummary insert chunk sizes to be summarized.');
@@ -427,7 +502,7 @@ function getCurrentServiceEnvironment(unitName) {
 
 function buildMeasurementEnvironment(currentEnv, options) {
     const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
-    return {
+    const measurementEnv = {
         ...currentEnv,
         MCP_RUNTIME_MODE: 'daemon',
         INDEX_ACCELERATOR_MODE: options.acceleratorMode,
@@ -439,8 +514,24 @@ function buildMeasurementEnvironment(currentEnv, options) {
         INDEX_ADAPTIVE_BACKPRESSURE: String(adaptiveBackpressure),
         BGE_M3_ACCELERATOR_MANAGED_WORKERS: String(options.managedWorkers),
         BGE_M3_ACCELERATOR_MAX_WORKERS: String(options.maxWorkers),
-        '1C_INDEX_SCOPE_PROFILE': options.oneCIndexScopeProfile,
+        VECTOR_DATABASE_BACKEND: process.env.VECTOR_DATABASE_BACKEND || currentEnv.VECTOR_DATABASE_BACKEND || 'milvus',
     };
+    if (process.env.LANCEDB_URI || currentEnv.LANCEDB_URI) {
+        measurementEnv.LANCEDB_URI = process.env.LANCEDB_URI || currentEnv.LANCEDB_URI;
+    }
+    if (process.env.QDRANT_URL || currentEnv.QDRANT_URL) {
+        measurementEnv.QDRANT_URL = process.env.QDRANT_URL || currentEnv.QDRANT_URL;
+    }
+    if (process.env.QDRANT_API_KEY || currentEnv.QDRANT_API_KEY) {
+        measurementEnv.QDRANT_API_KEY = process.env.QDRANT_API_KEY || currentEnv.QDRANT_API_KEY;
+    }
+    if (options.embeddingMaxContentChars !== undefined) {
+        measurementEnv.INDEX_EMBEDDING_MAX_CONTENT_CHARS = String(options.embeddingMaxContentChars);
+    }
+    if (options.embeddingMaxEstimatedTokens !== undefined) {
+        measurementEnv.INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS = String(options.embeddingMaxEstimatedTokens);
+    }
+    return measurementEnv;
 }
 
 function stopUnit(unitName) {
@@ -592,24 +683,45 @@ function compactBatch(batch) {
         state: batch.state,
         firstFile: batch.firstFile,
         lastFile: batch.lastFile,
+        contentCharCount: batch.contentCharCount,
         estimatedTokens: batch.estimatedTokens,
+        effectiveMaxContentChars: batch.effectiveMaxContentChars,
+        effectiveMaxEstimatedTokens: batch.effectiveMaxEstimatedTokens,
+        payloadSplitReason: batch.payloadSplitReason,
+        payloadRetrySplitCount: batch.payloadRetrySplitCount,
         insertChunkCounts: batch.insertChunkCounts,
     };
 }
 
 function summarizeBatches(batches) {
     const byState = {};
+    const byPayloadSplitReason = {};
     const chunkCounts = [];
+    const contentCharCounts = [];
     const tokenEstimates = [];
+    const payloadRetrySplitCounts = [];
     const insertChunkCounts = [];
+    let singleChunkFatal = false;
     for (const batch of batches) {
         const state = batch?.state || 'unknown';
         byState[state] = (byState[state] || 0) + 1;
+        if (batch?.payloadSplitReason) {
+            byPayloadSplitReason[batch.payloadSplitReason] = (byPayloadSplitReason[batch.payloadSplitReason] || 0) + 1;
+            if (batch.payloadSplitReason === 'single_chunk_limit_exceeded' && batch.state === 'failed') {
+                singleChunkFatal = true;
+            }
+        }
         if (Number.isFinite(batch?.chunkCount)) {
             chunkCounts.push(batch.chunkCount);
         }
+        if (Number.isFinite(batch?.contentCharCount)) {
+            contentCharCounts.push(batch.contentCharCount);
+        }
         if (Number.isFinite(batch?.estimatedTokens)) {
             tokenEstimates.push(batch.estimatedTokens);
+        }
+        if (Number.isFinite(batch?.payloadRetrySplitCount)) {
+            payloadRetrySplitCounts.push(batch.payloadRetrySplitCount);
         }
         if (Array.isArray(batch?.insertChunkCounts)) {
             for (const count of batch.insertChunkCounts) {
@@ -626,8 +738,13 @@ function summarizeBatches(batches) {
     return {
         count: batches.length,
         byState,
+        byPayloadSplitReason,
         chunkCount: summarizeNumbers(chunkCounts),
+        contentChars: summarizeNumbers(contentCharCounts),
         tokenEstimate: summarizeNumbers(tokenEstimates),
+        payloadRetrySplits: summarizeNumbers(payloadRetrySplitCounts),
+        payloadSplitCount: Object.values(byPayloadSplitReason).reduce((sum, count) => sum + count, 0),
+        singleChunkFatal,
         insertChunks: summarizeNumbers(insertChunkCounts),
         activeTail: active,
         latestTail: batches.slice(-10).map(compactBatch),
@@ -683,6 +800,10 @@ function summarizeRetryAndWorkers(accelerator) {
         batchSizeSummary: {
             embeddingBatchSize: accelerator.embeddingBatchSize || 100,
             insertBatchSize: accelerator.insertBatchSize || accelerator.embeddingBatchSize || 100,
+            embeddingMaxContentChars: accelerator.embeddingMaxContentChars,
+            embeddingMaxEstimatedTokens: accelerator.embeddingMaxEstimatedTokens,
+            effectiveEmbeddingMaxContentChars: accelerator.effectiveEmbeddingMaxContentChars,
+            effectiveEmbeddingMaxEstimatedTokens: accelerator.effectiveEmbeddingMaxEstimatedTokens,
             totalChunks: accelerator.batchesSummary?.chunkCount?.count || accelerator.batches?.reduce((sum, batch) => sum + (batch?.chunkCount || 0), 0) || 0,
             submittedBatches: accelerator.submittedBatches || 0,
             completedBatches: accelerator.completedBatches || 0,
@@ -790,6 +911,8 @@ async function prepareDaemon(options, runDir) {
             INDEX_ACCELERATOR_MODE: measurementEnv.INDEX_ACCELERATOR_MODE,
             INDEX_EMBEDDING_BATCH_SIZE: measurementEnv.INDEX_EMBEDDING_BATCH_SIZE,
             INDEX_INSERT_BATCH_SIZE: measurementEnv.INDEX_INSERT_BATCH_SIZE,
+            INDEX_EMBEDDING_MAX_CONTENT_CHARS: measurementEnv.INDEX_EMBEDDING_MAX_CONTENT_CHARS,
+            INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS: measurementEnv.INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS,
             INDEX_EMBEDDING_CONCURRENCY: measurementEnv.INDEX_EMBEDDING_CONCURRENCY,
             INDEX_INSERT_CONCURRENCY: measurementEnv.INDEX_INSERT_CONCURRENCY,
             INDEX_INSERT_QUEUE_CAPACITY: measurementEnv.INDEX_INSERT_QUEUE_CAPACITY,
@@ -799,6 +922,10 @@ async function prepareDaemon(options, runDir) {
             EMBEDDING_PROVIDER: measurementEnv.EMBEDDING_PROVIDER,
             BGE_M3_MODE: measurementEnv.BGE_M3_MODE,
             BGE_M3_STORE_COLBERT: measurementEnv.BGE_M3_STORE_COLBERT,
+            VECTOR_DATABASE_BACKEND: measurementEnv.VECTOR_DATABASE_BACKEND,
+            LANCEDB_URI: measurementEnv.LANCEDB_URI,
+            QDRANT_URL: measurementEnv.QDRANT_URL,
+            QDRANT_API_KEY: measurementEnv.QDRANT_API_KEY,
             '1C_INDEX_SCOPE_PROFILE': measurementEnv['1C_INDEX_SCOPE_PROFILE'],
             MILVUS_ADDRESS: measurementEnv.MILVUS_ADDRESS,
         }),
@@ -888,6 +1015,8 @@ async function measure(options, clientConfig, runDir) {
         oneCIndexScopeProfile: options.oneCIndexScopeProfile,
         embeddingBatchSize: options.embeddingBatchSize,
         insertBatchSize: options.insertBatchSize ?? options.embeddingBatchSize,
+        embeddingMaxContentChars: options.embeddingMaxContentChars,
+        embeddingMaxEstimatedTokens: options.embeddingMaxEstimatedTokens,
         embeddingConcurrency: options.embeddingConcurrency,
         insertConcurrency: options.insertConcurrency,
         insertQueueCapacity: options.insertQueueCapacity,
@@ -980,9 +1109,10 @@ async function main() {
         return;
     }
     const adaptiveBackpressure = options.adaptiveBackpressure ?? (options.acceleratorMode === 'auto');
+    const payloadSlug = `maxchars${options.embeddingMaxContentChars ?? 'env'}-maxtokens${options.embeddingMaxEstimatedTokens ?? 'env'}`;
     const runDir = options.runDir || createRunDir(
         options.artifactDir,
-        `${options.acceleratorMode}-scope${options.oneCIndexScopeProfile}-embbatch${options.embeddingBatchSize}-insertbatch${options.insertBatchSize ?? options.embeddingBatchSize}-insert${options.insertConcurrency}-adaptive${adaptiveBackpressure}`,
+        `${options.acceleratorMode}-scope${options.oneCIndexScopeProfile}-embbatch${options.embeddingBatchSize}-insertbatch${options.insertBatchSize ?? options.embeddingBatchSize}-${payloadSlug}-insert${options.insertConcurrency}-adaptive${adaptiveBackpressure}`,
     );
     fs.mkdirSync(runDir, { recursive: true });
     const clientConfig = options.monitorOnly

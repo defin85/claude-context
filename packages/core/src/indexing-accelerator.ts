@@ -4,8 +4,12 @@ import type { OneCIndexScopeSummary } from './sync/one-c-scope';
 import * as os from 'node:os';
 
 const MAX_INDEX_BATCH_SIZE = 10_000;
+const MAX_EMBEDDING_PAYLOAD_LIMIT = 1_000_000_000;
+const DEFAULT_BGE_M3_FULL_MAX_CONTENT_CHARS = 1_000_000;
+const DEFAULT_BGE_M3_FULL_MAX_ESTIMATED_TOKENS = 250_000;
 
 export type IndexingAcceleratorMode = 'off' | 'auto';
+export type EmbeddingPayloadRetrievalMode = 'dense' | 'hybrid_bm25' | 'bge_m3_dense' | 'bge_m3_full';
 export type PreIndexPhase = 'idle' | 'traversal' | 'complete';
 export type EmbeddingWorkerFailureReason =
     | 'startup'
@@ -72,6 +76,8 @@ export interface IndexingAcceleratorConfig {
     vramLimitPercent: number;
     retryBudget: number;
     accelerateBackgroundSync: boolean;
+    embeddingMaxContentChars?: number;
+    embeddingMaxEstimatedTokens?: number;
     adaptiveBackpressure: AdaptiveBackpressureConfig;
 }
 
@@ -100,6 +106,10 @@ export interface IndexingAcceleratorSnapshot {
     vramLimitPercent: number;
     retryBudget: number;
     accelerateBackgroundSync: boolean;
+    embeddingMaxContentChars?: number;
+    embeddingMaxEstimatedTokens?: number;
+    effectiveEmbeddingMaxContentChars?: number;
+    effectiveEmbeddingMaxEstimatedTokens?: number;
     inFlightEmbeddingBatches: number;
     inFlightInsertBatches: number;
     queuedBatches?: number;
@@ -193,10 +203,15 @@ export interface IndexingAcceleratorWorkerSnapshot {
 export interface IndexingBatchMetadata {
     id: number;
     chunkCount: number;
+    contentCharCount?: number;
     estimatedTokens?: number;
     firstFile?: string;
     lastFile?: string;
     insertChunkCounts?: number[];
+    effectiveMaxContentChars?: number;
+    effectiveMaxEstimatedTokens?: number;
+    payloadSplitReason?: 'chunk_count' | 'content_chars' | 'estimated_tokens' | 'single_chunk_limit_exceeded';
+    payloadRetrySplitCount?: number;
 }
 
 export interface IndexingBatchSnapshot extends IndexingBatchMetadata {
@@ -234,6 +249,10 @@ export class IndexingAcceleratorRuntime {
             vramLimitPercent: config.vramLimitPercent,
             retryBudget: config.retryBudget,
             accelerateBackgroundSync: config.accelerateBackgroundSync,
+            embeddingMaxContentChars: config.embeddingMaxContentChars,
+            embeddingMaxEstimatedTokens: config.embeddingMaxEstimatedTokens,
+            effectiveEmbeddingMaxContentChars: config.embeddingMaxContentChars,
+            effectiveEmbeddingMaxEstimatedTokens: config.embeddingMaxEstimatedTokens,
             inFlightEmbeddingBatches: 0,
             inFlightInsertBatches: 0,
             queuedBatches: 0,
@@ -458,6 +477,16 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
+    recordBatchPayloadRetrySplit(batchId?: number): void {
+        if (batchId === undefined) {
+            return;
+        }
+        const batch = this.batches.get(batchId);
+        if (batch) {
+            batch.payloadRetrySplitCount = (batch.payloadRetrySplitCount ?? 0) + 1;
+        }
+    }
+
     recordBatchInsertChunkCounts(batchId: number | undefined, insertChunkCounts: number[]): void {
         if (batchId === undefined) {
             return;
@@ -466,6 +495,11 @@ export class IndexingAcceleratorRuntime {
         if (batch) {
             batch.insertChunkCounts = [...insertChunkCounts];
         }
+    }
+
+    recordEffectivePayloadLimits(limits: { maxContentChars?: number; maxEstimatedTokens?: number }): void {
+        this.snapshot.effectiveEmbeddingMaxContentChars = limits.maxContentChars;
+        this.snapshot.effectiveEmbeddingMaxEstimatedTokens = limits.maxEstimatedTokens;
     }
 
     recordWorkerLifecycle(event: WorkerLifecycleEvent, reason: EmbeddingWorkerFailureReason = 'unknown'): void {
@@ -899,6 +933,21 @@ function parseBatchSize(name: string, fallback: number): number {
     return Math.max(1, Math.min(MAX_INDEX_BATCH_SIZE, parsed));
 }
 
+function parsePayloadLimit(name: string): number | undefined {
+    const rawValue = envManager.get(name);
+    if (!rawValue || rawValue.toLowerCase() === 'auto') {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+        return Math.max(1, Math.min(MAX_EMBEDDING_PAYLOAD_LIMIT, parsed));
+    }
+
+    console.warn(`[Context] ⚠️ Ignoring invalid ${name}='${rawValue}'. Expected a positive integer.`);
+    return undefined;
+}
+
 function parseEmbeddingBatchSize(): number {
     const fallback = parseBatchSize('EMBEDDING_BATCH_SIZE', 100);
     return parseBatchSize('INDEX_EMBEDDING_BATCH_SIZE', fallback);
@@ -943,6 +992,8 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
         vramLimitPercent: parsePercent('BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT', 75),
         retryBudget: parsePositiveInteger('INDEX_ACCELERATOR_RETRY_BUDGET', 1),
         accelerateBackgroundSync: parseBoolean('INDEX_ACCELERATE_BACKGROUND_SYNC', false),
+        embeddingMaxContentChars: parsePayloadLimit('INDEX_EMBEDDING_MAX_CONTENT_CHARS'),
+        embeddingMaxEstimatedTokens: parsePayloadLimit('INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS'),
         adaptiveBackpressure: {
             enabled: parseBoolean('INDEX_ADAPTIVE_BACKPRESSURE', adaptiveDefaults.enabled),
             minEmbeddingConcurrency: parsePositiveInteger('INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY', adaptiveDefaults.minEmbeddingConcurrency),
@@ -959,6 +1010,30 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
             memoryFreePercentThreshold: parsePercent('INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD', adaptiveDefaults.memoryFreePercentThreshold),
             vramUsageLimitPercent: parsePercent('INDEX_ADAPTIVE_VRAM_USAGE_LIMIT_PERCENT', adaptiveDefaults.vramUsageLimitPercent),
         },
+    };
+}
+
+export function getEffectiveEmbeddingPayloadLimits(
+    config: Pick<IndexingAcceleratorConfig, 'embeddingMaxContentChars' | 'embeddingMaxEstimatedTokens'>,
+    retrievalMode: EmbeddingPayloadRetrievalMode,
+): { maxContentChars?: number; maxEstimatedTokens?: number } {
+    if (config.embeddingMaxContentChars !== undefined || config.embeddingMaxEstimatedTokens !== undefined) {
+        return {
+            maxContentChars: config.embeddingMaxContentChars,
+            maxEstimatedTokens: config.embeddingMaxEstimatedTokens,
+        };
+    }
+
+    if (retrievalMode === 'bge_m3_full') {
+        return {
+            maxContentChars: DEFAULT_BGE_M3_FULL_MAX_CONTENT_CHARS,
+            maxEstimatedTokens: DEFAULT_BGE_M3_FULL_MAX_ESTIMATED_TOKENS,
+        };
+    }
+
+    return {
+        maxContentChars: undefined,
+        maxEstimatedTokens: undefined,
     };
 }
 

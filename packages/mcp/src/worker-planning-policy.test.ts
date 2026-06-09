@@ -183,6 +183,15 @@ test('worker planning policy exposes canonical status field paths', () => {
         'accelerator.failedInsertBatches',
         'accelerator.insertMs',
     ]);
+    assert.deepEqual(policy.statusFields.payloadBatching, [
+        'accelerator.embeddingMaxContentChars',
+        'accelerator.embeddingMaxEstimatedTokens',
+        'accelerator.effectiveEmbeddingMaxContentChars',
+        'accelerator.effectiveEmbeddingMaxEstimatedTokens',
+        'accelerator.batches[].contentCharCount',
+        'accelerator.batches[].payloadSplitReason',
+        'accelerator.batches[].payloadRetrySplitCount',
+    ]);
     assert.deepEqual(policy.statusFields.adaptiveBackpressure, [
         'accelerator.adaptiveBackpressureEnabled',
         'accelerator.configuredEmbeddingConcurrency',
