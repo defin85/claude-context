@@ -1920,6 +1920,14 @@ export class Context {
         }
         const submittedBatches: Promise<void>[] = [];
         const batchErrors: unknown[] = [];
+        let acceleratedBatchFailure: unknown;
+        let rejectAcceleratedBatchFailure!: (error: unknown) => void;
+        const acceleratedBatchFailurePromise = new Promise<never>((_resolve, reject) => {
+            rejectAcceleratedBatchFailure = reject;
+        });
+        acceleratedBatchFailurePromise.catch(() => {
+            // The promise is used as a fail-fast race signal for producer work.
+        });
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
         console.log(
             `[Context] 🔧 Using INDEX_EMBEDDING_BATCH_SIZE: ${embeddingBatchSize}`,
@@ -1959,6 +1967,26 @@ export class Context {
                 lastFile: filePaths[filePaths.length - 1],
             };
         };
+        const recordAcceleratedBatchFailure = (error: unknown) => {
+            if (acceleratedBatchFailure === undefined) {
+                acceleratedBatchFailure = error;
+                rejectAcceleratedBatchFailure(error);
+            }
+        };
+        const throwIfAcceleratedBatchFailed = () => {
+            if (acceleratedBatchFailure !== undefined) {
+                throw acceleratedBatchFailure;
+            }
+        };
+        const raceWithAcceleratedBatchFailure = <T>(operation: Promise<T>): Promise<T> => {
+            if (acceleratedBatchFailure !== undefined) {
+                return Promise.reject(acceleratedBatchFailure);
+            }
+            if (!accelerationDecision.active) {
+                return operation;
+            }
+            return Promise.race([operation, acceleratedBatchFailurePromise]);
+        };
         const scheduler = accelerationDecision.active
             ? new EmbeddingBatchScheduler({
                 runtime: acceleratorRuntime,
@@ -1977,11 +2005,17 @@ export class Context {
             finalBatch: boolean,
         ): Promise<void> => {
             if (scheduler) {
-                const handle = await scheduler.submit({
-                    metadata: batchMetadata,
-                    runEmbedding: () => this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata),
-                    runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize),
-                });
+                let handle;
+                try {
+                    handle = await scheduler.submit({
+                        metadata: batchMetadata,
+                        runEmbedding: () => this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata),
+                        runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize),
+                    });
+                } catch (error) {
+                    recordAcceleratedBatchFailure(error);
+                    throw error;
+                }
                 const completion = handle.completion.catch((error) => {
                     const searchType = isHybrid === true ? "hybrid" : "regular";
                     console.error(
@@ -1992,6 +2026,7 @@ export class Context {
                         console.error("[Context] Stack trace:", error.stack);
                     }
                     batchErrors.push(error);
+                    recordAcceleratedBatchFailure(error);
                 }).finally(() => {
                     publishBatchProgress();
                 });
@@ -2021,24 +2056,31 @@ export class Context {
         try {
             for (let i = 0; i < filePaths.length; i++) {
                 throwIfOperationAborted(abortSignal);
+                throwIfAcceleratedBatchFailed();
                 const filePath = filePaths[i];
 
                 try {
                     const scanStartedAt = Date.now();
-                    const content = await fs.promises.readFile(filePath, "utf-8");
+                    const content = await raceWithAcceleratedBatchFailure(
+                        fs.promises.readFile(filePath, "utf-8"),
+                    );
                     acceleratorRuntime.recordScan(Date.now() - scanStartedAt);
                     throwIfOperationAborted(abortSignal);
+                    throwIfAcceleratedBatchFailed();
                     const language = this.getLanguageFromExtension(
                         path.extname(filePath),
                     );
                     const splitStartedAt = Date.now();
-                    const chunks = await this.codeSplitter.split(
-                        content,
-                        language,
-                        filePath,
+                    const chunks = await raceWithAcceleratedBatchFailure(
+                        this.codeSplitter.split(
+                            content,
+                            language,
+                            filePath,
+                        ),
                     );
                     acceleratorRuntime.recordSplit(Date.now() - splitStartedAt);
                     throwIfOperationAborted(abortSignal);
+                    throwIfAcceleratedBatchFailed();
 
                     // Log files with many chunks or large content
                     if (chunks.length > 50) {
@@ -2067,6 +2109,7 @@ export class Context {
                         // Process batch when buffer reaches INDEX_EMBEDDING_BATCH_SIZE.
                         if (chunkBuffer.length >= embeddingBatchSize) {
                             throwIfOperationAborted(abortSignal);
+                            throwIfAcceleratedBatchFailed();
                             const batch = chunkBuffer;
                             const batchMetadata = createBatchMetadata(batch);
                             chunkBuffer = [];
@@ -2096,6 +2139,9 @@ export class Context {
                     if (isFatalEmbeddingBatchError(error)) {
                         throw error;
                     }
+                    if (acceleratedBatchFailure !== undefined) {
+                        throw acceleratedBatchFailure;
+                    }
                     console.warn(
                         `[Context] ⚠️  Skipping file ${filePath}: ${error}`,
                     );
@@ -2105,6 +2151,7 @@ export class Context {
             // Process any remaining chunks in the buffer
             if (chunkBuffer.length > 0) {
                 throwIfOperationAborted(abortSignal);
+                throwIfAcceleratedBatchFailed();
                 const searchType = isHybrid === true ? "hybrid" : "regular";
                 console.log(
                     `📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`,
@@ -2127,6 +2174,7 @@ export class Context {
         publishBatchProgress();
         if (scheduler) {
             await Promise.all(submittedBatches);
+            await scheduler.drain();
         } else {
             await Promise.all(submittedBatches);
         }

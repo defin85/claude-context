@@ -158,6 +158,15 @@ class OneChunkSplitter implements Splitter {
     setChunkOverlap(): void {}
 }
 
+class CountingSplitter extends OneChunkSplitter {
+    splitCount = 0;
+
+    async split(code: string, language: string, filePath?: string): Promise<CodeChunk[]> {
+        this.splitCount++;
+        return super.split(code, language, filePath);
+    }
+}
+
 class DuplicateChunkSplitter implements Splitter {
     constructor(private readonly chunkCount: number) {}
 
@@ -346,6 +355,14 @@ describe('Context accelerated batch pipeline', () => {
         const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-context-accelerator-single-'));
         await fs.writeFile(path.join(dir, 'large.ts'), 'export const repeated = true;');
         return dir;
+    }
+
+    function enableAcceleratedInsertFailureRace(): void {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '4';
+        process.env.INDEX_INSERT_CONCURRENCY = '2';
+        process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
+        process.env.EMBEDDING_BATCH_SIZE = '1';
     }
 
     it('runs multiple embedding batches concurrently when acceleration is active', async () => {
@@ -738,11 +755,7 @@ describe('Context accelerated batch pipeline', () => {
     });
 
     it('fails fast on plain insert errors with insert stage and batch context', async () => {
-        process.env.INDEX_ACCELERATOR_MODE = 'auto';
-        process.env.INDEX_EMBEDDING_CONCURRENCY = '4';
-        process.env.INDEX_INSERT_CONCURRENCY = '2';
-        process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
-        process.env.EMBEDDING_BATCH_SIZE = '1';
+        enableAcceleratedInsertFailureRace();
         const vectorDatabase = new TrackingVectorDatabase();
         const runningInsert = deferred<void>();
         const firstInsertError = new Error('ambiguous vector write');
@@ -799,6 +812,98 @@ describe('Context accelerated batch pipeline', () => {
         } finally {
             process.off('unhandledRejection', onUnhandledRejection);
         }
+    });
+
+    it('stops producing new file batches after the first accelerated insert failure', async () => {
+        enableAcceleratedInsertFailureRace();
+        const vectorDatabase = new TrackingVectorDatabase();
+        const runningInsert = deferred<void>();
+        const firstInsertError = new Error('stop producer after insert failure');
+        const insert = jest.spyOn(vectorDatabase, 'insert')
+            .mockImplementation(async (collectionName, documents) => {
+                if (insert.mock.calls.length === 1) {
+                    await runningInsert.promise;
+                    await TrackingVectorDatabase.prototype.insert.call(vectorDatabase, collectionName, documents);
+                    return;
+                }
+                if (insert.mock.calls.length === 2) {
+                    throw firstInsertError;
+                }
+                throw new Error('producer scheduled insert work after terminal insert failure');
+            });
+        const splitter = new CountingSplitter();
+        const context = new Context({
+            embedding: new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: splitter,
+        });
+
+        let indexSettled = false;
+        const indexPromise = context.indexCodebase(await createCodebase())
+            .finally(() => {
+                indexSettled = true;
+            });
+
+        await waitForCondition(() => insert.mock.calls.length >= 2);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(indexSettled).toBe(false);
+        expect(splitter.splitCount).toBeLessThan(4);
+
+        runningInsert.resolve();
+        await expect(indexPromise)
+            .rejects
+            .toThrow(/Indexing batch \d+ failed during insert: stop producer after insert failure/);
+        expect(insert).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['hybrid', 'insertHybrid'] as const,
+        ['BGE-M3 upsert', 'upsertBgeM3'] as const,
+    ])('fails fast on %s insert errors through the accelerated scheduler boundary', async (_label, insertMethod) => {
+        enableAcceleratedInsertFailureRace();
+        const vectorDatabase = new TrackingVectorDatabase();
+        const runningInsert = deferred<void>();
+        const firstInsertError = new Error(`${insertMethod} vector write failed`);
+        const insert = jest.spyOn(vectorDatabase, insertMethod)
+            .mockImplementation(async (collectionName, documents) => {
+                if (insert.mock.calls.length === 1) {
+                    await runningInsert.promise;
+                    await TrackingVectorDatabase.prototype[insertMethod].call(vectorDatabase, collectionName, documents);
+                    return;
+                }
+                if (insert.mock.calls.length === 2) {
+                    throw firstInsertError;
+                }
+                throw new Error(`${insertMethod} queued insert should not start`);
+            });
+        if (insertMethod === 'insertHybrid') {
+            process.env.HYBRID_MODE = 'true';
+        }
+        const context = new Context({
+            embedding: insertMethod === 'upsertBgeM3'
+                ? new DelayedBgeM3Embedding(1)
+                : new DelayedEmbedding(1),
+            vectorDatabase,
+            codeSplitter: new OneChunkSplitter(),
+        });
+
+        let indexSettled = false;
+        const indexPromise = context.indexCodebase(await createCodebase())
+            .finally(() => {
+                indexSettled = true;
+            });
+
+        await waitForCondition(() => insert.mock.calls.length >= 2);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(indexSettled).toBe(false);
+        expect(insert).toHaveBeenCalledTimes(2);
+
+        runningInsert.resolve();
+        await expect(indexPromise)
+            .rejects
+            .toThrow(new RegExp(`Indexing batch \\d+ failed during insert: ${insertMethod} vector write failed`));
+        expect(insert).toHaveBeenCalledTimes(2);
+        expect(vectorDatabase.allDocuments()).toHaveLength(1);
     });
 
     it('uses accepted BGE-M3 worker count as default embedding concurrency', async () => {
