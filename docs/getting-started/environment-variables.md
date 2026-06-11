@@ -103,6 +103,14 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | `INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS` | Optional payload-safe cap on estimated tokens per embedding request. `auto`/unset leaves dense-only providers unchanged; BGE-M3 full applies its conservative effective default. | `auto` |
 | `CODE_CHUNK_LIMIT` | Maximum number of code chunks to index per codebase. Increase for very large repositories when you accept extra indexing time and vector database storage. If a previous run stopped at a lower limit, run a force reindex after raising this value to include chunks that were skipped before. | `450000` |
 | `1C_INDEX_SCOPE_PROFILE` | Scope profile for exported 1C configuration trees: `full`, `developer`, or `minimal`. Reduced profiles must be selected explicitly and require `force=true` when changing an existing index profile. | `full` |
+| `CODE_SYMBOL_RETRIEVAL` | Enable code-symbol lexical/provider fusion during search. Set to `false` to return to semantic-only ranking. | `true` |
+| `CODE_SYMBOL_MAX_LEXICAL_CANDIDATES` | Max no-reindex lexical candidates fetched from stored `content` and `relativePath` fields. | `max(50, topK * 10)` |
+| `CODE_SYMBOL_MAX_PROVIDER_CANDIDATES` | Max candidates requested from configured code-symbol providers. | `max(20, topK * 5)` |
+| `CODE_SYMBOL_PROVIDER_TIMEOUT_MS` | Timeout for code-symbol provider availability and query calls. | `750` |
+| `RLM_TOOLS_BSL_COMMAND` | Optional subprocess command for the `rlm-tools-bsl` JSON provider. The provider remains disabled unless structured availability args are also configured. | None |
+| `RLM_TOOLS_BSL_ARGS_JSON` | JSON argv template for provider search. Supports `{codebasePath}`, `{query}`, and `{limit}` placeholders; argv arrays are used without shell interpolation. | `["symbol-search","--json","--path","{codebasePath}","--query","{query}","--limit","{limit}"]` |
+| `RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON` | JSON argv template that returns structured provider status such as `available`, `stale`, `missing`, or `busy`. Required before `rlm-tools-bsl` candidates are used. | None |
+| `RLM_TOOLS_BSL_ROOT` | Optional source root used to translate provider absolute paths into indexed relative paths. | None |
 | `SPLITTER_TYPE` | Code splitter type: `ast`, `langchain` | `ast` |
 | `CUSTOM_EXTENSIONS` | Additional file extensions to include (comma-separated, e.g., `.vue,.svelte,.astro`) | None |
 | `CUSTOM_IGNORE_PATTERNS` | Additional ignore patterns (comma-separated, e.g., `temp/**,*.backup,private/**`) | None |

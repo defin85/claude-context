@@ -99,6 +99,13 @@ Transport options to evaluate during implementation:
 - MCP-to-MCP integration only if the local runtime supports it cleanly; avoid making agents manually coordinate two tools for normal search.
 - If no stable machine-readable transport is available, keep the provider disabled and rely on semantic/no-reindex fallback rather than scraping human-readable output.
 
+Implementation selection for v1:
+- Use an opt-in subprocess JSON adapter configured by `RLM_TOOLS_BSL_COMMAND` and argv-template environment variables.
+- Availability/staleness detection is machine-readable only: when `RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON` is configured, the adapter accepts structured statuses such as `available`, `stale`, `missing`, or `busy`; otherwise the provider is reported as `unsupported` and search fails open to semantic retrieval plus no-reindex lexical matching.
+- Search calls use argv arrays with placeholders, never shell interpolation.
+- The adapter only queries an existing provider/index and never builds, updates, or drops `rlm-tools-bsl` indexes.
+- If structured JSON output is unavailable or invalid, provider status becomes diagnostic-only and search fails open to semantic retrieval plus no-reindex lexical matching.
+
 ### Decision: Keep a no-reindex lexical fallback
 
 When no symbol provider is available, the implementation may derive lexical candidates from fields already stored in Milvus: `content`, `relativePath`, `fileExtension`, and `metadata`. This remains a bootstrap and compatibility path, not the target BSL exact-symbol architecture.

@@ -1,0 +1,188 @@
+{
+  "dataset": "demo-1c-relevance",
+  "version": 1,
+  "fixture": "examples/demo-1c",
+  "labelsAreProductionRules": false,
+  "queries": [
+    {
+      "id": "r01",
+      "query": "остатки товаров на складах отчет по складу",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Reports/ОстаткиТоваровНаСкладах", "Reports/ОстаткиТоваровНаСкладахМобильный", "CommonCommands/ОстаткиТоваровНаСкладахКоманда", "Catalogs/Товары/Forms/ФормаСпискаСОстатками"]
+    },
+    {
+      "id": "r02",
+      "query": "проведение расход товара списание товарных запасов",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Documents/РасходТовара/Ext/ObjectModule.bsl"]
+    },
+    {
+      "id": "r03",
+      "query": "проведение приход товара поступление товарных запасов",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Documents/ПриходТовара/Ext/ObjectModule.bsl", "Documents/ПриходТовара/Ext/ManagerModule.bsl"]
+    },
+    {
+      "id": "r04",
+      "query": "форма документа заказ покупателя подбор товаров количество цена",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Documents/Заказ/Forms/ФормаДокумента", "Documents/Заказ/Ext/ObjectModule.bsl"]
+    },
+    {
+      "id": "r05",
+      "query": "печать расходной накладной документ расход товара",
+      "kind": "known-miss",
+      "expectedPathPrefixes": ["Documents/РасходТовара/Commands/ПечатьРасходнойНакладной"]
+    },
+    {
+      "id": "r06",
+      "query": "карточка товара реквизиты цена артикул штрихкод",
+      "kind": "known-miss",
+      "expectedPathPrefixes": ["Catalogs/Товары/Forms/ФормаЭлемента", "Catalogs/Товары/Ext/ObjectModule.bsl"]
+    },
+    {
+      "id": "r07",
+      "query": "печать прайс листа товаров",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/Товары/Commands/ПечатьПрайсЛиста", "DataProcessors/РедактированиеЦен", "InformationRegisters/ЦеныТоваров"]
+    },
+    {
+      "id": "r08",
+      "query": "редактирование цен товаров установка цены",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/РедактированиеЦен", "InformationRegisters/ЦеныТоваров"]
+    },
+    {
+      "id": "r09",
+      "query": "карточка контрагента контактное лицо электронная почта",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента", "Catalogs/Контрагенты/Ext/ObjectModule.bsl", "Catalogs/Контрагенты/Ext/ManagerModule.bsl"]
+    },
+    {
+      "id": "r10",
+      "query": "взаиморасчеты с контрагентами остатки задолженность",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["AccumulationRegisters/Взаиморасчеты", "Bots/ОфисМенеджер/Ext/Module.bsl"]
+    },
+    {
+      "id": "r11",
+      "query": "исходящее письмо отправить письмо контрагенту",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/ИсходящиеПисьма", "CommonModules/РаботаСПочтой", "CommonModules/РаботаСПочтойВызовСервера"]
+    },
+    {
+      "id": "r12",
+      "query": "настройка почты отправка smtp электронная почта",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/ЭлектроннаяПочта", "CommonForms/НастройкаПочты", "CommonModules/РаботаСПочтой"]
+    },
+    {
+      "id": "r13",
+      "query": "входящее письмо ответить создать исходящее письмо",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/ВходящиеПисьма", "Catalogs/ИсходящиеПисьма"]
+    },
+    {
+      "id": "r14",
+      "query": "присоединенные файлы загрузка файлов форма загрузки",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/ХранимыеФайлы/Forms/ФормаЗагрузкиФайлов", "Catalogs/ХранимыеФайлы"]
+    },
+    {
+      "id": "r15",
+      "query": "форма списка хранимых файлов сертификаты пароль",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/ХранимыеФайлы/Forms/ФормаСписка", "Catalogs/ХранимыеФайлы/Forms/СписокСертификатов", "Catalogs/ХранимыеФайлы/Forms/ФормаПароля"]
+    },
+    {
+      "id": "r16",
+      "query": "календарь встреч планировщик дата начала окончания",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/Встречи/Forms/Календарь", "Catalogs/Встречи/Forms/ФормаЭлемента", "Catalogs/Встречи/Ext/ObjectModule.bsl"]
+    },
+    {
+      "id": "r17",
+      "query": "создать встречу записать в календарь пользователь начало конец",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Catalogs/Встречи/Forms/Календарь", "Catalogs/Встречи/Ext/ManagerModule.bsl"]
+    },
+    {
+      "id": "r18",
+      "query": "журнал регистрации отбор событий пользователи ошибки",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/ЖурналРегистрации"]
+    },
+    {
+      "id": "r19",
+      "query": "список активных пользователей сеансы пользователей",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/СписокАктивныхПользователей"]
+    },
+    {
+      "id": "r20",
+      "query": "удаление помеченных объектов основная форма обработки",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/УдалениеПомеченныхОбъектов"]
+    },
+    {
+      "id": "r21",
+      "query": "управление настройками форм сохранить восстановить настройки",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/УправлениеНастройкамиФорм", "CommonModules/РаботаСХранилищемОбщихНастроек"]
+    },
+    {
+      "id": "r22",
+      "query": "хранилище вариантов отчетов сохранение загрузка варианта",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов", "Catalogs/ХранилищеВариантовОтчетов"]
+    },
+    {
+      "id": "r23",
+      "query": "полнотекстовый поиск индексирование данных управление поиском",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["DataProcessors/УправлениеПолнотекстовымПоиском", "CommonModules/РаботаСПолнотекстовымПоиском", "CommonModules/ГлобальныйПоискСервер"]
+    },
+    {
+      "id": "r24",
+      "query": "глобальный поиск сервер поиск по объектам метаданные",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["CommonModules/ГлобальныйПоискСервер", "CommonModules/ГлобальныйПоискКлиент"]
+    },
+    {
+      "id": "r25",
+      "query": "бот офис менеджер обработка сообщения системы взаимодействия",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Bots/ОфисМенеджер", "CommonCommands/БотОфисМенеджер", "CommonModules/БотСервер", "CommonModules/БотКлиент"]
+    },
+    {
+      "id": "r26",
+      "query": "система взаимодействия обсуждения уведомления пользователи бот",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["CommonModules/СистемаВзаимодействияКлиент", "DataProcessors/УправлениеСистемойВзаимодействия", "Bots/ОфисМенеджер", "CommonModules/БотСервер"]
+    },
+    {
+      "id": "r27",
+      "query": "мобильная форма подбора товаров заказ расход",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["CommonForms/ФормаПодбораМобильная", "CommonForms/ФормаПодбора", "Documents/Заказ/Forms/ФормаДокумента", "Documents/РасходТовара/Forms/ФормаДокумента"]
+    },
+    {
+      "id": "r28",
+      "query": "настройки мобильного устройства форма настройки",
+      "kind": "known-miss",
+      "expectedPathPrefixes": ["CommonForms/НастройкиМобильногоУстройства"]
+    },
+    {
+      "id": "r29",
+      "query": "обмен мобильные переопределяемый синхронизация мобильного приложения",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["CommonModules/ОбменМобильныеПереопределяемый", "CommonModules/ОбменМобильныеВызовПК"]
+    },
+    {
+      "id": "r30",
+      "query": "оформление доставки расход товара адрес доставки",
+      "kind": "navigation",
+      "expectedPathPrefixes": ["Documents/РасходТовара/Forms/ОформлениеДоставки", "Documents/РасходТовара/Forms/ФормаДокумента"]
+    }
+  ]
+}

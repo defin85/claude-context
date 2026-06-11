@@ -346,6 +346,28 @@ function parseFilterExpr(filter: string): Record<string, any> | undefined {
             }],
         };
     }
+    const likeMatch = filter.match(/^(content|relativePath)\s+like\s+"%((?:\\"|[^"])*)%"$/);
+    if (likeMatch) {
+        return {
+            must: [{
+                key: likeMatch[1],
+                match: { text: likeMatch[2].replace(/\\"/g, '"') },
+            }],
+        };
+    }
+    const extensionMatch = filter.match(/^fileExtension\s+in\s+\[(.*)\]$/);
+    if (extensionMatch) {
+        const extensions = [...extensionMatch[1].matchAll(/['"]((?:\\.|[^'"\\])*)['"]/g)]
+            .map((match) => match[1].replace(/\\(["'])/g, '$1'));
+        if (extensions.length > 0) {
+            return {
+                must: [{
+                    key: 'fileExtension',
+                    match: { any: extensions },
+                }],
+            };
+        }
+    }
     return undefined;
 }
 

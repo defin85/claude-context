@@ -18,6 +18,12 @@ import {
 } from "./vectordb";
 import { SemanticSearchResult } from "./types";
 import {
+    CodeSymbolProvider,
+    RlmToolsBslSubprocessProvider,
+    collectCodeSymbolCandidates,
+    fuseCodeSearchResults,
+} from "./code-symbol-retrieval";
+import {
     DEFAULT_IGNORE_PATTERNS,
     DEFAULT_SUPPORTED_EXTENSIONS,
 } from "./config-defaults";
@@ -159,6 +165,7 @@ export interface ContextConfig {
     customIgnorePatterns?: string[]; // New: custom ignore patterns from MCP
     collectionNameOverride?: string;
     acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
+    codeSymbolProviders?: CodeSymbolProvider[];
 }
 
 export interface CodebaseSessionConfig {
@@ -225,6 +232,7 @@ export class Context {
     private synchronizers = new Map<string, FileSynchronizer>();
     private lastAcceleratorSnapshot?: IndexingAcceleratorSnapshot;
     private acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
+    private codeSymbolProviders: CodeSymbolProvider[];
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -276,6 +284,7 @@ export class Context {
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
         this.collectionNameOverride = config.collectionNameOverride;
         this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
+        this.codeSymbolProviders = config.codeSymbolProviders || this.createCodeSymbolProvidersFromEnv();
 
         console.log(
             `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
@@ -732,6 +741,64 @@ export class Context {
         return Number.isInteger(parsedLimit) && parsedLimit > 0
             ? parsedLimit
             : topK;
+    }
+
+    private createCodeSymbolProvidersFromEnv(): CodeSymbolProvider[] {
+        const command = envManager.get("RLM_TOOLS_BSL_COMMAND");
+        if (!command) {
+            return [];
+        }
+
+        return [
+            new RlmToolsBslSubprocessProvider({
+                command,
+                args: this.parseJsonStringArrayEnv("RLM_TOOLS_BSL_ARGS_JSON"),
+                availabilityArgs: this.parseJsonStringArrayEnv("RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON"),
+                providerRoot: envManager.get("RLM_TOOLS_BSL_ROOT"),
+                timeoutMs: this.parsePositiveEnvInt("CODE_SYMBOL_PROVIDER_TIMEOUT_MS", 750),
+            }),
+        ];
+    }
+
+    private getCodeSymbolRetrievalEnabled(): boolean {
+        const raw = envManager.get("CODE_SYMBOL_RETRIEVAL");
+        return raw === undefined || raw === null || raw.toLowerCase() !== "false";
+    }
+
+    private getCodeSymbolRetrievalOptions(topK: number) {
+        return {
+            maxLexicalCandidates: this.parsePositiveEnvInt("CODE_SYMBOL_MAX_LEXICAL_CANDIDATES", Math.max(50, topK * 10)),
+            maxProviderCandidates: this.parsePositiveEnvInt("CODE_SYMBOL_MAX_PROVIDER_CANDIDATES", Math.max(20, topK * 5)),
+            providerTimeoutMs: this.parsePositiveEnvInt("CODE_SYMBOL_PROVIDER_TIMEOUT_MS", 750),
+        };
+    }
+
+    private parsePositiveEnvInt(name: string, defaultValue: number): number {
+        const rawValue = envManager.get(name);
+        if (!rawValue) {
+            return defaultValue;
+        }
+        const parsedValue = Number.parseInt(rawValue, 10);
+        return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : defaultValue;
+    }
+
+    private parseJsonStringArrayEnv(name: string): string[] | undefined {
+        const rawValue = envManager.get(name);
+        if (!rawValue) {
+            return undefined;
+        }
+        try {
+            const parsedValue = JSON.parse(rawValue);
+            if (Array.isArray(parsedValue) && parsedValue.every((item) => typeof item === "string")) {
+                return parsedValue;
+            }
+            console.warn(`[Context] ⚠️  ${name} must be a JSON string array. Ignoring it.`);
+        } catch (error) {
+            console.warn(
+                `[Context] ⚠️  Failed to parse ${name}: ${error instanceof Error ? error.message : String(error)}. Ignoring it.`,
+            );
+        }
+        return undefined;
     }
 
     private getBgeM3ColbertTokenLimit(): number {
@@ -1359,6 +1426,21 @@ export class Context {
             return [];
         }
 
+        const codeSymbolRetrievalPromise = this.getCodeSymbolRetrievalEnabled()
+            ? collectCodeSymbolCandidates(
+                this.vectorDatabase,
+                collectionName,
+                codebasePath,
+                query,
+                this.getCodeSymbolRetrievalOptions(topK),
+                this.codeSymbolProviders,
+                filterExpr,
+            )
+            : Promise.resolve({
+                lexicalCandidates: [],
+                diagnostics: { providerStatuses: [], providerUnmappedCandidates: [] },
+            });
+
         if (this.getRetrievalMode() === "bge_m3_full") {
             const multiVectorEmbedding = this.getMultiVectorBatchEmbeddingProvider();
             if (!multiVectorEmbedding) {
@@ -1404,7 +1486,7 @@ export class Context {
                 rerankLimit,
             );
 
-            return rerankedResults.map((result) => ({
+            const semanticResults = rerankedResults.map((result) => ({
                 content: result.document.content,
                 relativePath: result.document.relativePath,
                 startLine: result.document.startLine,
@@ -1413,6 +1495,14 @@ export class Context {
                 score: result.score,
                 metadata: result.metadata,
             }));
+            const codeSymbolRetrieval = await codeSymbolRetrievalPromise;
+            return fuseCodeSearchResults(
+                semanticResults,
+                codeSymbolRetrieval.lexicalCandidates,
+                query,
+                topK,
+                codeSymbolRetrieval.diagnostics,
+            );
         }
 
         if (isHybrid === true) {
@@ -1501,10 +1591,19 @@ export class Context {
                     endLine: result.document.endLine,
                     language: result.document.metadata.language || "unknown",
                     score: result.score,
+                    metadata: result.metadata,
                 }),
             );
 
-            const dedupedResults = this.deduplicateResults(results);
+            const codeSymbolRetrieval = await codeSymbolRetrievalPromise;
+            const fusedResults = fuseCodeSearchResults(
+                results,
+                codeSymbolRetrieval.lexicalCandidates,
+                query,
+                topK,
+                codeSymbolRetrieval.diagnostics,
+            );
+            const dedupedResults = this.deduplicateResults(fusedResults);
             console.log(
                 `[Context] ✅ Found ${results.length} relevant hybrid results, ${dedupedResults.length} after dedup`,
             );
@@ -1538,10 +1637,19 @@ export class Context {
                     endLine: result.document.endLine,
                     language: result.document.metadata.language || "unknown",
                     score: result.score,
+                    metadata: result.document.metadata,
                 }),
             );
 
-            const dedupedResults = this.deduplicateResults(results);
+            const codeSymbolRetrieval = await codeSymbolRetrievalPromise;
+            const fusedResults = fuseCodeSearchResults(
+                results,
+                codeSymbolRetrieval.lexicalCandidates,
+                query,
+                topK,
+                codeSymbolRetrieval.diagnostics,
+            );
+            const dedupedResults = this.deduplicateResults(fusedResults);
             console.log(
                 `[Context] ✅ Found ${results.length} relevant results, ${dedupedResults.length} after dedup`,
             );
