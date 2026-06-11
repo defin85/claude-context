@@ -19,6 +19,28 @@ Tell your agent:
 ```
 , which will call `get_indexing_status` tool to get error messages, progress information, or status details. They are helpful for troubleshooting.
 
+### Qdrant BGE-M3 Full Collection Compatibility
+
+Qdrant is the default vector database backend. BGE-M3 full retrieval requires each
+stored point to have dense, sparse, and ColBERT vectors. If `search_code` reports
+that a BGE-M3 candidate is missing ColBERT vectors, treat the collection as
+incompatible with full retrieval unless you have direct evidence that Qdrant
+stored the vectors and the backend failed to return them.
+
+When switching from another backend, changing retrieval schema, or reusing an old
+Qdrant collection, clear the affected index or force reindex the target codebase:
+
+```bash
+# Through MCP tools:
+# 1. clear_index for the target codebase
+# 2. index_codebase with force=true
+```
+
+Do not delete Qdrant storage files directly. If manual cleanup is unavoidable in
+a local development environment, delete only the target Qdrant collection through
+the Qdrant HTTP API, then run a clean force reindex and verify that Qdrant point
+metadata belongs to the target codebase.
+
 ### Local Milvus Disk Usage
 
 Local BGE-M3 full indexing can make Milvus storage grow quickly because full mode

@@ -45,7 +45,7 @@ Claude Context supports a global configuration file at `~/.context/.env` to simp
 ### Vector Database
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VECTOR_DATABASE_BACKEND` | Vector database backend: `milvus`, `lancedb`, or `qdrant` | `milvus` |
+| `VECTOR_DATABASE_BACKEND` | Vector database backend: `milvus`, `lancedb`, or `qdrant` | `qdrant` |
 | `LANCEDB_URI` | Local LanceDB directory when `VECTOR_DATABASE_BACKEND=lancedb` | `~/.context/lancedb` |
 | `QDRANT_URL` | Qdrant endpoint when `VECTOR_DATABASE_BACKEND=qdrant` | `http://127.0.0.1:6333` |
 | `QDRANT_API_KEY` | Optional Qdrant API key | None |

@@ -385,14 +385,14 @@ export function createMcpConfig(): ContextMcpConfig {
 }
 
 function parseVectorDatabaseBackend(rawValue: string | undefined): VectorDatabaseBackend {
-    if (!rawValue || rawValue === 'milvus') {
+    if (!rawValue || rawValue === 'qdrant') {
+        return 'qdrant';
+    }
+    if (rawValue === 'milvus') {
         return 'milvus';
     }
     if (rawValue === 'lancedb') {
         return 'lancedb';
-    }
-    if (rawValue === 'qdrant') {
-        return 'qdrant';
     }
     throw new Error(`Invalid VECTOR_DATABASE_BACKEND '${rawValue}'. Expected 'milvus', 'lancedb', or 'qdrant'.`);
 }
@@ -603,7 +603,18 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
     console.log(`[MCP]   Server: ${config.name} v${config.version}`);
     console.log(`[MCP]   Embedding Provider: ${config.embeddingProvider}`);
     console.log(`[MCP]   Embedding Model: ${config.embeddingModel}`);
-    console.log(`[MCP]   Milvus Address: ${config.milvusAddress || (config.milvusToken ? '[Auto-resolve from token]' : '[Not configured]')}`);
+    console.log(`[MCP]   Vector Database Backend: ${config.vectorDatabaseBackend}`);
+    switch (config.vectorDatabaseBackend) {
+        case 'qdrant':
+            console.log(`[MCP]   Qdrant URL: ${config.qdrantUrl || 'http://127.0.0.1:6333'}`);
+            break;
+        case 'lancedb':
+            console.log(`[MCP]   LanceDB URI: ${config.lancedbUri || path.join(os.homedir(), '.context', 'lancedb')}`);
+            break;
+        case 'milvus':
+            console.log(`[MCP]   Milvus Address: ${config.milvusAddress || (config.milvusToken ? '[Auto-resolve from token]' : '[Not configured]')}`);
+            break;
+    }
 
     // Log provider-specific configuration without exposing sensitive data
     switch (config.embeddingProvider) {
@@ -793,12 +804,16 @@ Environment Variables:
   BGE_M3_SIDECAR_SCRIPT  Sidecar script path (default: ./python/bge_m3_sidecar.py)
   
   Vector Database Configuration:
+  VECTOR_DATABASE_BACKEND Vector database backend: qdrant, milvus, or lancedb (default: qdrant)
+  QDRANT_URL             Qdrant endpoint (default: http://127.0.0.1:6333)
+  QDRANT_API_KEY         Qdrant API key (optional)
+  LANCEDB_URI            Local LanceDB directory (default: ~/.context/lancedb)
   MILVUS_ADDRESS          Milvus address (optional, can be auto-resolved from token)
   MILVUS_TOKEN            Milvus token (optional, used for authentication and address resolution)
 
 Examples:
-  # Start MCP server with OpenAI (default) and explicit Milvus address
-  OPENAI_API_KEY=sk-xxx MILVUS_ADDRESS=localhost:19530 npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with OpenAI (default) and Qdrant (default vector database)
+  OPENAI_API_KEY=sk-xxx QDRANT_URL=http://127.0.0.1:6333 npx @zilliz/claude-context-mcp@latest
   
   # Start MCP server with OpenAI and specific model
   OPENAI_API_KEY=sk-xxx EMBEDDING_MODEL=text-embedding-3-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest

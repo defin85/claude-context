@@ -13,6 +13,7 @@ const trackedEnv = [
     'EMBEDDING_BATCH_SIZE',
     'INDEX_EMBEDDING_BATCH_SIZE',
     'INDEX_INSERT_BATCH_SIZE',
+    'VECTOR_DATABASE_BACKEND',
 ];
 
 function withEnv(env: Record<string, string | undefined>, run: () => void): void {
@@ -76,5 +77,32 @@ test('index batch size summary uses core-compatible clamp and fallback', () => {
 
         assert.equal(config.indexEmbeddingBatchSize, 10000);
         assert.equal(config.indexInsertBatchSize, 10000);
+    });
+});
+
+test('vector database backend defaults to Qdrant while preserving explicit backends', () => {
+    withEnv({
+        VECTOR_DATABASE_BACKEND: undefined,
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.vectorDatabaseBackend, 'qdrant');
+        assert.equal(config.qdrantUrl, 'http://127.0.0.1:6333');
+    });
+
+    withEnv({
+        VECTOR_DATABASE_BACKEND: 'milvus',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.vectorDatabaseBackend, 'milvus');
+    });
+
+    withEnv({
+        VECTOR_DATABASE_BACKEND: 'lancedb',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.vectorDatabaseBackend, 'lancedb');
     });
 });

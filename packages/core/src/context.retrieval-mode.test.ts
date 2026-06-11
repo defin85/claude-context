@@ -405,7 +405,37 @@ describe('Context retrieval modes', () => {
         }];
 
         await expect(context.semanticSearch('/tmp/example', 'query', 1)).rejects.toThrow(
-            'missing ColBERT vectors',
+            "BGE-M3 full retrieval candidate 'corrupt-candidate' is missing ColBERT vectors. Clear or force reindex the collection if the stored vectors are missing; otherwise verify that the vector backend returns stored ColBERT vectors for rerank.",
+        );
+    });
+
+    it('fails clearly when BGE-M3 full candidates belong to another codebase', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase,
+        });
+        vectorDatabase.collections.add(context.getCollectionName('/tmp/example'));
+        vectorDatabase.bgeM3SearchResults = [{
+            document: {
+                id: 'foreign-candidate',
+                content: 'wrong codebase',
+                vector: [],
+                colbertVectors: [[1, 0]],
+                relativePath: 'foreign.ts',
+                startLine: 1,
+                endLine: 1,
+                fileExtension: '.ts',
+                metadata: {
+                    language: 'typescript',
+                    codebasePath: '/tmp/other',
+                },
+            },
+            score: 0.9,
+        }];
+
+        await expect(context.semanticSearch('/tmp/example', 'query', 1)).rejects.toThrow(
+            "BGE-M3 full retrieval candidate 'foreign-candidate' belongs to '/tmp/other', not '/tmp/example'. Clear the vector collection or force reindex the target codebase.",
         );
     });
 });

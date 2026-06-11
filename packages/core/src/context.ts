@@ -869,7 +869,7 @@ export class Context {
             .map((result) => {
                 if (!result.document.colbertVectors || result.document.colbertVectors.length === 0) {
                     throw new Error(
-                        `BGE-M3 full retrieval candidate '${result.document.id}' is missing ColBERT vectors. Reindex is required.`,
+                        `BGE-M3 full retrieval candidate '${result.document.id}' is missing ColBERT vectors. Clear or force reindex the collection if the stored vectors are missing; otherwise verify that the vector backend returns stored ColBERT vectors for rerank.`,
                     );
                 }
 
@@ -888,6 +888,22 @@ export class Context {
             })
             .sort((left, right) => right.score - left.score)
             .slice(0, limit);
+    }
+
+    private assertBgeM3ResultsBelongToCodebase(searchResults: HybridSearchResult[], codebasePath: string): void {
+        for (const result of searchResults) {
+            const resultCodebasePath = result.document.metadata?.codebasePath;
+            if (typeof resultCodebasePath !== "string" || resultCodebasePath.trim().length === 0) {
+                continue;
+            }
+
+            const normalizedResultCodebasePath = normalizeCodebasePath(resultCodebasePath);
+            if (normalizedResultCodebasePath !== codebasePath) {
+                throw new Error(
+                    `BGE-M3 full retrieval candidate '${result.document.id}' belongs to '${normalizedResultCodebasePath}', not '${codebasePath}'. Clear the vector collection or force reindex the target codebase.`,
+                );
+            }
+        }
     }
 
     private getPathHash(codebasePath: string): string {
@@ -1480,6 +1496,7 @@ export class Context {
                 },
             );
 
+            this.assertBgeM3ResultsBelongToCodebase(searchResults, codebasePath);
             const rerankedResults = this.rerankBgeM3Results(
                 queryEmbedding.colbert.vectors,
                 searchResults,

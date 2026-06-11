@@ -126,7 +126,7 @@ export class QdrantVectorDatabase implements VectorDatabase {
                 query: { fusion: 'rrf' },
                 limit: options.limit || 10,
                 with_payload: true,
-                with_vector: false,
+                with_vector: ['colbert'],
                 ...(options.filterExpr ? { filter: parseFilterExpr(options.filterExpr) } : {}),
             }),
         });
@@ -179,7 +179,13 @@ export class QdrantVectorDatabase implements VectorDatabase {
             : response.result?.payload_schema?._claude_context_metadata;
         void metadata;
         const collectionMetadata = await this.readCollectionMetadata(collectionName);
-        return collectionMetadata?.description || '';
+        if (collectionMetadata?.description) {
+            return collectionMetadata.description;
+        }
+        if (collectionName.startsWith('bge_m3_code_chunks_') && hasBgeM3VectorSchema(response)) {
+            return 'retrievalMode:bge_m3_full\nretrievalSchemaVersion:1';
+        }
+        return '';
     }
 
     async checkCollectionLimit(): Promise<boolean> {
@@ -260,7 +266,7 @@ export class QdrantVectorDatabase implements VectorDatabase {
             id: String(payload.id || point.id),
             vector: [],
             sparseVector: { indices: [], values: [] },
-            colbertVectors: [],
+            colbertVectors: extractColbertVectors(point.vector),
             content: String(payload.content || ''),
             relativePath: String(payload.relativePath || ''),
             startLine: Number(payload.startLine || 0),
@@ -336,6 +342,13 @@ function qdrantPoints(response: any): any[] {
     return [];
 }
 
+function hasBgeM3VectorSchema(response: any): boolean {
+    const params = response?.result?.config?.params || {};
+    const vectors = params.vectors || {};
+    const sparseVectors = params.sparse_vectors || params.sparseVectors || {};
+    return Boolean(vectors.dense && vectors.colbert && sparseVectors.sparse);
+}
+
 function parseFilterExpr(filter: string): Record<string, any> | undefined {
     const relativePathMatch = filter.match(/^relativePath\s*==\s*"((?:\\"|[^"])*)"$/);
     if (relativePathMatch) {
@@ -377,9 +390,24 @@ function projectPayload(payload: Record<string, any>, outputFields: string[]): R
     }
     const projected: Record<string, any> = {};
     for (const field of outputFields) {
-        projected[field] = payload[field];
+        projected[field] = field === 'metadata_json' && payload.metadata_json === undefined
+            ? payload.metadata
+            : payload[field];
     }
     return projected;
+}
+
+function extractColbertVectors(vector: any): number[][] {
+    if (Array.isArray(vector)) {
+        return isNumberMatrix(vector) ? vector : [];
+    }
+    const colbert = vector?.colbert;
+    return isNumberMatrix(colbert) ? colbert : [];
+}
+
+function isNumberMatrix(value: unknown): value is number[][] {
+    return Array.isArray(value)
+        && value.every((row) => Array.isArray(row) && row.every((item) => typeof item === 'number'));
 }
 
 function stableUuid(value: string): string {
