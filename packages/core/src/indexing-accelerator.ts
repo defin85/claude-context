@@ -1,6 +1,7 @@
 import { envManager } from './utils/env-manager';
 import type { PreIndexTraversalDiagnostics } from './sync/preindex-traversal';
 import type { OneCIndexScopeSummary } from './sync/one-c-scope';
+import type { VectorWriteCapabilities, VectorWriteFailureMode } from './vectordb/types';
 import * as os from 'node:os';
 
 const MAX_INDEX_BATCH_SIZE = 10_000;
@@ -78,7 +79,48 @@ export interface IndexingAcceleratorConfig {
     accelerateBackgroundSync: boolean;
     embeddingMaxContentChars?: number;
     embeddingMaxEstimatedTokens?: number;
+    writeCoalescingEnabled?: boolean;
+    writeCoalescingTargetDocuments?: number;
+    writeCoalescingMaxDocuments?: number;
+    writeCoalescingFlushIntervalMs?: number;
     adaptiveBackpressure: AdaptiveBackpressureConfig;
+}
+
+export type VectorWriteBackendClampReason =
+    | 'none'
+    | 'single_writer_collection'
+    | 'recommended_limit'
+    | 'unknown_capabilities';
+
+export type CoalescingFlushReason =
+    | 'target_document_count'
+    | 'max_document_count'
+    | 'flush_interval'
+    | 'scheduler_drain'
+    | 'cancellation'
+    | 'backend_opt_out';
+
+export interface CoalescingFlushSummary {
+    target_document_count: number;
+    max_document_count: number;
+    flush_interval: number;
+    scheduler_drain: number;
+    cancellation: number;
+    backend_opt_out: number;
+}
+
+export interface VectorWritePolicy {
+    backend: string;
+    configuredInsertConcurrency: number;
+    effectiveInsertConcurrency: number;
+    backendClampReason: VectorWriteBackendClampReason;
+    coalescingEnabled: boolean;
+    targetCoalescedDocumentCount: number;
+    maxCoalescedDocumentCount: number;
+    coalescingFlushIntervalMs: number;
+    ambiguousWriteFailureMode: VectorWriteFailureMode;
+    parallelWritesToSameCollection: boolean;
+    idempotentUpsert: boolean;
 }
 
 export interface IndexingAcceleratorSnapshot {
@@ -95,6 +137,16 @@ export interface IndexingAcceleratorSnapshot {
     configuredInsertConcurrency: number;
     effectiveEmbeddingConcurrency: number;
     effectiveInsertConcurrency: number;
+    vectorWritePolicy?: VectorWritePolicy;
+    backendClampReason?: VectorWriteBackendClampReason;
+    coalescingEnabled?: boolean;
+    targetCoalescedDocumentCount?: number;
+    maxCoalescedDocumentCount?: number;
+    coalescingFlushIntervalMs?: number;
+    queuedCoalescedDocuments?: number;
+    coalescedInsertBatches: number;
+    coalescedInsertDocuments: number;
+    coalescingFlushReasons: CoalescingFlushSummary;
     adaptivePressureScore: number;
     adaptiveThrottleReason: AdaptiveThrottleReason;
     adaptiveThrottleTimeMs: number;
@@ -154,6 +206,8 @@ export interface IndexingAcceleratorSnapshot {
 
 export interface AdaptivePressureSignals {
     insertBacklog: number;
+    insertQueueDepth?: number;
+    coalescingQueueDepth?: number;
     insertLatencyMs: number;
     retryRate: number;
     submittedBatches: number;
@@ -238,6 +292,16 @@ export class IndexingAcceleratorRuntime {
             configuredInsertConcurrency: active ? config.insertConcurrency : 1,
             effectiveEmbeddingConcurrency: active ? config.embeddingConcurrency : 1,
             effectiveInsertConcurrency: active ? config.insertConcurrency : 1,
+            vectorWritePolicy: undefined,
+            backendClampReason: 'none',
+            coalescingEnabled: false,
+            targetCoalescedDocumentCount: undefined,
+            maxCoalescedDocumentCount: undefined,
+            coalescingFlushIntervalMs: undefined,
+            queuedCoalescedDocuments: 0,
+            coalescedInsertBatches: 0,
+            coalescedInsertDocuments: 0,
+            coalescingFlushReasons: createEmptyCoalescingFlushSummary(),
             adaptivePressureScore: 0,
             adaptiveThrottleReason: 'none',
             adaptiveThrottleTimeMs: 0,
@@ -329,6 +393,10 @@ export class IndexingAcceleratorRuntime {
             adaptivePressureSignals: this.snapshot.adaptivePressureSignals
                 ? { ...this.snapshot.adaptivePressureSignals }
                 : undefined,
+            vectorWritePolicy: this.snapshot.vectorWritePolicy
+                ? { ...this.snapshot.vectorWritePolicy }
+                : undefined,
+            coalescingFlushReasons: { ...this.snapshot.coalescingFlushReasons },
             resourcePressure: this.snapshot.resourcePressure
                 ? { ...this.snapshot.resourcePressure }
                 : undefined,
@@ -560,11 +628,30 @@ export class IndexingAcceleratorRuntime {
         runningEmbeddingBatches: number;
         queuedInsertBatches: number;
         runningInsertBatches: number;
+        queuedCoalescedDocuments?: number;
     }): void {
         this.snapshot.queuedBatches = metrics.queuedBatches;
         this.snapshot.runningEmbeddingBatches = metrics.runningEmbeddingBatches;
         this.snapshot.queuedInsertBatches = metrics.queuedInsertBatches;
         this.snapshot.runningInsertBatches = metrics.runningInsertBatches;
+        this.snapshot.queuedCoalescedDocuments = metrics.queuedCoalescedDocuments ?? 0;
+    }
+
+    recordVectorWritePolicy(policy: VectorWritePolicy): void {
+        this.snapshot.vectorWritePolicy = { ...policy };
+        this.snapshot.configuredInsertConcurrency = policy.configuredInsertConcurrency;
+        this.snapshot.effectiveInsertConcurrency = policy.effectiveInsertConcurrency;
+        this.snapshot.backendClampReason = policy.backendClampReason;
+        this.snapshot.coalescingEnabled = policy.coalescingEnabled;
+        this.snapshot.targetCoalescedDocumentCount = policy.targetCoalescedDocumentCount;
+        this.snapshot.maxCoalescedDocumentCount = policy.maxCoalescedDocumentCount;
+        this.snapshot.coalescingFlushIntervalMs = policy.coalescingFlushIntervalMs;
+    }
+
+    recordCoalescedInsert(metrics: { documentCount: number; flushReason: CoalescingFlushReason }): void {
+        this.snapshot.coalescedInsertBatches++;
+        this.snapshot.coalescedInsertDocuments += metrics.documentCount;
+        this.snapshot.coalescingFlushReasons[metrics.flushReason]++;
     }
 
     recordAdaptiveBackpressure(decision: AdaptiveBackpressureDecision): void {
@@ -573,6 +660,10 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.configuredInsertConcurrency = decision.configuredInsertConcurrency;
         this.snapshot.effectiveEmbeddingConcurrency = decision.effectiveEmbeddingConcurrency;
         this.snapshot.effectiveInsertConcurrency = decision.effectiveInsertConcurrency;
+        if (this.snapshot.vectorWritePolicy) {
+            this.snapshot.configuredInsertConcurrency = this.snapshot.vectorWritePolicy.configuredInsertConcurrency;
+            this.snapshot.effectiveInsertConcurrency = this.snapshot.vectorWritePolicy.effectiveInsertConcurrency;
+        }
         this.snapshot.adaptivePressureScore = decision.pressureScore;
         this.snapshot.adaptiveThrottleReason = decision.throttleReason;
         this.snapshot.adaptiveThrottleTimeMs = decision.throttleTimeMs;
@@ -638,6 +729,7 @@ export class AdaptiveBackpressureController {
             config: AdaptiveBackpressureConfig;
             configuredEmbeddingConcurrency: number;
             configuredInsertConcurrency: number;
+            effectiveInsertConcurrency?: number;
             queueCapacity: number;
         },
     ) {
@@ -697,7 +789,10 @@ export class AdaptiveBackpressureController {
             configuredEmbeddingConcurrency: hardMaximum,
             effectiveEmbeddingConcurrency: this.effectiveEmbeddingConcurrency,
             configuredInsertConcurrency: Math.max(1, this.options.configuredInsertConcurrency),
-            effectiveInsertConcurrency: Math.max(1, this.options.configuredInsertConcurrency),
+            effectiveInsertConcurrency: Math.max(
+                1,
+                this.options.effectiveInsertConcurrency ?? this.options.configuredInsertConcurrency,
+            ),
             pressureScore: evaluation.score,
             throttleReason: this.options.config.enabled ? evaluation.reason : 'none',
             throttleTimeMs: this.throttleTimeMs,
@@ -799,8 +894,12 @@ export function evaluateAdaptivePressure(
 export function createAdaptivePressureSignals(snapshot: IndexingAcceleratorSnapshot): AdaptivePressureSignals {
     const completedInsertBatches = snapshot.completedInsertBatches || 0;
     const submittedBatches = snapshot.submittedBatches || 0;
+    const insertQueueDepth = (snapshot.queuedInsertBatches || 0) + (snapshot.runningInsertBatches || 0);
+    const coalescingQueueDepth = snapshot.queuedCoalescedDocuments || 0;
     return {
-        insertBacklog: (snapshot.queuedInsertBatches || 0) + (snapshot.runningInsertBatches || 0),
+        insertBacklog: insertQueueDepth,
+        insertQueueDepth,
+        coalescingQueueDepth,
         insertLatencyMs: completedInsertBatches > 0
             ? Math.round((snapshot.insertMs || 0) / completedInsertBatches)
             : 0,
@@ -825,6 +924,84 @@ export function createEmptyFailureSummary(): EmbeddingWorkerFailureSummary {
     };
 }
 
+export function createEmptyCoalescingFlushSummary(): CoalescingFlushSummary {
+    return {
+        target_document_count: 0,
+        max_document_count: 0,
+        flush_interval: 0,
+        scheduler_drain: 0,
+        cancellation: 0,
+        backend_opt_out: 0,
+    };
+}
+
+export function resolveVectorWritePolicy(options: {
+    backend?: string;
+    configuredInsertConcurrency: number;
+    capabilities?: VectorWriteCapabilities;
+    coalescingEnabled?: boolean;
+    coalescingTargetDocuments?: number;
+    coalescingMaxDocuments?: number;
+    coalescingFlushIntervalMs?: number;
+}): VectorWritePolicy {
+    const configuredInsertConcurrency = Math.max(1, options.configuredInsertConcurrency);
+    const capabilities = options.capabilities;
+    if (!capabilities) {
+        return {
+            backend: options.backend || 'unknown',
+            configuredInsertConcurrency,
+            effectiveInsertConcurrency: 1,
+            backendClampReason: 'unknown_capabilities',
+            coalescingEnabled: false,
+            targetCoalescedDocumentCount: 0,
+            maxCoalescedDocumentCount: 0,
+            coalescingFlushIntervalMs: options.coalescingFlushIntervalMs ?? 250,
+            ambiguousWriteFailureMode: 'fail_fast',
+            parallelWritesToSameCollection: false,
+            idempotentUpsert: false,
+        };
+    }
+
+    const recommendedInsertConcurrency = Math.max(1, capabilities.recommendedInsertConcurrency);
+    const capabilityLimit = capabilities.parallelWritesToSameCollection
+        ? recommendedInsertConcurrency
+        : 1;
+    const effectiveInsertConcurrency = Math.max(
+        1,
+        Math.min(configuredInsertConcurrency, capabilityLimit),
+    );
+    const backendClampReason: VectorWriteBackendClampReason = !capabilities.parallelWritesToSameCollection && configuredInsertConcurrency > 1
+        ? 'single_writer_collection'
+        : effectiveInsertConcurrency < configuredInsertConcurrency
+            ? 'recommended_limit'
+            : 'none';
+    const targetCoalescedDocumentCount = Math.max(
+        0,
+        options.coalescingTargetDocuments ?? capabilities.targetCoalescedDocumentCount,
+    );
+    const maxCoalescedDocumentCount = Math.max(
+        targetCoalescedDocumentCount,
+        options.coalescingMaxDocuments ?? capabilities.maxCoalescedDocumentCount,
+    );
+    const coalescingEnabled = capabilities.writeCoalescingRecommended &&
+        (options.coalescingEnabled ?? true) &&
+        targetCoalescedDocumentCount > 0;
+
+    return {
+        backend: capabilities.backend || options.backend || 'unknown',
+        configuredInsertConcurrency,
+        effectiveInsertConcurrency,
+        backendClampReason,
+        coalescingEnabled,
+        targetCoalescedDocumentCount,
+        maxCoalescedDocumentCount,
+        coalescingFlushIntervalMs: options.coalescingFlushIntervalMs ?? 250,
+        ambiguousWriteFailureMode: capabilities.ambiguousWriteFailureMode,
+        parallelWritesToSameCollection: capabilities.parallelWritesToSameCollection,
+        idempotentUpsert: capabilities.idempotentUpsert,
+    };
+}
+
 export function createDefaultAdaptiveBackpressureConfig(active: boolean): AdaptiveBackpressureConfig {
     return {
         enabled: active,
@@ -836,7 +1013,7 @@ export function createDefaultAdaptiveBackpressureConfig(active: boolean): Adapti
         insertBacklogThreshold: 2,
         insertBacklogMinBatches: 30,
         insertLatencyMsThreshold: 30000,
-        retryRateThreshold: 0.5,
+        retryRateThreshold: 0.1,
         retryRateMinBatches: 10,
         rejectedWorkersThreshold: 1,
         memoryFreePercentThreshold: 3,
@@ -971,6 +1148,39 @@ function parseBoolean(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
+function parseOptionalBoolean(name: string): boolean | undefined {
+    const rawValue = envManager.get(name);
+    if (!rawValue) {
+        return undefined;
+    }
+
+    const normalized = rawValue.toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+        return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+        return false;
+    }
+
+    console.warn(`[Context] ⚠️ Ignoring invalid ${name}='${rawValue}'. Expected true or false.`);
+    return undefined;
+}
+
+function parseOptionalPositiveInteger(name: string): number | undefined {
+    const rawValue = envManager.get(name);
+    if (!rawValue || rawValue.toLowerCase() === 'auto') {
+        return undefined;
+    }
+
+    const parsed = Number(rawValue);
+    if (Number.isInteger(parsed) && parsed > 0) {
+        return parsed;
+    }
+
+    console.warn(`[Context] ⚠️ Ignoring invalid ${name}='${rawValue}'. Expected a positive integer.`);
+    return undefined;
+}
+
 export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
     const rawMode = envManager.get('INDEX_ACCELERATOR_MODE') || envManager.get('BGE_M3_ACCELERATOR') || 'off';
     const mode: IndexingAcceleratorMode = rawMode === 'auto' ? 'auto' : 'off';
@@ -994,6 +1204,10 @@ export function getIndexingAcceleratorConfig(): IndexingAcceleratorConfig {
         accelerateBackgroundSync: parseBoolean('INDEX_ACCELERATE_BACKGROUND_SYNC', false),
         embeddingMaxContentChars: parsePayloadLimit('INDEX_EMBEDDING_MAX_CONTENT_CHARS'),
         embeddingMaxEstimatedTokens: parsePayloadLimit('INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS'),
+        writeCoalescingEnabled: parseOptionalBoolean('INDEX_WRITE_COALESCING') ?? false,
+        writeCoalescingTargetDocuments: parseOptionalPositiveInteger('INDEX_WRITE_COALESCING_TARGET_DOCUMENTS'),
+        writeCoalescingMaxDocuments: parseOptionalPositiveInteger('INDEX_WRITE_COALESCING_MAX_DOCUMENTS'),
+        writeCoalescingFlushIntervalMs: parseOptionalPositiveInteger('INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS'),
         adaptiveBackpressure: {
             enabled: parseBoolean('INDEX_ADAPTIVE_BACKPRESSURE', adaptiveDefaults.enabled),
             minEmbeddingConcurrency: parsePositiveInteger('INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY', adaptiveDefaults.minEmbeddingConcurrency),

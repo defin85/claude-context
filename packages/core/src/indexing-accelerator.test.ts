@@ -8,6 +8,7 @@ import {
     getEffectiveEmbeddingPayloadLimits,
     getIndexingAcceleratorConfig,
     IndexingAcceleratorRuntime,
+    resolveVectorWritePolicy,
     shouldAccelerateIndexing,
 } from './indexing-accelerator';
 import { getPreIndexTraversalConcurrency } from './sync/preindex-traversal';
@@ -43,6 +44,10 @@ describe('indexing accelerator configuration', () => {
             accelerateBackgroundSync: false,
             embeddingMaxContentChars: undefined,
             embeddingMaxEstimatedTokens: undefined,
+            writeCoalescingEnabled: false,
+            writeCoalescingTargetDocuments: undefined,
+            writeCoalescingMaxDocuments: undefined,
+            writeCoalescingFlushIntervalMs: undefined,
             adaptiveBackpressure: createDefaultAdaptiveBackpressureConfig(false),
         });
         expect(shouldAccelerateIndexing(config, {
@@ -64,6 +69,10 @@ describe('indexing accelerator configuration', () => {
             INDEX_INSERT_QUEUE_CAPACITY: '8',
             INDEX_EMBEDDING_MAX_CONTENT_CHARS: '1000000',
             INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS: '250000',
+            INDEX_WRITE_COALESCING: 'false',
+            INDEX_WRITE_COALESCING_TARGET_DOCUMENTS: '120',
+            INDEX_WRITE_COALESCING_MAX_DOCUMENTS: '360',
+            INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS: '125',
             BGE_M3_ACCELERATOR_MAX_WORKERS: '3',
             BGE_M3_ACCELERATOR_VRAM_LIMIT_PERCENT: '75',
             INDEX_ACCELERATOR_RETRY_BUDGET: '5',
@@ -92,6 +101,10 @@ describe('indexing accelerator configuration', () => {
                 accelerateBackgroundSync: true,
                 embeddingMaxContentChars: 1000000,
                 embeddingMaxEstimatedTokens: 250000,
+                writeCoalescingEnabled: false,
+                writeCoalescingTargetDocuments: 120,
+                writeCoalescingMaxDocuments: 360,
+                writeCoalescingFlushIntervalMs: 125,
                 adaptiveBackpressure: {
                     enabled: true,
                     minEmbeddingConcurrency: 1,
@@ -282,6 +295,28 @@ describe('indexing accelerator configuration', () => {
         expect(state.throttleTimeMs).toBeGreaterThan(0);
     });
 
+    it('treats sustained BGE-M3 retry pressure as enough to reduce embedding concurrency', () => {
+        const controller = new AdaptiveBackpressureController({
+            config: createDefaultAdaptiveBackpressureConfig(true),
+            configuredEmbeddingConcurrency: 4,
+            configuredInsertConcurrency: 1,
+            queueCapacity: 8,
+        });
+
+        const state = controller.observe({
+            insertBacklog: 0,
+            insertLatencyMs: 0,
+            retryRate: 0.12,
+            submittedBatches: 30,
+            retriedBatches: 4,
+            rejectedWorkers: 0,
+        }, 0);
+
+        expect(state.throttleReason).toBe('retry_rate');
+        expect(state.pressureScore).toBe(1);
+        expect(state.effectiveEmbeddingConcurrency).toBe(3);
+    });
+
     it('creates pressure signals from accelerator snapshot counters', () => {
         const runtimeConfig = {
             mode: 'auto' as const,
@@ -322,6 +357,36 @@ describe('indexing accelerator configuration', () => {
         expect(signals.retriedBatches).toBe(1);
         expect(signals.rejectedWorkers).toBe(1);
         expect(signals.memoryFreePercent).toBeGreaterThan(0);
+    });
+
+    it('reports coalescing depth without treating buffered documents as insert backlog', () => {
+        const runtimeConfig = {
+            mode: 'auto' as const,
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
+            embeddingConcurrency: 2,
+            insertConcurrency: 1,
+            insertQueueCapacity: 2,
+            maxBgeM3Workers: 1,
+            vramLimitPercent: 75,
+            retryBudget: 1,
+            accelerateBackgroundSync: false,
+            adaptiveBackpressure: createDefaultAdaptiveBackpressureConfig(true),
+        };
+        const runtime = new IndexingAcceleratorRuntime(runtimeConfig, true);
+        runtime.recordSchedulerSnapshot({
+            queuedBatches: 0,
+            runningEmbeddingBatches: 0,
+            queuedInsertBatches: 0,
+            runningInsertBatches: 0,
+            queuedCoalescedDocuments: 7,
+        });
+
+        const signals = createAdaptivePressureSignals(runtime.getSnapshot());
+
+        expect(signals.insertBacklog).toBe(0);
+        expect(signals.insertQueueDepth).toBe(0);
+        expect(signals.coalescingQueueDepth).toBe(7);
     });
 
     it('includes measured VRAM usage in adaptive pressure signals', () => {
@@ -376,5 +441,66 @@ describe('indexing accelerator configuration', () => {
         })));
 
         expect(maxActive).toBe(2);
+    });
+});
+
+describe('resolveVectorWritePolicy', () => {
+    it('keeps configured insert concurrency for parallel-safe backends', () => {
+        expect(resolveVectorWritePolicy({
+            backend: 'qdrant',
+            configuredInsertConcurrency: 4,
+            capabilities: {
+                parallelWritesToSameCollection: true,
+                idempotentUpsert: true,
+                recommendedInsertConcurrency: 4,
+                targetCoalescedDocumentCount: 200,
+                maxCoalescedDocumentCount: 400,
+                writeCoalescingRecommended: true,
+                ambiguousWriteFailureMode: 'retry_safe',
+            },
+        })).toEqual(expect.objectContaining({
+            backend: 'qdrant',
+            configuredInsertConcurrency: 4,
+            effectiveInsertConcurrency: 4,
+            backendClampReason: 'none',
+            coalescingEnabled: true,
+            targetCoalescedDocumentCount: 200,
+            maxCoalescedDocumentCount: 400,
+        }));
+    });
+
+    it('clamps single-writer backends to one insert writer', () => {
+        expect(resolveVectorWritePolicy({
+            backend: 'lancedb',
+            configuredInsertConcurrency: 4,
+            capabilities: {
+                parallelWritesToSameCollection: false,
+                idempotentUpsert: true,
+                recommendedInsertConcurrency: 1,
+                targetCoalescedDocumentCount: 100,
+                maxCoalescedDocumentCount: 300,
+                writeCoalescingRecommended: true,
+                ambiguousWriteFailureMode: 'fail_fast',
+            },
+        })).toEqual(expect.objectContaining({
+            backend: 'lancedb',
+            configuredInsertConcurrency: 4,
+            effectiveInsertConcurrency: 1,
+            backendClampReason: 'single_writer_collection',
+            coalescingEnabled: true,
+        }));
+    });
+
+    it('uses conservative single-writer behavior for unknown capabilities', () => {
+        expect(resolveVectorWritePolicy({
+            backend: 'unknown',
+            configuredInsertConcurrency: 4,
+            capabilities: undefined,
+        })).toEqual(expect.objectContaining({
+            backend: 'unknown',
+            effectiveInsertConcurrency: 1,
+            backendClampReason: 'unknown_capabilities',
+            coalescingEnabled: false,
+        }));
     });
 });

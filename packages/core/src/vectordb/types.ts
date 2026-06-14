@@ -17,6 +17,19 @@ export interface VectorDocument {
 
 export type RetrievalMode = 'dense' | 'hybrid_bm25' | 'bge_m3_dense' | 'bge_m3_full';
 
+export type VectorWriteFailureMode = 'fail_fast' | 'retry_safe';
+
+export interface VectorWriteCapabilities {
+    backend?: string;
+    parallelWritesToSameCollection: boolean;
+    idempotentUpsert: boolean;
+    recommendedInsertConcurrency: number;
+    targetCoalescedDocumentCount: number;
+    maxCoalescedDocumentCount: number;
+    writeCoalescingRecommended: boolean;
+    ambiguousWriteFailureMode: VectorWriteFailureMode;
+}
+
 export interface RetrievalSchemaMetadata {
     retrievalMode: RetrievalMode;
     schemaVersion: number;
@@ -122,6 +135,11 @@ export interface VectorDatabase {
      * Upsert BGE-M3 full retrieval documents when the backing database supports idempotent writes.
      */
     upsertBgeM3?(collectionName: string, documents: VectorDocument[]): Promise<void>;
+
+    /**
+     * Describe backend write safety and preferred write shape for accelerated indexing.
+     */
+    getWriteCapabilities?(collectionName?: string): VectorWriteCapabilities;
 
     /**
      * Search similar vectors

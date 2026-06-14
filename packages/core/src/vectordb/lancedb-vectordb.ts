@@ -8,6 +8,7 @@ import {
     SearchOptions,
     VectorDatabase,
     VectorDocument,
+    VectorWriteCapabilities,
     VectorSearchResult,
 } from './types';
 
@@ -101,6 +102,19 @@ export class LanceDbVectorDatabase implements VectorDatabase {
 
     async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.writeDocuments(collectionName, documents, 'bge_m3');
+    }
+
+    getWriteCapabilities(_collectionName?: string): VectorWriteCapabilities {
+        return {
+            backend: 'lancedb',
+            parallelWritesToSameCollection: false,
+            idempotentUpsert: true,
+            recommendedInsertConcurrency: 1,
+            targetCoalescedDocumentCount: 100,
+            maxCoalescedDocumentCount: 300,
+            writeCoalescingRecommended: true,
+            ambiguousWriteFailureMode: 'fail_fast',
+        };
     }
 
     async search(collectionName: string, queryVector: number[], options: SearchOptions = {}): Promise<VectorSearchResult[]> {

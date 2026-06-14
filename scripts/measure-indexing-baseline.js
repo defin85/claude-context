@@ -70,6 +70,10 @@ Default daemon env overrides:
   INDEX_EMBEDDING_CONCURRENCY=<--embedding-concurrency>
   INDEX_INSERT_CONCURRENCY=<--insert-concurrency>
   INDEX_INSERT_QUEUE_CAPACITY=<--insert-queue-capacity>
+  INDEX_WRITE_COALESCING=<current env when set>
+  INDEX_WRITE_COALESCING_TARGET_DOCUMENTS=<current env when set>
+  INDEX_WRITE_COALESCING_MAX_DOCUMENTS=<current env when set>
+  INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS=<current env when set>
   INDEX_ADAPTIVE_BACKPRESSURE=<--adaptive-backpressure>
   BGE_M3_ACCELERATOR_MANAGED_WORKERS=<--managed-workers>
   BGE_M3_ACCELERATOR_MAX_WORKERS=<--max-workers>
@@ -278,6 +282,19 @@ function selfTestCompactOutput() {
             retriedBatches: 2,
             failedBatches: 1,
             insertConcurrency: 2,
+            configuredInsertConcurrency: 2,
+            effectiveInsertConcurrency: 1,
+            backendClampReason: 'single_writer_collection',
+            vectorWritePolicy: {
+                backend: 'lancedb',
+                configuredInsertConcurrency: 2,
+                effectiveInsertConcurrency: 1,
+                backendClampReason: 'single_writer_collection',
+                coalescingEnabled: true,
+                targetCoalescedDocumentCount: 100,
+                maxCoalescedDocumentCount: 300,
+                coalescingFlushIntervalMs: 250,
+            },
             insertQueueCapacity: 4,
             embeddingBatchSize: 100,
             insertBatchSize: 50,
@@ -287,6 +304,10 @@ function selfTestCompactOutput() {
             effectiveEmbeddingMaxEstimatedTokens: 250000,
             queuedInsertBatches: 1,
             runningInsertBatches: 1,
+            queuedCoalescedDocuments: 20,
+            coalescedInsertBatches: 2,
+            coalescedInsertDocuments: 120,
+            coalescingFlushReasons: { target_document_count: 1, scheduler_drain: 1 },
             completedInsertBatches: 3,
             failedInsertBatches: 1,
             insertMs: 1234,
@@ -354,6 +375,18 @@ function selfTestCompactOutput() {
     if (compacted.accelerator.insertSummary.insertMs !== 1234) {
         throw new Error('Expected insertSummary insert timing to be preserved.');
     }
+    if (compacted.accelerator.insertSummary.effectiveInsertConcurrency !== 1) {
+        throw new Error('Expected insertSummary effective insert concurrency to be preserved.');
+    }
+    if (compacted.accelerator.insertSummary.backendClampReason !== 'single_writer_collection') {
+        throw new Error('Expected insertSummary backend clamp reason to be preserved.');
+    }
+    if (compacted.accelerator.insertSummary.coalescedInsertDocuments !== 120) {
+        throw new Error('Expected insertSummary coalesced document count to be preserved.');
+    }
+    if (compacted.accelerator.insertSummary.coalescingFlushReasons.scheduler_drain !== 1) {
+        throw new Error('Expected insertSummary coalescing flush reasons to be preserved.');
+    }
     if (compacted.accelerator.batchSizeSummary.embeddingBatchSize !== 100) {
         throw new Error('Expected batchSizeSummary embedding batch size to be preserved.');
     }
@@ -390,9 +423,16 @@ function selfTestCompactOutput() {
             retriedBatches: 1,
             failedBatches: 0,
             insertConcurrency: 1,
+            configuredInsertConcurrency: 1,
+            effectiveInsertConcurrency: 1,
+            vectorWritePolicy: { backend: 'unknown' },
             insertQueueCapacity: 2,
             queuedInsertBatches: 0,
             runningInsertBatches: 1,
+            queuedCoalescedDocuments: 0,
+            coalescedInsertBatches: 0,
+            coalescedInsertDocuments: 0,
+            coalescingFlushReasons: {},
             completedInsertBatches: 2,
             failedInsertBatches: 0,
             insertMs: 456,
@@ -524,6 +564,16 @@ function buildMeasurementEnvironment(currentEnv, options) {
     }
     if (process.env.QDRANT_API_KEY || currentEnv.QDRANT_API_KEY) {
         measurementEnv.QDRANT_API_KEY = process.env.QDRANT_API_KEY || currentEnv.QDRANT_API_KEY;
+    }
+    for (const envName of [
+        'INDEX_WRITE_COALESCING',
+        'INDEX_WRITE_COALESCING_TARGET_DOCUMENTS',
+        'INDEX_WRITE_COALESCING_MAX_DOCUMENTS',
+        'INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS',
+    ]) {
+        if (process.env[envName] || currentEnv[envName]) {
+            measurementEnv[envName] = process.env[envName] || currentEnv[envName];
+        }
     }
     if (options.embeddingMaxContentChars !== undefined) {
         measurementEnv.INDEX_EMBEDDING_MAX_CONTENT_CHARS = String(options.embeddingMaxContentChars);
@@ -790,9 +840,17 @@ function summarizeRetryAndWorkers(accelerator) {
         },
         insertSummary: {
             insertConcurrency: accelerator.insertConcurrency || 1,
+            configuredInsertConcurrency: accelerator.configuredInsertConcurrency || accelerator.insertConcurrency || 1,
+            effectiveInsertConcurrency: accelerator.effectiveInsertConcurrency || accelerator.insertConcurrency || 1,
+            backendClampReason: accelerator.backendClampReason || accelerator.vectorWritePolicy?.backendClampReason || 'none',
+            vectorWritePolicy: accelerator.vectorWritePolicy || undefined,
             insertQueueCapacity: accelerator.insertQueueCapacity || 0,
             queuedInsertBatches: accelerator.queuedInsertBatches || 0,
             runningInsertBatches: accelerator.runningInsertBatches || 0,
+            queuedCoalescedDocuments: accelerator.queuedCoalescedDocuments || 0,
+            coalescedInsertBatches: accelerator.coalescedInsertBatches || 0,
+            coalescedInsertDocuments: accelerator.coalescedInsertDocuments || 0,
+            coalescingFlushReasons: accelerator.coalescingFlushReasons || {},
             completedInsertBatches: accelerator.completedInsertBatches || 0,
             failedInsertBatches: accelerator.failedInsertBatches || 0,
             insertMs: accelerator.insertMs || 0,
@@ -916,6 +974,10 @@ async function prepareDaemon(options, runDir) {
             INDEX_EMBEDDING_CONCURRENCY: measurementEnv.INDEX_EMBEDDING_CONCURRENCY,
             INDEX_INSERT_CONCURRENCY: measurementEnv.INDEX_INSERT_CONCURRENCY,
             INDEX_INSERT_QUEUE_CAPACITY: measurementEnv.INDEX_INSERT_QUEUE_CAPACITY,
+            INDEX_WRITE_COALESCING: measurementEnv.INDEX_WRITE_COALESCING,
+            INDEX_WRITE_COALESCING_TARGET_DOCUMENTS: measurementEnv.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS,
+            INDEX_WRITE_COALESCING_MAX_DOCUMENTS: measurementEnv.INDEX_WRITE_COALESCING_MAX_DOCUMENTS,
+            INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS: measurementEnv.INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS,
             INDEX_ADAPTIVE_BACKPRESSURE: measurementEnv.INDEX_ADAPTIVE_BACKPRESSURE,
             BGE_M3_ACCELERATOR_MANAGED_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MANAGED_WORKERS,
             BGE_M3_ACCELERATOR_MAX_WORKERS: measurementEnv.BGE_M3_ACCELERATOR_MAX_WORKERS,

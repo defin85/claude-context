@@ -67,6 +67,14 @@ with both configured hard limits and adaptive effective limits.
   database writes.
 - `effectiveEmbeddingConcurrency` is the current admission limit after adaptive
   pressure is applied.
+- `configuredInsertConcurrency` and `effectiveInsertConcurrency` distinguish
+  the operator upper bound from the backend-safe insert lane count.
+- `vectorWritePolicy` and `backendClampReason` explain whether the active
+  backend permits parallel writes to one collection or was clamped to
+  single-writer behavior.
+- `coalescedInsertBatches`, `coalescedInsertDocuments`,
+  `queuedCoalescedDocuments`, and `coalescingFlushReasons` describe completed
+  embedding batches that were combined before vector database writes.
 - `adaptivePressureScore` is the highest normalized pressure signal currently
   seen by the scheduler.
 - `adaptiveThrottleReason` identifies the dominant signal, such as
@@ -77,6 +85,9 @@ with both configured hard limits and adaptive effective limits.
 - `backpressureWaitMs` is producer wait time caused by bounded queue capacity.
 - `adaptivePressureSignals.vramUsedPercent` is included when managed BGE-M3
   worker planning has measured VRAM usage for the current daemon run.
+- `adaptivePressureSignals.insertQueueDepth` and
+  `adaptivePressureSignals.coalescingQueueDepth` separate write queue pressure
+  from buffered coalescing pressure.
 
 Interpret `backpressureWaitMs` as "the producer had to wait for capacity" and
 adaptive throttle fields as "why capacity was intentionally reduced." A healthy
@@ -85,6 +96,10 @@ worker retries, or memory pressure. With `INDEX_ACCELERATOR_MODE=off`, indexing
 remains sequential and adaptive backpressure is inactive. With
 `INDEX_ADAPTIVE_BACKPRESSURE=false`, accelerated indexing keeps the static
 configured limits.
+
+Write coalescing is downstream of embedding. It can reduce vector write call
+count for payload-safe BGE-M3 batches, but it does not change embedding
+content-character or estimated-token caps.
 
 ## Key Benefits
 

@@ -17,6 +17,7 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    VectorWriteCapabilities,
     COLLECTION_LIMIT_MESSAGE
 } from './types';
 import { ClusterManager } from './zilliz-utils';
@@ -894,6 +895,19 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
             console.error(`[MilvusRestfulDB] ❌ Failed to upsert BGE-M3 documents to collection '${collectionName}':`, error);
             throw error;
         }
+    }
+
+    getWriteCapabilities(_collectionName?: string): VectorWriteCapabilities {
+        return {
+            backend: 'milvus-restful',
+            parallelWritesToSameCollection: false,
+            idempotentUpsert: true,
+            recommendedInsertConcurrency: 1,
+            targetCoalescedDocumentCount: 100,
+            maxCoalescedDocumentCount: 300,
+            writeCoalescingRecommended: false,
+            ambiguousWriteFailureMode: 'fail_fast',
+        };
     }
 
     async hybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]> {

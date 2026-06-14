@@ -1,0 +1,53 @@
+{
+  "preparedAt": "2026-06-11T15:11:49.780Z",
+  "codebasePath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+  "unitName": "claude-context-mcp-daemon",
+  "restart": true,
+  "daemon": {
+    "runtimeId": "2e08f26c-1afe-4639-93fb-4c08d46f0776",
+    "pid": 148638,
+    "endpointUrl": "http://127.0.0.1:39393/mcp",
+    "allowedRoots": [
+      "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context",
+      "/run/media/egor/D6B64A72B64A52E3/Projects/OneC/bp-unicom-sdd",
+      "/run/media/egor/D6B64A72B64A52E3/Projects/remnawave-cdn-runbook"
+    ],
+    "runtimeStatusFilePath": "/home/egor/.context/mcp/runtime/148638.json"
+  },
+  "measurementEnv": {
+    "BGE_M3_ACCELERATOR_MANAGED_WORKERS": "true",
+    "BGE_M3_ACCELERATOR_MAX_WORKERS": "4",
+    "INDEX_ACCELERATOR_MODE": "auto",
+    "INDEX_ADAPTIVE_BACKPRESSURE": "true",
+    "INDEX_EMBEDDING_BATCH_SIZE": "100",
+    "INDEX_EMBEDDING_CONCURRENCY": "4",
+    "INDEX_EMBEDDING_MAX_CONTENT_CHARS": "20000",
+    "INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS": "5000",
+    "INDEX_INSERT_BATCH_SIZE": "100",
+    "INDEX_INSERT_CONCURRENCY": "1",
+    "INDEX_INSERT_QUEUE_CAPACITY": "2",
+    "INDEX_WRITE_COALESCING": "false",
+    "LANCEDB_URI": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/.artifacts/indexing-perf-08/lancedb-baseline-built",
+    "VECTOR_DATABASE_BACKEND": "lancedb"
+  },
+  "runtimeWorkload": {
+    "mode": "daemon",
+    "indexing": {
+      "maxConcurrency": 1,
+      "activeCount": 0,
+      "queuedCount": 0,
+      "activeJobs": [],
+      "queuedJobs": []
+    },
+    "search": {
+      "maxConcurrency": 4,
+      "activeCount": 0,
+      "queuedCount": 0,
+      "activeJobs": [],
+      "queuedJobs": []
+    }
+  },
+  "runtimeSync": {
+    "outcome": "idle"
+  }
+}

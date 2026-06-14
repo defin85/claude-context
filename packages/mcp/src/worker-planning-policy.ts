@@ -21,8 +21,16 @@ export interface WorkerPlanningPolicySnapshot {
         workers: 'accelerator.workers';
         insertScheduler: [
             'accelerator.insertConcurrency',
+            'accelerator.configuredInsertConcurrency',
+            'accelerator.effectiveInsertConcurrency',
+            'accelerator.vectorWritePolicy',
+            'accelerator.backendClampReason',
             'accelerator.queuedInsertBatches',
             'accelerator.runningInsertBatches',
+            'accelerator.queuedCoalescedDocuments',
+            'accelerator.coalescedInsertBatches',
+            'accelerator.coalescedInsertDocuments',
+            'accelerator.coalescingFlushReasons',
             'accelerator.completedInsertBatches',
             'accelerator.failedInsertBatches',
             'accelerator.insertMs',
@@ -90,8 +98,16 @@ export function createWorkerPlanningPolicy(): WorkerPlanningPolicySnapshot {
             workers: 'accelerator.workers',
             insertScheduler: [
                 'accelerator.insertConcurrency',
+                'accelerator.configuredInsertConcurrency',
+                'accelerator.effectiveInsertConcurrency',
+                'accelerator.vectorWritePolicy',
+                'accelerator.backendClampReason',
                 'accelerator.queuedInsertBatches',
                 'accelerator.runningInsertBatches',
+                'accelerator.queuedCoalescedDocuments',
+                'accelerator.coalescedInsertBatches',
+                'accelerator.coalescedInsertDocuments',
+                'accelerator.coalescingFlushReasons',
                 'accelerator.completedInsertBatches',
                 'accelerator.failedInsertBatches',
                 'accelerator.insertMs',
@@ -166,8 +182,15 @@ export function createDaemonStatusResult(
             ` pressure=${accelerator.adaptivePressureScore ?? 0}` +
             ` throttle=${accelerator.adaptiveThrottleReason ?? 'none'}` +
             ` throttleMs=${accelerator.adaptiveThrottleTimeMs ?? 0}` +
-            ` insertConcurrency=${accelerator.insertConcurrency ?? 1} queuedInsert=${accelerator.queuedInsertBatches ?? 0}` +
+            ` insertConcurrency=${accelerator.insertConcurrency ?? 1}` +
+            ` effectiveInsertConcurrency=${accelerator.effectiveInsertConcurrency ?? accelerator.insertConcurrency ?? 1}` +
+            ` vectorBackend=${accelerator.vectorWritePolicy?.backend ?? 'unknown'}` +
+            ` insertClamp=${accelerator.backendClampReason ?? accelerator.vectorWritePolicy?.backendClampReason ?? 'none'}` +
+            ` queuedInsert=${accelerator.queuedInsertBatches ?? 0}` +
             ` runningInsert=${accelerator.runningInsertBatches ?? 0}` +
+            ` queuedCoalescedDocs=${accelerator.queuedCoalescedDocuments ?? 0}` +
+            ` coalescedWrites=${accelerator.coalescedInsertBatches ?? 0}` +
+            ` coalescedDocs=${accelerator.coalescedInsertDocuments ?? 0}` +
             ` completedInsert=${accelerator.completedInsertBatches ?? 0} failedInsert=${accelerator.failedInsertBatches ?? 0}` +
             ` retries=${accelerator.retriedBatches} rejectedWorkers=${accelerator.rejectedWorkers ?? 0}` +
             ` recoveredWorkers=${accelerator.workerLifecycle?.recovered ?? 0}` +

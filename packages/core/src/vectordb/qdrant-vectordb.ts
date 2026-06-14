@@ -6,6 +6,7 @@ import {
     SearchOptions,
     VectorDatabase,
     VectorDocument,
+    VectorWriteCapabilities,
     VectorSearchResult,
 } from './types';
 
@@ -89,6 +90,19 @@ export class QdrantVectorDatabase implements VectorDatabase {
 
     async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.upsertDocuments(collectionName, documents);
+    }
+
+    getWriteCapabilities(_collectionName?: string): VectorWriteCapabilities {
+        return {
+            backend: 'qdrant',
+            parallelWritesToSameCollection: true,
+            idempotentUpsert: true,
+            recommendedInsertConcurrency: 4,
+            targetCoalescedDocumentCount: 200,
+            maxCoalescedDocumentCount: 400,
+            writeCoalescingRecommended: true,
+            ambiguousWriteFailureMode: 'retry_safe',
+        };
     }
 
     async search(collectionName: string, queryVector: number[], options: SearchOptions = {}): Promise<VectorSearchResult[]> {

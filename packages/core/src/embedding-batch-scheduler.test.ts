@@ -37,6 +37,139 @@ function deferred<T = void>(): {
 }
 
 describe('EmbeddingBatchScheduler', () => {
+    it('uses backend policy to clamp effective insert concurrency', () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 2,
+            insertConcurrency: 4,
+            queueCapacity: 4,
+            writePolicy: {
+                backend: 'lancedb',
+                configuredInsertConcurrency: 4,
+                effectiveInsertConcurrency: 1,
+                backendClampReason: 'single_writer_collection',
+                coalescingEnabled: true,
+                targetCoalescedDocumentCount: 100,
+                maxCoalescedDocumentCount: 300,
+                coalescingFlushIntervalMs: 100,
+                ambiguousWriteFailureMode: 'fail_fast',
+                parallelWritesToSameCollection: false,
+                idempotentUpsert: true,
+            },
+        });
+
+        const snapshot = scheduler.getSnapshot();
+        expect(snapshot.effectiveInsertConcurrency).toBe(1);
+        expect(runtime.getSnapshot()).toEqual(expect.objectContaining({
+            configuredInsertConcurrency: 4,
+            effectiveInsertConcurrency: 1,
+            vectorWritePolicy: expect.objectContaining({
+                backend: 'lancedb',
+                backendClampReason: 'single_writer_collection',
+            }),
+        }));
+    });
+
+    it('coalesces small completed embedding batches into fewer vector writes', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 3,
+            insertConcurrency: 1,
+            queueCapacity: 6,
+            writeCoalescing: {
+                enabled: true,
+                targetDocumentCount: 5,
+                maxDocumentCount: 10,
+                flushIntervalMs: 1000,
+                getDocumentCount: (documents: string[]) => documents.length,
+                mergeResults: (batches: string[][]) => batches.flat(),
+            },
+        });
+        const inserted: string[][] = [];
+
+        const completions = await Promise.all([
+            scheduler.submit({
+                metadata: { id: 1, chunkCount: 2 },
+                runEmbedding: async () => ['doc-1', 'doc-2'],
+                runInsert: async (documents) => {
+                    inserted.push(documents);
+                },
+            }),
+            scheduler.submit({
+                metadata: { id: 2, chunkCount: 2 },
+                runEmbedding: async () => ['doc-3', 'doc-4'],
+                runInsert: async (documents) => {
+                    inserted.push(documents);
+                },
+            }),
+            scheduler.submit({
+                metadata: { id: 3, chunkCount: 1 },
+                runEmbedding: async () => ['doc-5'],
+                runInsert: async (documents) => {
+                    inserted.push(documents);
+                },
+            }),
+        ]);
+
+        await Promise.all(completions.map((handle) => handle.completion));
+
+        expect(inserted).toEqual([['doc-1', 'doc-2', 'doc-3', 'doc-4', 'doc-5']]);
+        expect(runtime.getSnapshot()).toEqual(expect.objectContaining({
+            completedBatches: 3,
+            completedInsertBatches: 1,
+            coalescedInsertBatches: 1,
+            coalescedInsertDocuments: 5,
+            coalescingFlushReasons: expect.objectContaining({
+                target_document_count: 1,
+            }),
+        }));
+    });
+
+    it('flushes buffered coalesced documents on drain without loss or duplication', async () => {
+        const runtime = createRuntime();
+        const scheduler = new EmbeddingBatchScheduler({
+            runtime,
+            embeddingConcurrency: 2,
+            insertConcurrency: 1,
+            queueCapacity: 4,
+            writeCoalescing: {
+                enabled: true,
+                targetDocumentCount: 10,
+                maxDocumentCount: 10,
+                flushIntervalMs: 1000,
+                getDocumentCount: (documents: string[]) => documents.length,
+                mergeResults: (batches: string[][]) => batches.flat(),
+            },
+        });
+        const inserted: string[] = [];
+
+        const first = await scheduler.submit({
+            metadata: { id: 1, chunkCount: 2 },
+            runEmbedding: async () => ['doc-1', 'doc-2'],
+            runInsert: async (documents) => {
+                inserted.push(...documents);
+            },
+        });
+        const second = await scheduler.submit({
+            metadata: { id: 2, chunkCount: 2 },
+            runEmbedding: async () => ['doc-3', 'doc-4'],
+            runInsert: async (documents) => {
+                inserted.push(...documents);
+            },
+        });
+
+        await scheduler.drain();
+
+        expect(inserted).toEqual(['doc-1', 'doc-2', 'doc-3', 'doc-4']);
+        await expect(first.completion).resolves.toBeUndefined();
+        await expect(second.completion).resolves.toBeUndefined();
+        expect(runtime.getSnapshot().coalescingFlushReasons).toEqual(expect.objectContaining({
+            scheduler_drain: 1,
+        }));
+    });
+
     it('applies producer backpressure when queued plus running embedding batches reaches capacity', async () => {
         const runtime = createRuntime();
         const scheduler = new EmbeddingBatchScheduler({

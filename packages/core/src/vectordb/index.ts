@@ -10,6 +10,8 @@ export {
     RetrievalMode,
     RetrievalSchemaMetadata,
     RerankStrategy,
+    VectorWriteCapabilities,
+    VectorWriteFailureMode,
     COLLECTION_LIMIT_MESSAGE
 } from './types';
 

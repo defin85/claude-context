@@ -1,12 +1,23 @@
 import {
     AdaptiveBackpressureController,
     AdaptiveBackpressureConfig,
+    CoalescingFlushReason,
     IndexingAcceleratorResourcePressure,
     createAdaptivePressureSignals,
     createDefaultAdaptiveBackpressureConfig,
     IndexingAcceleratorRuntime,
     IndexingBatchMetadata,
+    VectorWritePolicy,
 } from './indexing-accelerator';
+
+export interface EmbeddingBatchWriteCoalescingOptions {
+    enabled: boolean;
+    targetDocumentCount: number;
+    maxDocumentCount: number;
+    flushIntervalMs: number;
+    getDocumentCount: (embeddingResult: any) => number;
+    mergeResults: (embeddingResults: any[]) => any;
+}
 
 export interface EmbeddingBatchSchedulerOptions {
     embeddingConcurrency: number;
@@ -14,6 +25,8 @@ export interface EmbeddingBatchSchedulerOptions {
     queueCapacity?: number;
     insertQueueCapacity?: number;
     adaptiveBackpressure?: AdaptiveBackpressureConfig;
+    writePolicy?: VectorWritePolicy;
+    writeCoalescing?: EmbeddingBatchWriteCoalescingOptions;
     runtime: IndexingAcceleratorRuntime;
     abortSignal?: AbortSignal;
     resourcePressureProvider?: () => IndexingAcceleratorResourcePressure | undefined;
@@ -36,8 +49,10 @@ interface QueuedBatch<T> extends EmbeddingBatchSchedulerSubmitOptions<T> {
 }
 
 interface QueuedInsert<T> {
-    item: QueuedBatch<T>;
+    items: Array<QueuedBatch<T>>;
     embeddingResult: T;
+    documentCount: number;
+    flushReason?: CoalescingFlushReason;
 }
 
 export class EmbeddingBatchScheduler {
@@ -48,18 +63,26 @@ export class EmbeddingBatchScheduler {
     private readonly adaptiveController: AdaptiveBackpressureController;
     private readonly queue: QueuedBatch<unknown>[] = [];
     private readonly insertQueue: QueuedInsert<unknown>[] = [];
+    private readonly coalescingBuffer: QueuedInsert<unknown>[] = [];
     private readonly completionPromises = new Set<Promise<void>>();
     private readonly capacityWaiters: Array<() => void> = [];
     private readonly insertCapacityWaiters: Array<() => void> = [];
+    private coalescingFlushTimer?: ReturnType<typeof setTimeout>;
+    private drainFlushPromise?: Promise<void>;
+    private coalescingDocumentCount = 0;
     private runningEmbedding = 0;
     private runningInsert = 0;
     private pendingAdmissions = 0;
+    private drainRequested = false;
     private cancelledError?: Error;
     private terminalInsertError?: unknown;
 
     constructor(private readonly options: EmbeddingBatchSchedulerOptions) {
         this.embeddingConcurrency = Math.max(1, options.embeddingConcurrency);
-        this.insertConcurrency = Math.max(1, options.insertConcurrency);
+        this.insertConcurrency = Math.max(
+            1,
+            options.writePolicy?.effectiveInsertConcurrency ?? options.insertConcurrency,
+        );
         this.queueCapacity = options.queueCapacity ?? getDefaultEmbeddingBatchQueueCapacity(
             this.embeddingConcurrency,
         );
@@ -74,9 +97,13 @@ export class EmbeddingBatchScheduler {
         this.adaptiveController = new AdaptiveBackpressureController({
             config: options.adaptiveBackpressure ?? adaptiveDefaults,
             configuredEmbeddingConcurrency: this.embeddingConcurrency,
-            configuredInsertConcurrency: this.insertConcurrency,
+            configuredInsertConcurrency: Math.max(1, options.insertConcurrency),
+            effectiveInsertConcurrency: this.insertConcurrency,
             queueCapacity: this.queueCapacity,
         });
+        if (options.writePolicy) {
+            options.runtime.recordVectorWritePolicy(options.writePolicy);
+        }
         options.abortSignal?.addEventListener('abort', () => {
             this.cancel(this.getAbortError());
         }, { once: true });
@@ -125,6 +152,8 @@ export class EmbeddingBatchScheduler {
     }
 
     async drain(): Promise<void> {
+        this.drainRequested = true;
+        await this.scheduleDrainFlush();
         const results = await Promise.allSettled([...this.completionPromises]);
         if (this.terminalInsertError) {
             throw this.terminalInsertError;
@@ -136,7 +165,9 @@ export class EmbeddingBatchScheduler {
     }
 
     async cancel(reason?: Error): Promise<void> {
+        await this.flushCoalescingBuffer('cancellation');
         this.cancelledError = reason ?? this.cancelledError ?? new Error('Queued indexing batch cancelled.');
+        this.clearCoalescingFlushTimer();
         while (this.queue.length > 0) {
             const queued = this.queue.shift();
             if (!queued) {
@@ -150,8 +181,10 @@ export class EmbeddingBatchScheduler {
             if (!queuedInsert) {
                 continue;
             }
-            this.options.runtime.recordBatchCancelled(queuedInsert.item.metadata.id);
-            queuedInsert.item.reject(this.cancelledError);
+            for (const item of queuedInsert.items) {
+                this.options.runtime.recordBatchCancelled(item.metadata.id);
+                item.reject(this.cancelledError);
+            }
         }
         this.notifyCapacityWaiters();
         this.notifyInsertCapacityWaiters();
@@ -169,6 +202,8 @@ export class EmbeddingBatchScheduler {
         adaptivePressureScore: number;
         adaptiveThrottleReason: string;
         adaptiveThrottleTimeMs: number;
+        effectiveInsertConcurrency: number;
+        queuedCoalescedDocuments: number;
     } {
         const adaptiveState = this.getAdaptiveState();
         return {
@@ -181,6 +216,8 @@ export class EmbeddingBatchScheduler {
             adaptivePressureScore: adaptiveState.pressureScore,
             adaptiveThrottleReason: adaptiveState.throttleReason,
             adaptiveThrottleTimeMs: adaptiveState.throttleTimeMs,
+            effectiveInsertConcurrency: adaptiveState.effectiveInsertConcurrency,
+            queuedCoalescedDocuments: this.coalescingDocumentCount,
         };
     }
 
@@ -258,8 +295,81 @@ export class EmbeddingBatchScheduler {
             this.publish();
             return;
         }
-        this.insertQueue.push({ item, embeddingResult } as QueuedInsert<unknown>);
+        if (this.isCoalescingEnabled()) {
+            await this.enqueueCoalescedInsert(item, embeddingResult);
+            return;
+        }
+        this.insertQueue.push({
+            items: [item],
+            embeddingResult,
+            documentCount: this.getCoalescingDocumentCount(embeddingResult),
+        } as QueuedInsert<unknown>);
         this.options.runtime.recordBatchQueuedInsert(item.metadata.id);
+        this.publish();
+        this.scheduleInsert();
+    }
+
+    private async enqueueCoalescedInsert<T>(item: QueuedBatch<T>, embeddingResult: T): Promise<void> {
+        const documentCount = this.getCoalescingDocumentCount(embeddingResult);
+        const maxDocumentCount = this.getCoalescingMaxDocumentCount();
+        if (
+            this.coalescingBuffer.length > 0 &&
+            this.coalescingDocumentCount + documentCount > maxDocumentCount
+        ) {
+            await this.flushCoalescingBuffer('max_document_count');
+        }
+
+        this.coalescingBuffer.push({
+            items: [item],
+            embeddingResult,
+            documentCount,
+        } as QueuedInsert<unknown>);
+        this.coalescingDocumentCount += documentCount;
+        this.options.runtime.recordBatchQueuedInsert(item.metadata.id);
+        this.publish();
+
+        if (this.coalescingDocumentCount >= this.getCoalescingTargetDocumentCount()) {
+            await this.flushCoalescingBuffer('target_document_count');
+            return;
+        }
+        if (this.drainRequested) {
+            await this.scheduleDrainFlush();
+            return;
+        }
+        this.ensureCoalescingFlushTimer();
+    }
+
+    private async flushCoalescingBuffer(reason: CoalescingFlushReason): Promise<void> {
+        if (this.coalescingBuffer.length === 0) {
+            return;
+        }
+        this.clearCoalescingFlushTimer();
+        const buffered = this.coalescingBuffer.splice(0);
+        const documentCount = this.coalescingDocumentCount;
+        this.coalescingDocumentCount = 0;
+
+        try {
+            this.throwIfTerminalInsertFailure();
+            await this.waitForInsertQueueCapacity();
+            this.throwIfTerminalInsertFailure();
+        } catch (error) {
+            for (const queuedInsert of buffered) {
+                for (const item of queuedInsert.items) {
+                    this.options.runtime.recordBatchFailed(item.metadata.id);
+                    item.reject(error);
+                }
+            }
+            this.notifyCapacityWaiters();
+            this.publish();
+            return;
+        }
+
+        this.insertQueue.push({
+            items: buffered.flatMap((queuedInsert) => queuedInsert.items),
+            embeddingResult: this.mergeCoalescedEmbeddingResults(buffered.map((queuedInsert) => queuedInsert.embeddingResult)),
+            documentCount,
+            flushReason: reason,
+        });
         this.publish();
         this.scheduleInsert();
     }
@@ -279,21 +389,33 @@ export class EmbeddingBatchScheduler {
     }
 
     private async runInsert<T>(queuedInsert: QueuedInsert<T>): Promise<void> {
-        const { item, embeddingResult } = queuedInsert;
+        const { items, embeddingResult } = queuedInsert;
         this.runningInsert++;
-        this.options.runtime.recordBatchRunningInsert(item.metadata.id);
+        for (const item of items) {
+            this.options.runtime.recordBatchRunningInsert(item.metadata.id);
+        }
         this.notifyInsertCapacityWaiters();
         this.publish();
         try {
-            await item.runInsert(embeddingResult);
+            await items[0].runInsert(embeddingResult);
             this.options.runtime.recordInsertCompleted();
-            this.options.runtime.recordBatchCompleted(item.metadata.id);
-            item.resolve();
+            if (queuedInsert.flushReason && items.length > 1) {
+                this.options.runtime.recordCoalescedInsert({
+                    documentCount: queuedInsert.documentCount,
+                    flushReason: queuedInsert.flushReason,
+                });
+            }
+            for (const item of items) {
+                this.options.runtime.recordBatchCompleted(item.metadata.id);
+                item.resolve();
+            }
         } catch (error) {
             this.options.runtime.recordInsertFailed();
-            this.options.runtime.recordBatchFailed(item.metadata.id);
             const failure = this.recordTerminalInsertFailure(error);
-            item.reject(failure);
+            for (const item of items) {
+                this.options.runtime.recordBatchFailed(item.metadata.id);
+                item.reject(failure);
+            }
         } finally {
             this.runningInsert = Math.max(0, this.runningInsert - 1);
             this.notifyInsertCapacityWaiters();
@@ -365,6 +487,7 @@ export class EmbeddingBatchScheduler {
             runningEmbeddingBatches: this.runningEmbedding,
             queuedInsertBatches: this.insertQueue.length,
             runningInsertBatches: this.runningInsert,
+            queuedCoalescedDocuments: this.coalescingDocumentCount,
         });
         this.options.runtime.recordAdaptiveBackpressure(adaptiveState);
         this.options.onProgress?.();
@@ -434,12 +557,84 @@ export class EmbeddingBatchScheduler {
             if (!queuedInsert) {
                 continue;
             }
-            this.options.runtime.recordBatchFailed(queuedInsert.item.metadata.id);
-            queuedInsert.item.reject(error);
+            for (const item of queuedInsert.items) {
+                this.options.runtime.recordBatchFailed(item.metadata.id);
+                item.reject(error);
+            }
         }
+        while (this.coalescingBuffer.length > 0) {
+            const queuedInsert = this.coalescingBuffer.shift();
+            if (!queuedInsert) {
+                continue;
+            }
+            for (const item of queuedInsert.items) {
+                this.options.runtime.recordBatchFailed(item.metadata.id);
+                item.reject(error);
+            }
+        }
+        this.coalescingDocumentCount = 0;
+        this.clearCoalescingFlushTimer();
         this.notifyCapacityWaiters();
         this.notifyInsertCapacityWaiters();
         this.publish();
+    }
+
+    private isCoalescingEnabled(): boolean {
+        return Boolean(this.options.writeCoalescing?.enabled);
+    }
+
+    private getCoalescingDocumentCount(embeddingResult: unknown): number {
+        if (!this.options.writeCoalescing?.enabled) {
+            return 0;
+        }
+        return Math.max(0, this.options.writeCoalescing.getDocumentCount(embeddingResult));
+    }
+
+    private getCoalescingTargetDocumentCount(): number {
+        return Math.max(1, this.options.writeCoalescing?.targetDocumentCount ?? 1);
+    }
+
+    private getCoalescingMaxDocumentCount(): number {
+        return Math.max(
+            this.getCoalescingTargetDocumentCount(),
+            this.options.writeCoalescing?.maxDocumentCount ?? this.getCoalescingTargetDocumentCount(),
+        );
+    }
+
+    private mergeCoalescedEmbeddingResults(results: unknown[]): unknown {
+        if (!this.options.writeCoalescing?.enabled || results.length === 1) {
+            return results[0];
+        }
+        return this.options.writeCoalescing.mergeResults(results);
+    }
+
+    private ensureCoalescingFlushTimer(): void {
+        if (!this.options.writeCoalescing?.enabled || this.coalescingFlushTimer) {
+            return;
+        }
+        this.coalescingFlushTimer = setTimeout(() => {
+            this.coalescingFlushTimer = undefined;
+            void this.flushCoalescingBuffer('flush_interval');
+        }, Math.max(1, this.options.writeCoalescing.flushIntervalMs));
+    }
+
+    private clearCoalescingFlushTimer(): void {
+        if (!this.coalescingFlushTimer) {
+            return;
+        }
+        clearTimeout(this.coalescingFlushTimer);
+        this.coalescingFlushTimer = undefined;
+    }
+
+    private scheduleDrainFlush(): Promise<void> {
+        if (!this.drainFlushPromise) {
+            this.drainFlushPromise = Promise.resolve()
+                .then(() => this.flushCoalescingBuffer('scheduler_drain'))
+                .finally(() => {
+                    this.drainFlushPromise = undefined;
+                });
+        }
+        return this.drainFlushPromise;
     }
 
     private getAbortError(): Error {

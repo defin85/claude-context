@@ -7,6 +7,7 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    VectorWriteCapabilities,
 } from './types';
 import { ClusterManager } from './zilliz-utils';
 
@@ -846,6 +847,19 @@ export class MilvusVectorDatabase implements VectorDatabase {
         await this.client.flushSync({
             collection_names: [collectionName],
         });
+    }
+
+    getWriteCapabilities(_collectionName?: string): VectorWriteCapabilities {
+        return {
+            backend: 'milvus',
+            parallelWritesToSameCollection: false,
+            idempotentUpsert: Boolean((this.client as unknown as { upsert?: unknown } | null)?.upsert),
+            recommendedInsertConcurrency: 1,
+            targetCoalescedDocumentCount: 100,
+            maxCoalescedDocumentCount: 300,
+            writeCoalescingRecommended: false,
+            ambiguousWriteFailureMode: 'fail_fast',
+        };
     }
 
     async hybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]> {

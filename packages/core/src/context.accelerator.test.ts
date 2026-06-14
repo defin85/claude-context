@@ -12,6 +12,7 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    VectorWriteCapabilities,
 } from './vectordb';
 
 class DelayedEmbedding extends Embedding {
@@ -236,6 +237,16 @@ class TrackingVectorDatabase implements VectorDatabase {
     documents = new Map<string, VectorDocument[]>();
     insertBatchSizes: number[] = [];
     insertDelayMs = 0;
+    writeCapabilities: VectorWriteCapabilities = {
+        backend: 'test',
+        parallelWritesToSameCollection: false,
+        idempotentUpsert: true,
+        recommendedInsertConcurrency: 1,
+        targetCoalescedDocumentCount: 0,
+        maxCoalescedDocumentCount: 0,
+        writeCoalescingRecommended: false,
+        ambiguousWriteFailureMode: 'fail_fast',
+    };
     private activeInserts = 0;
     maxActiveInserts = 0;
 
@@ -292,6 +303,10 @@ class TrackingVectorDatabase implements VectorDatabase {
 
     async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.insert(collectionName, documents);
+    }
+
+    getWriteCapabilities(): VectorWriteCapabilities {
+        return this.writeCapabilities;
     }
 
     async search(): Promise<VectorSearchResult[]> {
@@ -371,9 +386,9 @@ describe('Context accelerated batch pipeline', () => {
         }
     });
 
-    async function createCodebase(): Promise<string> {
+    async function createCodebase(fileCount = 4): Promise<string> {
         const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-context-accelerator-'));
-        await Promise.all([0, 1, 2, 3].map((item) => fs.writeFile(
+        await Promise.all(Array.from({ length: fileCount }, (_value, item) => fs.writeFile(
             path.join(dir, `file${item}.ts`),
             `export const value${item} = ${item};`,
         )));
@@ -392,6 +407,15 @@ describe('Context accelerated batch pipeline', () => {
         process.env.INDEX_INSERT_CONCURRENCY = '2';
         process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
         process.env.EMBEDDING_BATCH_SIZE = '1';
+    }
+
+    function markParallelWritesSafe(vectorDatabase: TrackingVectorDatabase, recommendedInsertConcurrency = 2): void {
+        vectorDatabase.writeCapabilities = {
+            ...vectorDatabase.writeCapabilities,
+            parallelWritesToSameCollection: true,
+            recommendedInsertConcurrency,
+            ambiguousWriteFailureMode: 'retry_safe',
+        };
     }
 
     function enablePayloadBoundedBatches(maxContentChars?: number, maxEstimatedTokens?: number): void {
@@ -892,6 +916,7 @@ describe('Context accelerated batch pipeline', () => {
         process.env.INDEX_INSERT_QUEUE_CAPACITY = '2';
         process.env.EMBEDDING_BATCH_SIZE = '1';
         const vectorDatabase = new TrackingVectorDatabase();
+        markParallelWritesSafe(vectorDatabase);
         vectorDatabase.insertDelayMs = 20;
         const codebasePath = await createCodebase();
 
@@ -921,6 +946,7 @@ describe('Context accelerated batch pipeline', () => {
     it('fails fast on plain insert errors with insert stage and batch context', async () => {
         enableAcceleratedInsertFailureRace();
         const vectorDatabase = new TrackingVectorDatabase();
+        markParallelWritesSafe(vectorDatabase);
         const runningInsert = deferred<void>();
         const firstInsertError = new Error('ambiguous vector write');
         const insert = jest.spyOn(vectorDatabase, 'insert')
@@ -948,7 +974,8 @@ describe('Context accelerated batch pipeline', () => {
 
         try {
             let indexSettled = false;
-            const indexPromise = context.indexCodebase(await createCodebase())
+            const fileCount = 12;
+            const indexPromise = context.indexCodebase(await createCodebase(fileCount))
                 .finally(() => {
                     indexSettled = true;
                 });
@@ -965,7 +992,7 @@ describe('Context accelerated batch pipeline', () => {
 
             const snapshot = context.getLastAcceleratorSnapshot() as IndexingAcceleratorSnapshot;
             expect(snapshot.submittedBatches).toBeGreaterThanOrEqual(2);
-            expect(snapshot.submittedBatches).toBeLessThan(4);
+            expect(snapshot.submittedBatches).toBeLessThan(fileCount);
             expect(insert).toHaveBeenCalledTimes(2);
             expect(vectorDatabase.allDocuments()).toHaveLength(1);
             expect(snapshot.failedInsertBatches).toBe(1);
@@ -981,6 +1008,7 @@ describe('Context accelerated batch pipeline', () => {
     it('stops producing new file batches after the first accelerated insert failure', async () => {
         enableAcceleratedInsertFailureRace();
         const vectorDatabase = new TrackingVectorDatabase();
+        markParallelWritesSafe(vectorDatabase);
         const runningInsert = deferred<void>();
         const firstInsertError = new Error('stop producer after insert failure');
         const insert = jest.spyOn(vectorDatabase, 'insert')
@@ -1003,7 +1031,8 @@ describe('Context accelerated batch pipeline', () => {
         });
 
         let indexSettled = false;
-        const indexPromise = context.indexCodebase(await createCodebase())
+        const fileCount = 12;
+        const indexPromise = context.indexCodebase(await createCodebase(fileCount))
             .finally(() => {
                 indexSettled = true;
             });
@@ -1011,7 +1040,7 @@ describe('Context accelerated batch pipeline', () => {
         await waitForCondition(() => insert.mock.calls.length >= 2);
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(indexSettled).toBe(false);
-        expect(splitter.splitCount).toBeLessThan(4);
+        expect(splitter.splitCount).toBeLessThan(fileCount);
 
         runningInsert.resolve();
         await expect(indexPromise)
@@ -1026,6 +1055,7 @@ describe('Context accelerated batch pipeline', () => {
     ])('fails fast on %s insert errors through the accelerated scheduler boundary', async (_label, insertMethod) => {
         enableAcceleratedInsertFailureRace();
         const vectorDatabase = new TrackingVectorDatabase();
+        markParallelWritesSafe(vectorDatabase);
         const runningInsert = deferred<void>();
         const firstInsertError = new Error(`${insertMethod} vector write failed`);
         const insert = jest.spyOn(vectorDatabase, insertMethod)

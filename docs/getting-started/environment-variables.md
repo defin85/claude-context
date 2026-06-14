@@ -148,6 +148,10 @@ maximums stay visible in status and remain the upper bound.
 | `INDEX_EMBEDDING_CONCURRENCY` | Configured maximum in-flight embedding batches | `2` in auto, else `1` |
 | `INDEX_INSERT_CONCURRENCY` | Configured maximum in-flight vector insert batches | `1` |
 | `INDEX_INSERT_QUEUE_CAPACITY` | Maximum insert backlog waiting for insert lanes | `2` |
+| `INDEX_WRITE_COALESCING` | Enable backend-supported write coalescing after embedding for candidate runs | `false` |
+| `INDEX_WRITE_COALESCING_TARGET_DOCUMENTS` | Target embedded-document count before a coalesced vector write flush | Backend policy |
+| `INDEX_WRITE_COALESCING_MAX_DOCUMENTS` | Maximum embedded-document count allowed in one coalesced vector write flush | Backend policy |
+| `INDEX_WRITE_COALESCING_FLUSH_INTERVAL_MS` | Maximum wait before flushing buffered embedded documents | `250` |
 | `INDEX_ADAPTIVE_BACKPRESSURE` | Enable adaptive effective concurrency and producer admission throttling | `true` in auto |
 | `INDEX_ADAPTIVE_MIN_EMBEDDING_CONCURRENCY` | Lowest effective embedding concurrency while throttled | `1` |
 | `INDEX_ADAPTIVE_HIGH_PRESSURE_THRESHOLD` | Pressure score that decreases effective concurrency | `1` |
@@ -157,7 +161,7 @@ maximums stay visible in status and remain the upper bound.
 | `INDEX_ADAPTIVE_INSERT_BACKLOG_THRESHOLD` | Insert backlog threshold for downstream pressure | `2` |
 | `INDEX_ADAPTIVE_INSERT_BACKLOG_MIN_BATCHES` | Minimum submitted batches before insert-backlog pressure applies | `30` |
 | `INDEX_ADAPTIVE_INSERT_LATENCY_MS_THRESHOLD` | Average insert latency threshold in milliseconds | `30000` |
-| `INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD` | Retried-batch ratio threshold | `0.5` |
+| `INDEX_ADAPTIVE_RETRY_RATE_THRESHOLD` | Retried-batch ratio threshold | `0.1` |
 | `INDEX_ADAPTIVE_RETRY_RATE_MIN_BATCHES` | Minimum submitted batches before retry-rate pressure applies | `10` |
 | `INDEX_ADAPTIVE_REJECTED_WORKERS_THRESHOLD` | Rejected BGE-M3 worker threshold | `1` |
 | `INDEX_ADAPTIVE_MEMORY_FREE_PERCENT_THRESHOLD` | Host memory free-percent guardrail | `3` |
@@ -165,6 +169,28 @@ maximums stay visible in status and remain the upper bound.
 
 VRAM pressure is measured by the managed BGE-M3 worker planner when managed
 workers are enabled and GPU memory metrics are available.
+
+`INDEX_INSERT_CONCURRENCY` is an operator upper bound. Accelerated indexing
+derives `effectiveInsertConcurrency` from the active vector backend write
+capabilities:
+
+- Qdrant advertises parallel same-collection upserts and may use configured
+  insert concurrency up to its backend recommendation.
+- LanceDB advertises single-writer collection writes, so effective insert
+  concurrency is clamped to `1` even when a higher value is configured.
+- Milvus remains conservative until bounded benchmark evidence supports a
+  safer backend-specific policy.
+- Unknown backends fail closed to single-writer scheduling.
+
+Status and benchmark summaries report `vectorWritePolicy`,
+`backendClampReason`, configured/effective insert concurrency, coalesced write
+counts, coalesced document counts, queued coalesced documents, and coalescing
+flush reasons. Write coalescing happens after embedding, so it does not increase
+`INDEX_EMBEDDING_MAX_CONTENT_CHARS` or `INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS`.
+Backend-provided safe starting values are currently `100` target / `300`
+maximum coalesced documents for single-writer local writes and `200` target /
+`400` maximum coalesced documents for Qdrant. Keep `INDEX_WRITE_COALESCING=false`
+for baseline and rollback runs; set it to `true` only for measured candidates.
 
 Changing the default batch sizes requires benchmark evidence from both a small
 repository and a larger repository. Compare wall-clock time, retry rate, insert

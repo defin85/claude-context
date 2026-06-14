@@ -48,6 +48,7 @@ import {
     IndexingAcceleratorWorkerSnapshot,
     getEffectiveEmbeddingPayloadLimits,
     getIndexingAcceleratorConfig,
+    resolveVectorWritePolicy,
     shouldAccelerateIndexing,
 } from "./indexing-accelerator";
 import { EmbeddingBatchScheduler } from "./embedding-batch-scheduler";
@@ -2044,6 +2045,17 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        const vectorWriteCapabilities = this.vectorDatabase.getWriteCapabilities?.();
+        const vectorWritePolicy = resolveVectorWritePolicy({
+            backend: vectorWriteCapabilities?.backend,
+            configuredInsertConcurrency: acceleratorConfig.insertConcurrency,
+            capabilities: vectorWriteCapabilities,
+            coalescingEnabled: acceleratorConfig.writeCoalescingEnabled,
+            coalescingTargetDocuments: acceleratorConfig.writeCoalescingTargetDocuments,
+            coalescingMaxDocuments: acceleratorConfig.writeCoalescingMaxDocuments,
+            coalescingFlushIntervalMs: acceleratorConfig.writeCoalescingFlushIntervalMs,
+        });
+        acceleratorRuntime.recordVectorWritePolicy(vectorWritePolicy);
         acceleratorRuntime.recordEffectivePayloadLimits(effectivePayloadLimits);
         acceleratorRuntime.recordChunkLimit(CODE_CHUNK_LIMIT);
         if (options.preIndexTraversal) {
@@ -2073,7 +2085,7 @@ export class Context {
         );
         console.log(`[Context] 🔧 Using CODE_CHUNK_LIMIT: ${CODE_CHUNK_LIMIT}`);
         console.log(
-            `[Context] ⚡ Index accelerator: mode=${acceleratorConfig.mode}, active=${accelerationDecision.active}, embeddingConcurrency=${effectiveEmbeddingConcurrency}, insertConcurrency=${accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1}${accelerationDecision.fallbackReason ? `, fallback=${accelerationDecision.fallbackReason}` : ""}`,
+            `[Context] ⚡ Index accelerator: mode=${acceleratorConfig.mode}, active=${accelerationDecision.active}, embeddingConcurrency=${effectiveEmbeddingConcurrency}, insertConcurrency=${accelerationDecision.active ? acceleratorConfig.insertConcurrency : 1}, effectiveInsertConcurrency=${accelerationDecision.active ? vectorWritePolicy.effectiveInsertConcurrency : 1}, vectorBackend=${vectorWritePolicy.backend}${vectorWritePolicy.backendClampReason !== "none" ? `, insertClamp=${vectorWritePolicy.backendClampReason}` : ""}${accelerationDecision.fallbackReason ? `, fallback=${accelerationDecision.fallbackReason}` : ""}`,
         );
 
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
@@ -2139,6 +2151,17 @@ export class Context {
                 insertConcurrency: acceleratorConfig.insertConcurrency,
                 insertQueueCapacity: acceleratorConfig.insertQueueCapacity,
                 adaptiveBackpressure: acceleratorConfig.adaptiveBackpressure,
+                writePolicy: vectorWritePolicy,
+                writeCoalescing: vectorWritePolicy.coalescingEnabled
+                    ? {
+                        enabled: true,
+                        targetDocumentCount: vectorWritePolicy.targetCoalescedDocumentCount,
+                        maxDocumentCount: vectorWritePolicy.maxCoalescedDocumentCount,
+                        flushIntervalMs: vectorWritePolicy.coalescingFlushIntervalMs,
+                        getDocumentCount: (preparedInsert: PreparedChunkBatchInsert) => preparedInsert.documents.length,
+                        mergeResults: (preparedInserts: PreparedChunkBatchInsert[]) => this.mergePreparedChunkBatchInserts(preparedInserts),
+                    }
+                    : undefined,
                 abortSignal,
                 resourcePressureProvider: this.acceleratorResourceSnapshotProvider,
                 onProgress: publishBatchProgress,
@@ -2527,6 +2550,25 @@ export class Context {
             acceleratorRuntime,
             batchMetadata.id,
         );
+    }
+
+    private mergePreparedChunkBatchInserts(preparedInserts: PreparedChunkBatchInsert[]): PreparedChunkBatchInsert {
+        if (preparedInserts.length === 0) {
+            throw new Error("Cannot coalesce an empty prepared insert list.");
+        }
+        const [first] = preparedInserts;
+        const incompatible = preparedInserts.find((preparedInsert) => (
+            preparedInsert.collectionName !== first.collectionName ||
+            preparedInsert.insertMode !== first.insertMode ||
+            preparedInsert.useBgeM3Upsert !== first.useBgeM3Upsert
+        ));
+        if (incompatible) {
+            throw new Error("Cannot coalesce prepared inserts with different vector write targets.");
+        }
+        return {
+            ...first,
+            documents: preparedInserts.flatMap((preparedInsert) => preparedInsert.documents),
+        };
     }
 
     private async runPayloadSafeEmbeddingBatch<T>(

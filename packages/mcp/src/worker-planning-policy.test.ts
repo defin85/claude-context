@@ -53,6 +53,35 @@ function createAcceleratorSnapshot(): IndexingAcceleratorSnapshot {
         configuredInsertConcurrency: 1,
         effectiveEmbeddingConcurrency: 1,
         effectiveInsertConcurrency: 1,
+        vectorWritePolicy: {
+            backend: 'lancedb',
+            configuredInsertConcurrency: 2,
+            effectiveInsertConcurrency: 1,
+            backendClampReason: 'single_writer_collection',
+            coalescingEnabled: true,
+            targetCoalescedDocumentCount: 100,
+            maxCoalescedDocumentCount: 300,
+            coalescingFlushIntervalMs: 250,
+            ambiguousWriteFailureMode: 'fail_fast',
+            parallelWritesToSameCollection: false,
+            idempotentUpsert: true,
+        },
+        backendClampReason: 'single_writer_collection',
+        coalescingEnabled: true,
+        targetCoalescedDocumentCount: 100,
+        maxCoalescedDocumentCount: 300,
+        coalescingFlushIntervalMs: 250,
+        queuedCoalescedDocuments: 0,
+        coalescedInsertBatches: 2,
+        coalescedInsertDocuments: 120,
+        coalescingFlushReasons: {
+            target_document_count: 1,
+            max_document_count: 0,
+            flush_interval: 0,
+            scheduler_drain: 1,
+            cancellation: 0,
+            backend_opt_out: 0,
+        },
         adaptivePressureScore: 1,
         adaptiveThrottleReason: 'insert_backlog',
         adaptiveThrottleTimeMs: 123,
@@ -177,8 +206,16 @@ test('worker planning policy exposes canonical status field paths', () => {
     assert.equal(policy.statusFields.workers, 'accelerator.workers');
     assert.deepEqual(policy.statusFields.insertScheduler, [
         'accelerator.insertConcurrency',
+        'accelerator.configuredInsertConcurrency',
+        'accelerator.effectiveInsertConcurrency',
+        'accelerator.vectorWritePolicy',
+        'accelerator.backendClampReason',
         'accelerator.queuedInsertBatches',
         'accelerator.runningInsertBatches',
+        'accelerator.queuedCoalescedDocuments',
+        'accelerator.coalescedInsertBatches',
+        'accelerator.coalescedInsertDocuments',
+        'accelerator.coalescingFlushReasons',
         'accelerator.completedInsertBatches',
         'accelerator.failedInsertBatches',
         'accelerator.insertMs',
@@ -256,6 +293,11 @@ test('daemon status text includes adaptive backpressure fields when accelerator 
     const text = getTextContent(result);
 
     assert.match(text, /effectiveEmbeddingConcurrency=1/);
+    assert.match(text, /effectiveInsertConcurrency=1/);
+    assert.match(text, /vectorBackend=lancedb/);
+    assert.match(text, /insertClamp=single_writer_collection/);
+    assert.match(text, /coalescedWrites=2/);
+    assert.match(text, /coalescedDocs=120/);
     assert.match(text, /pressure=1/);
     assert.match(text, /throttle=insert_backlog/);
     assert.match(text, /throttleMs=123/);

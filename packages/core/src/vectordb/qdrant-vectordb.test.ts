@@ -127,6 +127,47 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
             with_vector: false,
         }));
     });
+
+    it('declares parallel-safe idempotent upsert write capabilities', () => {
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+
+        expect(db.getWriteCapabilities('chunks')).toEqual(expect.objectContaining({
+            parallelWritesToSameCollection: true,
+            idempotentUpsert: true,
+            recommendedInsertConcurrency: 4,
+            writeCoalescingRecommended: true,
+            ambiguousWriteFailureMode: 'retry_safe',
+        }));
+    });
+
+    it('allows concurrent same-collection BGE-M3 upserts through the adapter', async () => {
+        const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async () => ({
+            ok: true,
+            json: async () => ({ result: { operation_id: 1, status: 'completed' } }),
+        } as Response));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+        const document = {
+            id: 'chunk-1',
+            vector: [0.1, 0.2],
+            sparseVector: { indices: [1], values: [0.5] },
+            colbertVectors: [[0.1, 0.2]],
+            content: 'content',
+            relativePath: 'file.ts',
+            startLine: 1,
+            endLine: 2,
+            fileExtension: '.ts',
+            metadata: { retrievalMode: 'bge_m3_full' },
+        };
+
+        await expect(Promise.all([
+            db.upsertBgeM3('chunks', [document]),
+            db.upsertBgeM3('chunks', [{ ...document, id: 'chunk-2' }]),
+        ])).resolves.toEqual([undefined, undefined]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls.every((call) => String(call[0]).includes('/collections/chunks/points?wait=true'))).toBe(true);
+    });
 });
 
 describe('QdrantVectorDatabase payload projection', () => {

@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-06-11T15:32:30.050Z",
+  "text": "Cancelled daemon workload for '/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c'. Queued jobs: 0. Active jobs: 1.",
+  "structuredContent": {
+    "path": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+    "reason": "measure-indexing-baseline timeout after 600000ms",
+    "queued": [],
+    "active": [
+      {
+        "id": "b5b139ea-6db2-46c0-b001-bbe3dc021d57",
+        "type": "interactive-index",
+        "codebasePath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c"
+      }
+    ],
+    "idleAfterCancel": true
+  }
+}
