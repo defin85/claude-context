@@ -47,9 +47,21 @@ Rationale:
 
 Alternative considered: tune by ad hoc manual search examples only. This is faster initially but gives no regression protection.
 
-### Decision: Validate labels before treating the target threshold as a hard gate
+### Decision: Split measurement readiness from ranking tuning
 
-Before using Hit@10 24/30 as the tuned acceptance gate, the implementation must verify that every expected path prefix either exists in the indexed `examples/demo-1c` fixture or is explicitly marked stale, unreachable, or intentionally ambiguous in the report. Label fixes must stay in the evaluation dataset and must not become production search rules.
+The first implementation milestone SHALL build a trustworthy measurement loop before changing ranking behavior: preserve or regenerate the 18/30 baseline, normalize live result schemas, validate labels, and prove the runner reports the baseline correctly. Ranking changes start only after this measurement gate is complete.
+
+Rationale:
+
+- A parser mismatch or stale label can make a ranking change look better or worse than it is.
+- The measurement loop is reusable even if the first tuning attempt is rejected.
+- Separating measurement from tuning reduces pressure to fit the 30-query set before proving that the set is valid.
+
+Alternative considered: implement ranking signals and runner together. This is faster in one branch but makes it harder to tell whether score movement came from code changes, parser changes, or label changes.
+
+### Decision: Validate labels before setting the final target threshold
+
+Before using Hit@10 24/30 as the tuned acceptance gate, the implementation must verify that every expected path prefix either exists in the indexed `examples/demo-1c` fixture or is explicitly marked stale, unreachable, or intentionally ambiguous in the report. Label fixes must stay in the evaluation dataset and must not become production search rules. If label validation changes the reachable query set, the final acceptance threshold must be recalculated and documented before tuning is accepted.
 
 Rationale:
 
@@ -83,21 +95,25 @@ Rationale:
 
 Alternative considered: keep separate collectors and scorers per artifact generation path. That makes short-term scripting easier but increases the chance that baseline and tuned runs are not actually comparable.
 
-### Decision: Tune general 1C-aware ranking signals, not dataset labels
+### Decision: Tune bounded 1C-aware hints, not dataset labels or fixed configuration layouts
 
-Ranking should infer query intent from tokens and result path/metadata, then apply generic boosts or penalties. Examples include recognizing `справочник`, `документ`, `регистр`, `отчет`, `форма списка`, `форма элемента`, `карточка`, `печать`, and matching those intents to path segments such as `Catalogs`, `Documents`, `AccumulationRegisters`, `Reports`, `Commands`, and `Forms`.
+Ranking should infer query intent from tokens and result path/metadata, then apply bounded generic boosts or penalties. Examples include recognizing `справочник`, `документ`, `регистр`, `отчет`, `форма списка`, `форма элемента`, `карточка`, and `печать`, and matching those intents to possible exported 1C contexts such as `Catalogs`, `Documents`, `AccumulationRegisters`, `Reports`, `Commands`, `Forms`, object modules, manager modules, common modules, and code that mentions print forms or tabular documents.
+
+These signals SHALL be hints, not routing rules. They must not map a business term such as "накладная" to a fixed metadata object, and they must not assume that БП, ЗУП, ДО, УТ, ERP, or a customized configuration place print logic in the same directory. Unknown or non-standard layouts stay neutral unless there is independent semantic, lexical, symbol, or code-evidence support.
 
 Rationale:
 
-- This addresses the observed misses without binding production behavior to test IDs.
+- This addresses the observed misses without binding production behavior to test IDs or to one exported configuration layout.
 - 1C exported configuration paths encode useful metadata structure.
-- The existing scoring pipeline already exposes `pathBoost`, `exactSymbolBoost`, and diagnostics, so it can be extended without changing vector storage.
+- The existing scoring pipeline already exposes `pathBoost`, `exactSymbolBoost`, and diagnostics, so it can be extended with capped hints without changing vector storage.
 
 Alternative considered: add the expected path prefixes as a production rule table. This would inflate the eval score but violate the dataset contract and fail outside `demo-1c`.
 
+Alternative considered: add a strong "where 1C usually stores this" rule for print forms and object kinds. This is unsafe because typical and customized configurations differ substantially; the same business intent can live in commands, object modules, manager modules, forms, reports, common modules, or vendor-specific subsystems.
+
 ### Decision: Limit duplicate crowding after fusion
 
-The final top-K list should avoid letting repeated chunks from a single broad file consume most of the result budget when other high-scoring files exist. Duplicate control can be implemented as a reranking penalty, a per-file soft cap, or a diversity pass after scoring, but it must preserve enough chunks for valid multi-hit files.
+The final top-K list should avoid letting repeated chunks from a single broad file consume most of the result budget when other high-scoring files exist. Duplicate control SHALL be a soft post-fusion reranking signal, not a hard deletion pass: affected results remain eligible, exact-symbol/provider-backed evidence can override the penalty, and diagnostics must explain the adjustment.
 
 Rationale:
 
@@ -107,7 +123,7 @@ Rationale:
 
 Alternative considered: deduplicate all results by file. That could hide useful line-specific hits and is too aggressive.
 
-Implementation acceptance for duplicate control should include a deterministic fixture where many chunks from one broad file and at least one more specific matching file compete for top-10. The more specific file must remain in top-10, duplicate penalties or diversity reasons must be visible in diagnostics, and exact-symbol or provider-backed matches must not be removed solely by file-level diversity.
+Implementation acceptance for duplicate control should include a deterministic fixture where many chunks from one broad file and at least one more specific matching file compete for top-10. The more specific file must remain in top-10 when it has comparable semantic or lexical evidence, duplicate penalties or diversity reasons must be visible in diagnostics, and exact-symbol or provider-backed matches must not be removed solely by file-level diversity.
 
 ### Decision: Keep score diagnostics mandatory for tuned results
 
@@ -124,22 +140,23 @@ Alternative considered: inspect logs manually during implementation. That does n
 ## Risks / Trade-offs
 
 - Overfitting to `demo-1c` terms -> require general 1C path and intent rules, keep labels out of production code, and include regression tests for generic behavior.
-- Boosts can degrade semantic-only queries -> compare baseline and tuned reports, require no increase in tool errors or missing ColBERT errors, and keep score-component diagnostics in both aggregate and per-query artifacts.
+- Boosts can degrade semantic-only queries -> keep 1C hints bounded so they cannot dominate semantic/provider evidence, compare baseline and tuned reports, require no increase in tool errors or missing ColBERT errors, and keep score-component diagnostics in both aggregate and per-query artifacts.
 - A live-result parser mismatch can create false ranking failures -> require schema normalization tests for the existing `qdrant-fixed-mcp-search-30-report.json` shape and any new runner output shape.
 - Duplicate control can hide legitimate repeated chunks -> use a soft penalty or cap rather than full file-level deduplication.
 - More diagnostics can enlarge MCP responses -> keep diagnostics in metadata fields already used by code-symbol retrieval and avoid returning vectors or large debug payloads.
-- 1C path heuristics may not cover every exported configuration shape -> keep unknown paths neutral and avoid failing search on unrecognized structure.
+- 1C path heuristics may not cover every exported configuration shape -> keep unknown paths neutral, avoid failing search on unrecognized structure, and add cross-layout sanity fixtures before promoting aggressive weights.
 
 ## Migration Plan
 
 1. Keep existing indexes in place; no reindex is required for ranking-only changes.
 2. Capture or preserve the current Qdrant default baseline report with Hit@10 18/30.
-3. Validate the relevance labels against the indexed `examples/demo-1c` fixture before using the target threshold as a hard gate.
-4. Add the committed live evaluation runner and verify it can reproduce a baseline against the existing daemon/index.
+3. Add the committed live evaluation runner and verify it can reproduce a baseline against the existing daemon/index.
+4. Validate the relevance labels against the indexed `examples/demo-1c` fixture and document the final acceptance threshold before tuning.
 5. Add focused unit tests for 1C object-kind/path boosts and duplicate control.
-6. Implement tuning changes in `packages/core/src/code-symbol-retrieval.ts`.
-7. Re-run focused tests, builds, and the live `examples/demo-1c` acceptance set.
-8. If tuned ranking causes unacceptable regressions, rollback is a code revert only; existing vector collections remain usable.
+6. Add cross-layout sanity fixtures that represent different typical and customized 1C placement patterns for print, forms, and object modules.
+7. Implement tuning changes in `packages/core/src/code-symbol-retrieval.ts`.
+8. Re-run focused tests, builds, and the live `examples/demo-1c` acceptance set.
+9. If tuned ranking causes unacceptable regressions, rollback is a code revert only; existing vector collections remain usable.
 
 ## Open Questions
 

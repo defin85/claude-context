@@ -36,7 +36,7 @@
 
 - [x] 5.1 Capture the current capped baseline on `examples/demo-do30-1c` with 4 BGE-M3 workers, payload caps `20000/5000`, and the existing insert scheduler.
 - [x] 5.2 Run `examples/demo-do30-1c` with LanceDB single-writer coalescing and compare progress, write calls, failed inserts, insert time, and backpressure wait.
-- [ ] 5.3 Run `examples/demo-do30-1c` with Qdrant backend-aware insert concurrency `2` and `4` plus coalescing.
+- [x] 5.3 Run `examples/demo-do30-1c` with Qdrant backend-aware insert concurrency `2` and `4` plus coalescing.
 - [x] 5.4 Compare candidates against the baseline using the same bounded ten-minute window and full 1C scope.
 - [x] 5.5 Record whether the dominant remaining pressure source is insert backlog, insert latency, retry pressure, rejected workers, host memory, or VRAM.
 - [x] 5.6 Do not promote a default unless the candidate has zero failed inserts and materially improves bounded progress or reduces wall-clock/backpressure.

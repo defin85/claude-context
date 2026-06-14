@@ -59,14 +59,49 @@ Run directory:
 
 LanceDB coalescing is implemented and safe as an explicit candidate: it preserved single-writer behavior, kept failed insert batches at `0`, and reduced vector write count and insert time. It did not improve bounded progress or backpressure in this run. Therefore it is not promoted as the default; `INDEX_WRITE_COALESCING` defaults to `false` and must be set to `true` for candidate runs.
 
+## Qdrant Live Evidence
+
+Date: 2026-06-14
+
+All accepted Qdrant runs used `examples/demo-do30-1c`, full 1C scope, 4 managed BGE-M3 workers, payload caps `20000/5000`, `INDEX_INSERT_QUEUE_CAPACITY=2`, `INDEX_WRITE_COALESCING=true`, local Qdrant at `http://127.0.0.1:6333`, and a bounded ten-minute window with `--cancel-on-timeout`.
+
+### Candidate: Qdrant Coalescing with Insert Concurrency 2
+
+Run directory:
+
+`benchmark-artifacts/2026-06-14T10-39-32-917Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert2-adaptivetrue`
+
+- Final status: `indexing`, cancelled by timeout after `604926ms`.
+- Write policy: Qdrant, configured/effective insert concurrency `2` / `2`, `coalescingEnabled=true`.
+- Completed insert batches: `301`.
+- Coalesced insert batches/documents: `143` / `5731`.
+- Failed insert batches: `0`.
+- Insert time: `36412ms`.
+- Batch summary: `9051` total chunks, `444` completed batches, `0` failed batches.
+- Dominant final pressure: `retry_rate`; final insert backlog `0`, coalescing queue depth `0`, retry rate `0.0538`, throttle time `405709ms`.
+
+### Candidate: Qdrant Coalescing with Insert Concurrency 4
+
+Run directory:
+
+`benchmark-artifacts/2026-06-14T10-49-58-441Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert4-adaptivetrue`
+
+- Final status: `indexing`, cancelled by timeout after `607710ms`.
+- Write policy: Qdrant, configured/effective insert concurrency `4` / `4`, `coalescingEnabled=true`.
+- Completed insert batches: `291`.
+- Coalesced insert batches/documents: `95` / `3806`.
+- Failed insert batches: `0`.
+- Insert time: `27698ms`.
+- Batch summary: `7755` total chunks, `386` completed batches, `0` failed batches.
+- Dominant final pressure: `retry_rate`; final insert backlog `0`, coalescing queue depth `8`, retry rate `0.0566`, throttle time `402823ms`.
+
+### Decision
+
+Qdrant backend-aware insert concurrency `2` and `4` is live-validated with coalescing enabled and zero failed insert batches. Both runs removed insert backlog as the dominant pressure source, but neither improved bounded progress versus the existing capped baseline enough to promote a new default. The remaining bottleneck is retry-pressure-driven embedding throttling, so Qdrant concurrency remains eligible for explicit candidate runs but is not promoted by this change.
+
 ## Diagnostic Runs Not Used As Acceptance Evidence
 
 - `2026-06-11T14-33-10-775Z...`: pre-fix run. It exposed incorrect pressure attribution where `queuedCoalescedDocuments` was counted as `insertBacklog`.
 - `2026-06-11T14-50-09-439Z...` and `2026-06-11T15-01-07-755Z...`: no-coalescing env was not effective against the old built daemon code; these are configuration diagnostics, not baseline evidence.
 - `2026-06-11T15-22-21-361Z...`: inherited `INDEX_WRITE_COALESCING=false`, so it is a second no-coalescing control, not a coalescing candidate.
 - `2026-06-11T15-33-05-408Z...`: coalescing was enabled, but the run failed early with `Indexing batch 146 failed during embedding: BGE-M3 worker retry budget exhausted... fetch failed`. This drove the retry-pressure tuning from `0.5` to `0.1`.
-
-## Missing Live Evidence
-
-- Qdrant live runs for `INDEX_INSERT_CONCURRENCY=2` and `4` were not executed. Local `http://127.0.0.1:6333/collections` returned connection failure, and no `QDRANT_URL` was present in the environment.
-- Because Qdrant live evidence is missing, Qdrant backend-aware concurrency remains covered by adapter/unit tests only in this change.
