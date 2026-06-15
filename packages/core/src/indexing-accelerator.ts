@@ -33,11 +33,65 @@ export interface EmbeddingWorkerFailureSummary {
     unknown: number;
 }
 
+export type EmbeddingWorkerFailureCategory =
+    | 'fetch_failed'
+    | 'http_error'
+    | 'timeout'
+    | 'cancellation'
+    | 'metadata'
+    | 'startup'
+    | 'parse_error'
+    | 'unknown';
+
+export interface EmbeddingWorkerFailureCategorySummary {
+    fetch_failed: number;
+    http_error: number;
+    timeout: number;
+    cancellation: number;
+    metadata: number;
+    startup: number;
+    parse_error: number;
+    unknown: number;
+}
+
+export interface EmbeddingFailureRequestShape {
+    requestId: string;
+    path: string;
+    logicalBatchId?: number;
+    chunkCount?: number;
+    contentCharCount?: number;
+    estimatedTokens?: number;
+    mode?: string;
+    maxContentChars?: number;
+    maxEstimatedTokens?: number;
+    payloadBytes?: number;
+}
+
+export interface EmbeddingFailureEvidence {
+    requestId: string;
+    workerEndpoint: string;
+    occurredAt: string;
+    durationMs: number;
+    retryAttempt: number;
+    retrySafe: boolean;
+    reason: EmbeddingWorkerFailureReason;
+    category: EmbeddingWorkerFailureCategory;
+    timeoutOrCancellationState: 'none' | 'timeout' | 'cancelled' | 'unknown';
+    errorName: string;
+    errorMessage: string;
+    causeName?: string;
+    causeCode?: string;
+    causeMessage?: string;
+    sidecarPhase?: string;
+    request: EmbeddingFailureRequestShape;
+}
+
 export interface WorkerLifecycleSummary {
     rejected: number;
     recovered: number;
     recoveryFailed: number;
     byReason: EmbeddingWorkerFailureSummary;
+    byCategory: EmbeddingWorkerFailureCategorySummary;
 }
 
 export type AdaptiveThrottleReason =
@@ -176,6 +230,7 @@ export interface IndexingAcceleratorSnapshot {
     failedBatches: number;
     retriedBatches: number;
     retryReasons: EmbeddingWorkerFailureSummary;
+    retryFailureCategories: EmbeddingWorkerFailureCategorySummary;
     retrySafeFailures: number;
     retryUnsafeFailures: number;
     workerLifecycle: WorkerLifecycleSummary;
@@ -247,6 +302,13 @@ export interface IndexingAcceleratorWorkerSnapshot {
     rejectedReason?: string;
     rejectedFailureReason?: EmbeddingWorkerFailureReason;
     rejectedRetrySafe?: boolean;
+    lastFailedRequestId?: string;
+    lastFailedLogicalBatchId?: number;
+    lastFailureCategory?: EmbeddingWorkerFailureCategory;
+    lastFailureEvidence?: EmbeddingFailureEvidence;
+    lastRecoveredFailureEvidence?: EmbeddingFailureEvidence;
+    recoveryEligibleAt?: string;
+    rejectionCountsByCategory?: EmbeddingWorkerFailureCategorySummary;
     lastFailureAt?: string;
     lastSuccessAt?: string;
     recoveryAttempts: number;
@@ -331,6 +393,7 @@ export class IndexingAcceleratorRuntime {
             failedBatches: 0,
             retriedBatches: 0,
             retryReasons: createEmptyFailureSummary(),
+            retryFailureCategories: createEmptyFailureCategorySummary(),
             retrySafeFailures: 0,
             retryUnsafeFailures: 0,
             workerLifecycle: {
@@ -338,6 +401,7 @@ export class IndexingAcceleratorRuntime {
                 recovered: 0,
                 recoveryFailed: 0,
                 byReason: createEmptyFailureSummary(),
+                byCategory: createEmptyFailureCategorySummary(),
             },
             activeWorkers: undefined,
             rejectedWorkers: undefined,
@@ -386,9 +450,11 @@ export class IndexingAcceleratorRuntime {
                 : undefined,
             workers: this.snapshot.workers?.map((worker) => ({ ...worker })),
             retryReasons: { ...this.snapshot.retryReasons },
+            retryFailureCategories: { ...this.snapshot.retryFailureCategories },
             workerLifecycle: {
                 ...this.snapshot.workerLifecycle,
                 byReason: { ...this.snapshot.workerLifecycle.byReason },
+                byCategory: { ...this.snapshot.workerLifecycle.byCategory },
             },
             adaptivePressureSignals: this.snapshot.adaptivePressureSignals
                 ? { ...this.snapshot.adaptivePressureSignals }
@@ -529,9 +595,15 @@ export class IndexingAcceleratorRuntime {
         }
     }
 
-    recordBatchRetried(batchId?: number, reason: EmbeddingWorkerFailureReason = 'unknown', retrySafe: boolean = true): void {
+    recordBatchRetried(
+        batchId?: number,
+        reason: EmbeddingWorkerFailureReason = 'unknown',
+        retrySafe: boolean = true,
+        evidence?: EmbeddingFailureEvidence,
+    ): void {
         this.snapshot.retriedBatches++;
         this.snapshot.retryReasons[reason]++;
+        this.snapshot.retryFailureCategories[evidence?.category || failureReasonToCategory(reason)]++;
         if (retrySafe) {
             this.snapshot.retrySafeFailures++;
         } else {
@@ -570,15 +642,22 @@ export class IndexingAcceleratorRuntime {
         this.snapshot.effectiveEmbeddingMaxEstimatedTokens = limits.maxEstimatedTokens;
     }
 
-    recordWorkerLifecycle(event: WorkerLifecycleEvent, reason: EmbeddingWorkerFailureReason = 'unknown'): void {
+    recordWorkerLifecycle(
+        event: WorkerLifecycleEvent,
+        reason: EmbeddingWorkerFailureReason = 'unknown',
+        category?: EmbeddingWorkerFailureCategory,
+    ): void {
+        const normalizedCategory = category || failureReasonToCategory(reason);
         if (event === 'rejected') {
             this.snapshot.workerLifecycle.rejected++;
             this.snapshot.workerLifecycle.byReason[reason]++;
+            this.snapshot.workerLifecycle.byCategory[normalizedCategory]++;
         } else if (event === 'recovered') {
             this.snapshot.workerLifecycle.recovered++;
         } else {
             this.snapshot.workerLifecycle.recoveryFailed++;
             this.snapshot.workerLifecycle.byReason[reason]++;
+            this.snapshot.workerLifecycle.byCategory[normalizedCategory]++;
         }
     }
 
@@ -605,7 +684,11 @@ export class IndexingAcceleratorRuntime {
             const previous = previousWorkers.get(worker.endpoint);
             const previousState = previous?.poolState;
             if (worker.poolState === 'rejected' && previousState !== 'rejected') {
-                this.recordWorkerLifecycle('rejected', worker.rejectedFailureReason || 'unknown');
+                this.recordWorkerLifecycle(
+                    'rejected',
+                    worker.rejectedFailureReason || 'unknown',
+                    worker.lastFailureCategory,
+                );
             } else if (worker.poolState === 'accepted' && previousState === 'rejected') {
                 this.recordWorkerLifecycle('recovered');
             } else if (
@@ -613,7 +696,11 @@ export class IndexingAcceleratorRuntime {
                 previousState === 'recovering' &&
                 worker.lastRecoveryAttemptAt !== previous?.lastRecoveryAttemptAt
             ) {
-                this.recordWorkerLifecycle('recovery_failed', worker.rejectedFailureReason || 'unknown');
+                this.recordWorkerLifecycle(
+                    'recovery_failed',
+                    worker.rejectedFailureReason || 'unknown',
+                    worker.lastFailureCategory,
+                );
             }
         }
     }
@@ -922,6 +1009,35 @@ export function createEmptyFailureSummary(): EmbeddingWorkerFailureSummary {
         cancellation: 0,
         unknown: 0,
     };
+}
+
+export function createEmptyFailureCategorySummary(): EmbeddingWorkerFailureCategorySummary {
+    return {
+        fetch_failed: 0,
+        http_error: 0,
+        timeout: 0,
+        cancellation: 0,
+        metadata: 0,
+        startup: 0,
+        parse_error: 0,
+        unknown: 0,
+    };
+}
+
+export function failureReasonToCategory(reason: EmbeddingWorkerFailureReason): EmbeddingWorkerFailureCategory {
+    if (reason === 'embedding_timeout') {
+        return 'timeout';
+    }
+    if (reason === 'cancellation') {
+        return 'cancellation';
+    }
+    if (reason === 'metadata' || reason === 'health') {
+        return 'metadata';
+    }
+    if (reason === 'startup') {
+        return 'startup';
+    }
+    return reason === 'embedding_error' ? 'unknown' : 'unknown';
 }
 
 export function createEmptyCoalescingFlushSummary(): CoalescingFlushSummary {

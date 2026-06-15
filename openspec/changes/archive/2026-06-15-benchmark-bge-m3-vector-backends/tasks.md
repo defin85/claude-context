@@ -39,9 +39,9 @@
 
 - [x] 5.1 Run the full `examples/demo-1c` developer-scope fixture generation and confirm the expected `893` chunk count or record explicit accepted drift.
 - [x] 5.2 Run the Milvus current, Qdrant native multivector, and LanceDB multivector write matrix for `examples/demo-1c`.
-- [ ] 5.3 Run the bounded `examples/demo-do30-1c` fixture generation with explicit cap/timeout/cancellation metadata.
-- [ ] 5.4 Run the selected backend write matrix for bounded `examples/demo-do30-1c`.
-- [ ] 5.5 Confirm that failed, skipped, bounded, fixture-drifted, or parity-failed runs are marked non-comparable in the matrix summary.
+- [x] 5.3 Run the bounded `examples/demo-do30-1c` fixture generation with explicit cap/timeout/cancellation metadata.
+- [x] 5.4 Run the selected backend write matrix for bounded `examples/demo-do30-1c`.
+- [x] 5.5 Confirm that failed, skipped, bounded, fixture-drifted, or parity-failed runs are marked non-comparable in the matrix summary.
 - [x] 5.6 Capture a short evidence summary that states which backend, if any, is comparable on write wall-clock and bytes/request, and which conclusions are blocked by parity or bounded status.
 
 ## 6. Documentation And Verification

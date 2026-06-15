@@ -312,6 +312,7 @@ function selfTestCompactOutput() {
             failedInsertBatches: 1,
             insertMs: 1234,
             retryReasons: { embedding_timeout: 1, embedding_error: 1 },
+            retryFailureCategories: { timeout: 1, fetch_failed: 1 },
             retrySafeFailures: 2,
             retryUnsafeFailures: 0,
             activeWorkers: 1,
@@ -324,6 +325,35 @@ function selfTestCompactOutput() {
                 inFlight: 0,
                 rejectedFailureReason: 'embedding_error',
                 rejectedRetrySafe: true,
+                lastFailedRequestId: 'bge-m3-test-request',
+                lastFailureCategory: 'fetch_failed',
+                lastFailureEvidence: {
+                    requestId: 'bge-m3-test-request',
+                    workerEndpoint: 'http://127.0.0.1:8000',
+                    occurredAt: '2026-06-14T00:00:00.000Z',
+                    durationMs: 12,
+                    retryAttempt: 0,
+                    retrySafe: true,
+                    reason: 'embedding_error',
+                    category: 'fetch_failed',
+                    timeoutOrCancellationState: 'none',
+                    errorName: 'TypeError',
+                    errorMessage: 'fetch failed',
+                    causeCode: 'UND_ERR_SOCKET',
+                    causeMessage: 'other side closed',
+                    request: {
+                        requestId: 'bge-m3-test-request',
+                        path: '/embed_batch',
+                        logicalBatchId: 2,
+                        chunkCount: 100,
+                        contentCharCount: 20000,
+                        estimatedTokens: 5000,
+                        mode: 'full',
+                        maxContentChars: 20000,
+                        maxEstimatedTokens: 5000,
+                        payloadBytes: 21000,
+                    },
+                },
                 recoveryAttempts: 1,
             }],
             batches: [
@@ -368,6 +398,24 @@ function selfTestCompactOutput() {
     }
     if (compacted.accelerator.workerSummary.rejectedWorkers !== 1) {
         throw new Error('Expected workerSummary rejected worker count to be preserved.');
+    }
+    if (compacted.accelerator.retrySummary.failureCategories.fetch_failed !== 1) {
+        throw new Error('Expected retrySummary failure categories to be preserved.');
+    }
+    if (compacted.accelerator.failureDiagnostics.clientCauseCounts.fetch_failed !== 1) {
+        throw new Error('Expected failure diagnostics client cause counts to be preserved.');
+    }
+    if (compacted.accelerator.failureDiagnostics.sidecarPhaseCounts.unknown !== 1) {
+        throw new Error('Expected failure diagnostics sidecar phase counts to be summarized.');
+    }
+    if (compacted.accelerator.failureDiagnostics.payloadSizeBucketCounts['20k-50k'] !== 1) {
+        throw new Error('Expected failure diagnostics payload size buckets to be summarized.');
+    }
+    if (compacted.accelerator.workerSummary.workers[0].lastFailedRequestId !== 'bge-m3-test-request') {
+        throw new Error('Expected workerSummary to preserve last failed request reference.');
+    }
+    if (compacted.accelerator.workerSummary.workers[0].lastFailureEvidence.request.contentCharCount !== 20000) {
+        throw new Error('Expected workerSummary to preserve sanitized request-shape evidence.');
     }
     if (compacted.accelerator.insertSummary.queuedInsertBatches !== 1) {
         throw new Error('Expected insertSummary queued insert count to be preserved.');
@@ -437,6 +485,7 @@ function selfTestCompactOutput() {
             failedInsertBatches: 0,
             insertMs: 456,
             retryReasons: { embedding_error: 1 },
+            retryFailureCategories: { fetch_failed: 1 },
             retrySafeFailures: 1,
             retryUnsafeFailures: 0,
             activeWorkers: 4,
@@ -447,6 +496,9 @@ function selfTestCompactOutput() {
 
     if (compactedStatusOnly.accelerator.retrySummary?.retryReasons.embedding_error !== 1) {
         throw new Error('Expected retrySummary to be added when accelerator.batches is absent.');
+    }
+    if (compactedStatusOnly.accelerator.retrySummary?.failureCategories.fetch_failed !== 1) {
+        throw new Error('Expected retrySummary failure categories when accelerator.batches is absent.');
     }
     if (compactedStatusOnly.accelerator.workerSummary?.activeWorkers !== 4) {
         throw new Error('Expected workerSummary to be added when accelerator.batches is absent.');
@@ -816,13 +868,28 @@ function summarizeNumbers(values) {
 
 function summarizeRetryAndWorkers(accelerator) {
     const workers = Array.isArray(accelerator.workers) ? accelerator.workers : [];
+    const failureEvidence = workers.flatMap((worker) => (
+        [worker.lastFailureEvidence, worker.lastRecoveredFailureEvidence].filter(Boolean)
+    ));
     return {
         retrySummary: {
             retriedBatches: accelerator.retriedBatches || 0,
             failedBatches: accelerator.failedBatches || 0,
             retryReasons: accelerator.retryReasons || {},
+            failureCategories: accelerator.retryFailureCategories || {},
             retrySafeFailures: accelerator.retrySafeFailures || 0,
             retryUnsafeFailures: accelerator.retryUnsafeFailures || 0,
+        },
+        failureDiagnostics: {
+            clientCauseCounts: accelerator.retryFailureCategories || {},
+            sidecarPhaseCounts: countBy(failureEvidence, (evidence) => evidence.sidecarPhase || 'unknown'),
+            workerEndpointCounts: countWorkerFailuresByEndpoint(workers),
+            payloadSizeBucketCounts: countBy(failureEvidence, (evidence) => payloadSizeBucket(evidence.request?.payloadBytes)),
+            retrySafeCounts: {
+                true: accelerator.retrySafeFailures || 0,
+                false: accelerator.retryUnsafeFailures || 0,
+            },
+            recoveryOutcomeCounts: countRecoveryOutcomes(workers),
         },
         workerSummary: {
             activeWorkers: accelerator.activeWorkers || 0,
@@ -835,6 +902,13 @@ function summarizeRetryAndWorkers(accelerator) {
                 inFlight: worker.inFlight,
                 rejectedFailureReason: worker.rejectedFailureReason,
                 rejectedRetrySafe: worker.rejectedRetrySafe,
+                lastFailedRequestId: worker.lastFailedRequestId,
+                lastFailedLogicalBatchId: worker.lastFailedLogicalBatchId,
+                lastFailureCategory: worker.lastFailureCategory,
+                lastFailureEvidence: worker.lastFailureEvidence,
+                lastRecoveredFailureEvidence: worker.lastRecoveredFailureEvidence,
+                recoveryEligibleAt: worker.recoveryEligibleAt,
+                rejectionCountsByCategory: worker.rejectionCountsByCategory,
                 recoveryAttempts: worker.recoveryAttempts,
             })),
         },
@@ -885,6 +959,56 @@ function summarizeRetryAndWorkers(accelerator) {
             pressureSignals: accelerator.adaptivePressureSignals || {},
         },
     };
+}
+
+function countBy(items, getKey) {
+    return items.reduce((counts, item) => {
+        const key = getKey(item) || 'unknown';
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+    }, {});
+}
+
+function countWorkerFailuresByEndpoint(workers) {
+    return workers.reduce((counts, worker) => {
+        const categoryCounts = worker.rejectionCountsByCategory || {};
+        const total = Object.values(categoryCounts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        if (total > 0) {
+            counts[worker.endpoint || 'unknown'] = total;
+        }
+        return counts;
+    }, {});
+}
+
+function payloadSizeBucket(payloadBytes) {
+    if (!Number.isFinite(payloadBytes) || payloadBytes <= 0) {
+        return 'unknown';
+    }
+    if (payloadBytes <= 10_000) {
+        return '<=10k';
+    }
+    if (payloadBytes <= 20_000) {
+        return '10k-20k';
+    }
+    if (payloadBytes <= 50_000) {
+        return '20k-50k';
+    }
+    if (payloadBytes <= 100_000) {
+        return '50k-100k';
+    }
+    return '>100k';
+}
+
+function countRecoveryOutcomes(workers) {
+    return workers.reduce((counts, worker) => {
+        if (worker.lastRecoveredFailureEvidence) {
+            counts.recovered = (counts.recovered || 0) + 1;
+        } else if (worker.lastFailureEvidence) {
+            const key = worker.poolState === 'rejected' ? 'still_rejected' : 'accepted_after_failure';
+            counts[key] = (counts[key] || 0) + 1;
+        }
+        return counts;
+    }, {});
 }
 
 function compactStructuredContent(structuredContent) {

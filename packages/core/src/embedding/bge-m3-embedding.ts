@@ -1,5 +1,14 @@
 import { Embedding, EmbeddingVector, MultiVectorEmbedding } from './base-embedding';
-import type { EmbeddingWorkerFailureReason, WorkerLifecycleEvent } from '../indexing-accelerator';
+import {
+    createEmptyFailureCategorySummary,
+    failureReasonToCategory,
+    type EmbeddingFailureEvidence,
+    type EmbeddingFailureRequestShape,
+    type EmbeddingWorkerFailureCategory,
+    type EmbeddingWorkerFailureCategorySummary,
+    type EmbeddingWorkerFailureReason,
+    type WorkerLifecycleEvent,
+} from '../indexing-accelerator';
 
 export type BgeM3Mode = 'full' | 'dense';
 
@@ -27,6 +36,16 @@ export interface BgeM3EmbeddingConfig {
     workerRecoveryCooldownMs?: number;
 }
 
+export interface BgeM3EmbeddingRequestContext {
+    logicalBatchId?: number;
+    chunkCount?: number;
+    contentCharCount?: number;
+    estimatedTokens?: number;
+    maxContentChars?: number;
+    maxEstimatedTokens?: number;
+    retryAttempt?: number;
+}
+
 export interface BgeM3WorkerProfile {
     model: string;
     modelRevision?: string;
@@ -52,6 +71,9 @@ interface BgeM3Worker {
     recoveryAttempts: number;
     lastRecoveryAttemptAt?: string;
     recoveryEligibleAt?: number;
+    lastFailureEvidence?: EmbeddingFailureEvidence;
+    lastRecoveredFailureEvidence?: EmbeddingFailureEvidence;
+    rejectionCountsByCategory: EmbeddingWorkerFailureCategorySummary;
     recovering: boolean;
 }
 
@@ -66,6 +88,13 @@ export interface BgeM3WorkerSnapshot {
     lastSuccessAt?: string;
     recoveryAttempts: number;
     lastRecoveryAttemptAt?: string;
+    lastFailedRequestId?: string;
+    lastFailedLogicalBatchId?: number;
+    lastFailureCategory?: EmbeddingWorkerFailureCategory;
+    lastFailureEvidence?: EmbeddingFailureEvidence;
+    lastRecoveredFailureEvidence?: EmbeddingFailureEvidence;
+    recoveryEligibleAt?: string;
+    rejectionCountsByCategory?: EmbeddingWorkerFailureCategorySummary;
     poolState: 'accepted' | 'rejected' | 'recovering';
 }
 
@@ -74,6 +103,7 @@ export interface BgeM3WorkerFailure {
     retrySafe: boolean;
     message: string;
     error: Error;
+    evidence?: EmbeddingFailureEvidence;
 }
 
 interface BgeM3WorkerFailureContext {
@@ -119,6 +149,129 @@ function normalizeEndpoint(endpoint: string): string {
     return endpoint.trim().replace(/\/+$/, '');
 }
 
+function createRequestId(): string {
+    return `bge-m3-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function cloneFailureEvidence(evidence: EmbeddingFailureEvidence): EmbeddingFailureEvidence {
+    return {
+        ...evidence,
+        request: { ...evidence.request },
+    };
+}
+
+function getFailureEvidence(
+    error: Error,
+    reason: EmbeddingWorkerFailureReason,
+    retrySafe: boolean,
+): EmbeddingFailureEvidence | undefined {
+    const source = error as Error & { bgeM3FailureEvidence?: EmbeddingFailureEvidence };
+    if (!source.bgeM3FailureEvidence) {
+        return undefined;
+    }
+    return {
+        ...cloneFailureEvidence(source.bgeM3FailureEvidence),
+        reason,
+        retrySafe,
+        category: source.bgeM3FailureEvidence.category || failureReasonToCategory(reason),
+    };
+}
+
+function createFailureEvidence(options: {
+    error: Error;
+    workerEndpoint: string;
+    request: EmbeddingFailureRequestShape;
+    durationMs: number;
+    retryAttempt: number;
+    reason: EmbeddingWorkerFailureReason;
+    retrySafe: boolean;
+}): EmbeddingFailureEvidence {
+    const cause = getErrorCause(options.error);
+    return {
+        requestId: options.request.requestId,
+        workerEndpoint: options.workerEndpoint,
+        occurredAt: new Date().toISOString(),
+        durationMs: Math.max(0, Math.round(options.durationMs)),
+        retryAttempt: options.retryAttempt,
+        retrySafe: options.retrySafe,
+        reason: options.reason,
+        category: classifyFailureCategory(options.error, options.reason),
+        timeoutOrCancellationState: getTimeoutOrCancellationState(options.error, options.reason),
+        errorName: options.error.name || 'Error',
+        errorMessage: options.error.message || String(options.error),
+        causeName: cause.name,
+        causeCode: cause.code,
+        causeMessage: cause.message,
+        sidecarPhase: 'unknown',
+        request: { ...options.request },
+    };
+}
+
+function getErrorCause(error: Error): { name?: string; code?: string; message?: string } {
+    const cause = (error as Error & { cause?: unknown }).cause;
+    if (!cause || typeof cause !== 'object') {
+        return {};
+    }
+    const source = cause as Record<string, unknown>;
+    return {
+        name: typeof source.name === 'string' ? source.name : undefined,
+        code: typeof source.code === 'string' ? source.code : undefined,
+        message: typeof source.message === 'string' ? source.message : undefined,
+    };
+}
+
+function classifyFailureCategory(
+    error: Error,
+    reason: EmbeddingWorkerFailureReason,
+): EmbeddingWorkerFailureCategory {
+    const lowerMessage = (error.message || '').toLowerCase();
+    const cause = getErrorCause(error);
+    const lowerCauseMessage = (cause.message || '').toLowerCase();
+    const causeCode = (cause.code || '').toUpperCase();
+    if (reason === 'embedding_timeout') {
+        return 'timeout';
+    }
+    if (reason === 'cancellation') {
+        return 'cancellation';
+    }
+    if (reason === 'metadata' || reason === 'health') {
+        return 'metadata';
+    }
+    if (reason === 'startup') {
+        return 'startup';
+    }
+    if (
+        lowerMessage.includes('fetch failed') ||
+        causeCode.startsWith('ECONN') ||
+        causeCode === 'UND_ERR_SOCKET' ||
+        lowerCauseMessage.includes('socket') ||
+        lowerCauseMessage.includes('other side closed')
+    ) {
+        return 'fetch_failed';
+    }
+    if (lowerMessage.includes('sidecar request failed') || /\b[45]\d\d\b/.test(lowerMessage)) {
+        return 'http_error';
+    }
+    if (lowerMessage.includes('json') || lowerMessage.includes('parse')) {
+        return 'parse_error';
+    }
+    return failureReasonToCategory(reason);
+}
+
+function getTimeoutOrCancellationState(
+    error: Error,
+    reason: EmbeddingWorkerFailureReason,
+): 'none' | 'timeout' | 'cancelled' | 'unknown' {
+    const lowerMessage = (error.message || '').toLowerCase();
+    if (reason === 'embedding_timeout' || lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
+        return 'timeout';
+    }
+    if (reason === 'cancellation' || error.name === 'AbortError') {
+        return 'cancelled';
+    }
+    return 'none';
+}
+
 export class BgeM3Embedding extends Embedding {
     private readonly endpoint: string;
     private readonly workers: BgeM3Worker[];
@@ -146,6 +299,7 @@ export class BgeM3Embedding extends Embedding {
             inFlight: 0,
             healthy: endpoint === this.endpoint,
             recoveryAttempts: 0,
+            rejectionCountsByCategory: createEmptyFailureCategorySummary(),
             recovering: false,
         }));
         this.model = config.model || 'BAAI/bge-m3';
@@ -208,12 +362,16 @@ export class BgeM3Embedding extends Embedding {
     async embedMultiBatchWithWorkerPool(
         texts: string[],
         onRetry?: (workerEndpoint: string, error: Error, failure?: BgeM3WorkerFailure) => void,
+        requestContext?: BgeM3EmbeddingRequestContext,
     ): Promise<MultiVectorEmbedding[]> {
         const processedTexts = this.preprocessTexts(texts);
-        const response = await this.withWorkerRetry((worker) => this.post(worker, '/embed_batch', {
+        const response = await this.withWorkerRetry((worker, attempt) => this.post(worker, '/embed_batch', {
                 inputs: processedTexts,
                 model: this.model,
                 mode: this.mode,
+            }, {
+                ...requestContext,
+                retryAttempt: attempt,
             }), onRetry);
 
         return this.parseMultiVectorBatchResponse(response, processedTexts.length);
@@ -253,6 +411,19 @@ export class BgeM3Embedding extends Embedding {
             rejectedReason: worker.rejectedReason,
             rejectedFailureReason: worker.rejectedFailureReason,
             rejectedRetrySafe: worker.rejectedRetrySafe,
+            lastFailedRequestId: worker.lastFailureEvidence?.requestId,
+            lastFailedLogicalBatchId: worker.lastFailureEvidence?.request.logicalBatchId,
+            lastFailureCategory: worker.lastFailureEvidence?.category,
+            lastFailureEvidence: worker.lastFailureEvidence
+                ? cloneFailureEvidence(worker.lastFailureEvidence)
+                : undefined,
+            lastRecoveredFailureEvidence: worker.lastRecoveredFailureEvidence
+                ? cloneFailureEvidence(worker.lastRecoveredFailureEvidence)
+                : undefined,
+            recoveryEligibleAt: worker.recoveryEligibleAt !== undefined
+                ? new Date(worker.recoveryEligibleAt).toISOString()
+                : undefined,
+            rejectionCountsByCategory: { ...worker.rejectionCountsByCategory },
             lastFailureAt: worker.lastFailureAt,
             lastSuccessAt: worker.lastSuccessAt,
             recoveryAttempts: worker.recoveryAttempts,
@@ -281,18 +452,31 @@ export class BgeM3Embedding extends Embedding {
                 inFlight: 0,
                 healthy: true,
                 recoveryAttempts: 0,
+                rejectionCountsByCategory: createEmptyFailureCategorySummary(),
                 recovering: false,
                 recoveryEligibleAt: 0,
             });
         }
     }
 
-    private async post(worker: BgeM3Worker, path: string, body: Record<string, unknown>): Promise<unknown> {
+    private async post(
+        worker: BgeM3Worker,
+        path: string,
+        body: Record<string, unknown>,
+        requestContext?: BgeM3EmbeddingRequestContext,
+    ): Promise<unknown> {
+        const requestId = createRequestId();
+        const bodyJson = JSON.stringify(body);
+        const requestShape = this.createRequestShape(requestId, path, body, bodyJson, requestContext);
+        const startedAt = Date.now();
         try {
             const response = await this.fetchImpl(`${worker.endpoint}${path}`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
+            headers: {
+                'content-type': 'application/json',
+                'x-claude-context-request-id': requestId,
+            },
+            body: bodyJson,
             });
 
             if (!response.ok) {
@@ -304,6 +488,14 @@ export class BgeM3Embedding extends Embedding {
             const result = await response.json();
             this.recordWorkerSuccess(worker);
             return result;
+        } catch (error) {
+            throw this.attachFailureEvidence(
+                error,
+                worker.endpoint,
+                requestShape,
+                Date.now() - startedAt,
+                requestContext?.retryAttempt ?? 0,
+            );
         } finally {
             worker.inFlight = Math.max(0, worker.inFlight - 1);
         }
@@ -325,7 +517,7 @@ export class BgeM3Embedding extends Embedding {
     }
 
     private async withWorkerRetry(
-        run: (worker: BgeM3Worker) => Promise<unknown>,
+        run: (worker: BgeM3Worker, attempt: number) => Promise<unknown>,
         onRetry?: (workerEndpoint: string, error: Error, failure?: BgeM3WorkerFailure) => void,
     ): Promise<unknown> {
         let lastError: unknown;
@@ -343,7 +535,7 @@ export class BgeM3Embedding extends Embedding {
                 throw error;
             }
             try {
-                return await run(worker);
+                return await run(worker, attempt);
             } catch (error) {
                 lastError = error;
                 const failure = this.classifyFailure(error, 'embedding');
@@ -440,6 +632,8 @@ export class BgeM3Embedding extends Embedding {
         worker.rejectedRetrySafe = failure.retrySafe;
         worker.lastFailureAt = new Date().toISOString();
         worker.recoveryEligibleAt = Date.now() + this.getInitialRecoveryCooldownMs(failure);
+        worker.lastFailureEvidence = failure.evidence;
+        worker.rejectionCountsByCategory[failure.evidence?.category || failureReasonToCategory(failure.reason)]++;
         worker.recovering = false;
         console.warn(`[BGE-M3] Rejected worker ${worker.endpoint}: ${failure.reason} ${failure.message}`);
     }
@@ -455,6 +649,9 @@ export class BgeM3Embedding extends Embedding {
         worker.lastSuccessAt = new Date().toISOString();
         if (!worker.healthy || worker.rejectedReason) {
             console.log(`[BGE-M3] Worker ${worker.endpoint} recovered and returned to the embedding pool.`);
+        }
+        if (worker.lastFailureEvidence) {
+            worker.lastRecoveredFailureEvidence = worker.lastFailureEvidence;
         }
         worker.healthy = true;
         worker.rejectedReason = undefined;
@@ -496,6 +693,8 @@ export class BgeM3Embedding extends Embedding {
                 worker.rejectedRetrySafe = failure.retrySafe;
                 worker.lastFailureAt = new Date().toISOString();
                 worker.recoveryEligibleAt = Date.now() + this.workerRecoveryCooldownMs;
+                worker.lastFailureEvidence = failure.evidence;
+                worker.rejectionCountsByCategory[failure.evidence?.category || failureReasonToCategory(failure.reason)]++;
                 console.warn(`[BGE-M3] Worker ${worker.endpoint} recovery failed: ${failure.reason} ${failure.message}`);
             }
         }
@@ -590,7 +789,64 @@ export class BgeM3Embedding extends Embedding {
             retrySafe,
             message,
             error: normalized,
+            evidence: getFailureEvidence(normalized, reason, retrySafe),
         };
+    }
+
+    private createRequestShape(
+        requestId: string,
+        path: string,
+        body: Record<string, unknown>,
+        bodyJson: string,
+        requestContext?: BgeM3EmbeddingRequestContext,
+    ): EmbeddingFailureRequestShape {
+        const inputs = Array.isArray(body.inputs) ? body.inputs : undefined;
+        const input = typeof body.input === 'string' ? body.input : undefined;
+        const texts = inputs
+            ? inputs.filter((item): item is string => typeof item === 'string')
+            : input !== undefined ? [input] : [];
+        const contentCharCount = requestContext?.contentCharCount ??
+            texts.reduce((sum, text) => sum + text.length, 0);
+        const estimatedTokens = requestContext?.estimatedTokens ??
+            Math.ceil(contentCharCount / 4);
+        return {
+            requestId,
+            path,
+            logicalBatchId: requestContext?.logicalBatchId,
+            chunkCount: requestContext?.chunkCount ?? texts.length,
+            contentCharCount,
+            estimatedTokens,
+            mode: typeof body.mode === 'string' ? body.mode : this.mode,
+            maxContentChars: requestContext?.maxContentChars,
+            maxEstimatedTokens: requestContext?.maxEstimatedTokens,
+            payloadBytes: Buffer.byteLength(bodyJson, 'utf8'),
+        };
+    }
+
+    private attachFailureEvidence(
+        error: unknown,
+        workerEndpoint: string,
+        request: EmbeddingFailureRequestShape,
+        durationMs: number,
+        retryAttempt: number,
+    ): Error {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        const stage = request.path === '/metadata' ? 'metadata' : 'embedding';
+        const classified = this.classifyFailure(normalized, stage);
+        const evidence = createFailureEvidence({
+            error: normalized,
+            workerEndpoint,
+            request,
+            durationMs,
+            retryAttempt,
+            reason: classified.reason,
+            retrySafe: classified.retrySafe,
+        });
+        Object.defineProperty(normalized, 'bgeM3FailureEvidence', {
+            value: evidence,
+            configurable: true,
+        });
+        return normalized;
     }
 
     private parseWorkerProfile(raw: unknown): BgeM3WorkerProfile {

@@ -5,12 +5,20 @@ normalization tests can run in a plain Python environment.
 """
 
 import argparse
+import json
+import logging
 import os
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
 
 BgeM3Mode = Literal["full", "dense"]
+logger = logging.getLogger("claude_context.bge_m3_sidecar")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=os.environ.get("BGE_M3_LOG_LEVEL", "INFO"))
+logger.setLevel(os.environ.get("BGE_M3_LOG_LEVEL", "INFO"))
 
 
 def _as_python(value: Any) -> Any:
@@ -106,6 +114,48 @@ def normalize_embedding(
     return result
 
 
+def _text_shape(texts: list[str], *, mode: BgeM3Mode | None = None) -> dict[str, Any]:
+    content_char_count = sum(len(text) for text in texts)
+    return {
+        "chunk_count": len(texts),
+        "content_char_count": content_char_count,
+        "estimated_tokens": (content_char_count + 3) // 4,
+        "mode": mode,
+    }
+
+
+def _sanitize_exception_message(exc: Exception) -> str:
+    if str(exc):
+        return "[redacted]"
+    return ""
+
+
+def _log_request_outcome(
+    *,
+    request_id: str,
+    endpoint: str,
+    status: str,
+    shape: dict[str, Any],
+    started_at: float,
+    phase: str | None = None,
+    exc: Exception | None = None,
+) -> None:
+    event: dict[str, Any] = {
+        "event": "bge_m3_embed_request",
+        "request_id": request_id,
+        "endpoint": endpoint,
+        "status": status,
+        "duration_ms": round((time.perf_counter() - started_at) * 1000),
+        "shape": shape,
+    }
+    if phase:
+        event["phase"] = phase
+    if exc is not None:
+        event["exception_class"] = exc.__class__.__name__
+        event["exception_message"] = _sanitize_exception_message(exc)
+    logger.info(json.dumps(event, ensure_ascii=False, sort_keys=True))
+
+
 @dataclass
 class BgeM3Service:
     model: Any
@@ -186,7 +236,7 @@ def load_service(
 
 
 def create_app(service: BgeM3Service | None = None):
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from pydantic import BaseModel, Field
 
     app = FastAPI(title="Claude Context BGE-M3 sidecar")
@@ -221,18 +271,61 @@ def create_app(service: BgeM3Service | None = None):
     def metadata() -> dict[str, Any]:
         return get_service().metadata()
 
+    def request_id_from_headers(http_request: Request) -> str:
+        return http_request.headers.get("x-claude-context-request-id") or f"bge-m3-sidecar-{uuid.uuid4().hex[:12]}"
+
     @app.post("/embed")
-    def embed(request: EmbedRequest) -> dict[str, Any]:
+    def embed(request: EmbedRequest, http_request: Request) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        request_id = request_id_from_headers(http_request)
+        shape = _text_shape([request.input], mode=request.mode)
         try:
-            return get_service().embed(request.input, mode=request.mode)
+            result = get_service().embed(request.input, mode=request.mode)
+            _log_request_outcome(
+                request_id=request_id,
+                endpoint="/embed",
+                status="success",
+                shape=shape,
+                started_at=started_at,
+            )
+            return result
         except Exception as exc:
+            _log_request_outcome(
+                request_id=request_id,
+                endpoint="/embed",
+                status="failure",
+                shape=shape,
+                started_at=started_at,
+                phase="embed",
+                exc=exc,
+            )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/embed_batch")
-    def embed_batch(request: EmbedBatchRequest) -> list[dict[str, Any]]:
+    def embed_batch(request: EmbedBatchRequest, http_request: Request) -> list[dict[str, Any]]:
+        started_at = time.perf_counter()
+        request_id = request_id_from_headers(http_request)
+        shape = _text_shape(request.inputs, mode=request.mode)
         try:
-            return get_service().embed_batch(request.inputs, mode=request.mode)
+            result = get_service().embed_batch(request.inputs, mode=request.mode)
+            _log_request_outcome(
+                request_id=request_id,
+                endpoint="/embed_batch",
+                status="success",
+                shape=shape,
+                started_at=started_at,
+            )
+            return result
         except Exception as exc:
+            _log_request_outcome(
+                request_id=request_id,
+                endpoint="/embed_batch",
+                status="failure",
+                shape=shape,
+                started_at=started_at,
+                phase="embed_batch",
+                exc=exc,
+            )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return app

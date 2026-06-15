@@ -207,8 +207,20 @@ type MultiVectorEmbeddingProvider = Embedding & {
         onRetry?: (
             workerEndpoint: string,
             error: Error,
-            failure?: { reason: EmbeddingWorkerFailureReason; retrySafe: boolean },
+            failure?: {
+                reason: EmbeddingWorkerFailureReason;
+                retrySafe: boolean;
+                evidence?: import("./indexing-accelerator").EmbeddingFailureEvidence;
+            },
         ) => void,
+        requestContext?: {
+            logicalBatchId?: number;
+            chunkCount?: number;
+            contentCharCount?: number;
+            estimatedTokens?: number;
+            maxContentChars?: number;
+            maxEstimatedTokens?: number;
+        },
     ): Promise<MultiVectorEmbedding[]>;
 };
 
@@ -2661,7 +2673,16 @@ export class Context {
                                 batchId,
                                 failure?.reason || "unknown",
                                 failure?.retrySafe ?? true,
+                                failure?.evidence,
                             ),
+                            {
+                                logicalBatchId: batchId,
+                                chunkCount: chunks.length,
+                                contentCharCount: this.countChunkContentChars(chunks),
+                                estimatedTokens: this.estimateChunkTokens(chunks),
+                                maxContentChars: acceleratorRuntime.getSnapshot().effectiveEmbeddingMaxContentChars,
+                                maxEstimatedTokens: acceleratorRuntime.getSnapshot().effectiveEmbeddingMaxEstimatedTokens,
+                            },
                         ))
                         : multiVectorEmbedding.embedMultiBatch(texts),
                 );

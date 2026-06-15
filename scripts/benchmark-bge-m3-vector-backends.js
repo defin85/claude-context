@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const defaultArtifactDir = path.join(repoRoot, '.artifacts', 'bge-m3-vector-backend-benchmark');
@@ -124,6 +124,9 @@ function parseArgs(argv) {
                 break;
             case '--generate-fixture':
                 options.mode = setMode(options.mode, 'generate-fixture');
+                break;
+            case '--generate-fixture-worker':
+                options.mode = setMode(options.mode, 'generate-fixture-worker');
                 break;
             case '--run':
                 options.mode = setMode(options.mode, 'run');
@@ -393,6 +396,76 @@ async function writeJson(filePath, data) {
     await fsp.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
+function writeStdoutJson(value) {
+    fs.writeSync(process.stdout.fd, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function isNativeTeardownCrash(childResult) {
+    return childResult.code !== 0 && /free\(\): invalid pointer/.test(childResult.stderr);
+}
+
+async function runGenerateFixtureWorker(options) {
+    await fsp.rm(options.fixturePath, { force: true });
+    const workerArgs = process.argv.slice(2).map((arg) => (
+        arg === '--generate-fixture' ? '--generate-fixture-worker' : arg
+    ));
+    const child = spawn(process.execPath, [__filename, ...workerArgs], {
+        cwd: repoRoot,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+        const text = chunk.toString();
+        stdout += text;
+        process.stdout.write(text);
+    });
+    child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+    });
+    const childResult = await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+    });
+
+    if (childResult.code === 0) {
+        if (childResult.stderr) {
+            process.stderr.write(childResult.stderr);
+        }
+        return;
+    }
+
+    const fixture = fs.existsSync(options.fixturePath)
+        ? await loadFixture(options.fixturePath)
+        : undefined;
+    const fixtureIsValid = Boolean(
+        fixture &&
+        fixture.checksumMatchesStored &&
+        fixture.documents.length > 0 &&
+        (!options.expectedChunks || fixture.documents.length === options.expectedChunks),
+    );
+    if (fixtureIsValid && isNativeTeardownCrash(childResult)) {
+        const filteredStderr = childResult.stderr
+            .split(/\r?\n/)
+            .filter((line) => line.trim() !== 'free(): invalid pointer')
+            .join('\n')
+            .trim();
+        if (filteredStderr) {
+            process.stderr.write(`${filteredStderr}\n`);
+        }
+        return;
+    }
+
+    if (childResult.stderr) {
+        process.stderr.write(childResult.stderr);
+    }
+    throw new Error(
+        `Fixture generation worker failed with ` +
+        `${childResult.signal ? `signal ${childResult.signal}` : `exit code ${childResult.code}`}.`,
+    );
+}
+
 async function appendJsonl(filePath, records) {
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
     const content = records.map((record) => JSON.stringify(record)).join('\n');
@@ -626,13 +699,16 @@ async function generateFixture(options) {
     validateFixtureChunkCount(fixture, options);
     refreshFixtureChecksum(fixture);
     await writeJson(options.fixturePath, fixture);
-    console.log(JSON.stringify({
+    writeStdoutJson({
         fixturePath: options.fixturePath,
         dataset: fixture.dataset.name,
         chunkCount: fixture.documents.length,
         checksum: fixture.checksum,
         bounded: fixture.dataset.bounded,
-    }, null, 2));
+    });
+    // The parent process isolates and validates this worker's artifact if a
+    // native splitter/vector module crashes during process teardown.
+    process.exit(0);
 }
 
 function sparsePayload(document) {
@@ -1849,6 +1925,10 @@ async function main() {
         return;
     }
     if (options.mode === 'generate-fixture') {
+        await runGenerateFixtureWorker(options);
+        return;
+    }
+    if (options.mode === 'generate-fixture-worker') {
         await generateFixture(options);
         return;
     }

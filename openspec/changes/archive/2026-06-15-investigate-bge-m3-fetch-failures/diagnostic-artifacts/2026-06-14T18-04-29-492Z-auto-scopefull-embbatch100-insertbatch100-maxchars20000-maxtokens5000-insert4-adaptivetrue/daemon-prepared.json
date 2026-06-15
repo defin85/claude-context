@@ -1,0 +1,53 @@
+{
+  "preparedAt": "2026-06-14T18:04:30.041Z",
+  "codebasePath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+  "unitName": "claude-context-mcp-daemon",
+  "restart": true,
+  "daemon": {
+    "runtimeId": "f0d0f43e-9059-4068-bd2d-dc54b386b7ae",
+    "pid": 449441,
+    "endpointUrl": "http://127.0.0.1:39393/mcp",
+    "allowedRoots": [
+      "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context",
+      "/run/media/egor/D6B64A72B64A52E3/Projects/OneC/bp-unicom-sdd",
+      "/run/media/egor/D6B64A72B64A52E3/Projects/remnawave-cdn-runbook"
+    ],
+    "runtimeStatusFilePath": "/home/egor/.context/mcp/runtime/449441.json"
+  },
+  "measurementEnv": {
+    "BGE_M3_ACCELERATOR_MANAGED_WORKERS": "true",
+    "BGE_M3_ACCELERATOR_MAX_WORKERS": "2",
+    "INDEX_ACCELERATOR_MODE": "auto",
+    "INDEX_ADAPTIVE_BACKPRESSURE": "true",
+    "INDEX_EMBEDDING_BATCH_SIZE": "100",
+    "INDEX_EMBEDDING_CONCURRENCY": "2",
+    "INDEX_EMBEDDING_MAX_CONTENT_CHARS": "20000",
+    "INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS": "5000",
+    "INDEX_INSERT_BATCH_SIZE": "100",
+    "INDEX_INSERT_CONCURRENCY": "4",
+    "INDEX_INSERT_QUEUE_CAPACITY": "2",
+    "INDEX_WRITE_COALESCING": "true",
+    "QDRANT_URL": "http://127.0.0.1:6333",
+    "VECTOR_DATABASE_BACKEND": "qdrant"
+  },
+  "runtimeWorkload": {
+    "mode": "daemon",
+    "indexing": {
+      "maxConcurrency": 1,
+      "activeCount": 0,
+      "queuedCount": 0,
+      "activeJobs": [],
+      "queuedJobs": []
+    },
+    "search": {
+      "maxConcurrency": 4,
+      "activeCount": 0,
+      "queuedCount": 0,
+      "activeJobs": [],
+      "queuedJobs": []
+    }
+  },
+  "runtimeSync": {
+    "outcome": "idle"
+  }
+}

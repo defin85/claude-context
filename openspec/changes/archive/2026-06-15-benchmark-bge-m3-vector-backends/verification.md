@@ -36,12 +36,12 @@ Results:
 - `pnpm build:core`, `pnpm typecheck`, and `pnpm lint` completed successfully. Lint still reports existing warnings but no errors.
 - `pnpm exec openspec validate benchmark-bge-m3-vector-backends --strict` reports the change as valid.
 
-Not yet verified:
+Previously open verification items:
 
-- Bounded `examples/demo-do30-1c` fixture capture.
-- Qdrant native multivector write against a live Qdrant service.
-- LanceDB multivector write with `@lancedb/lancedb` installed.
-- Real backend search parity.
+- Bounded `examples/demo-do30-1c` fixture capture. Closed on 2026-06-15; see "Bounded demo-do30-1c Matrix".
+- Qdrant native multivector write against a live Qdrant service. Closed for `demo-1c` on 2026-06-09 and for bounded `demo-do30-1c` on 2026-06-15.
+- LanceDB multivector write with `@lancedb/lancedb` installed. Closed for `demo-1c` on 2026-06-09 and for bounded `demo-do30-1c` on 2026-06-15.
+- Real backend search parity. Closed for `demo-1c` on 2026-06-09 and for bounded `demo-do30-1c` on 2026-06-15.
 
 ## demo-1c Fixture And Baseline Run
 
@@ -70,7 +70,7 @@ Results:
 - Fixture stats: dense dimensions `[1024]`, ColBERT dimensions `[1024]`, mean sparse nnz `58.42`, mean ColBERT vectors per document `3.99`.
 - Fixture size on disk: about 100 MB.
 - Capture used `Context.indexCodebase -> Context.processFileList -> Context.buildPreparedChunkBatchInsert -> CapturingVectorDatabase.insertBgeM3`, so it did not write to Milvus/Qdrant/LanceDB during fixture generation.
-- The fixture command wrote a valid artifact but exited with `129` after printing success because of `free(): invalid pointer` during native process teardown. The runner now forces `process.exit(0)` after successful `main()` to avoid treating post-artifact native teardown as benchmark failure.
+- The fixture command writes artifacts through an isolated fixture worker and validates the written checksum before returning success, so native teardown crashes after a valid capture no longer turn a successful fixture into CLI exit `129`.
 - Milvus current write completed with 0 failures, 9 requests, write wall-clock `9686.32ms`, total request bytes `54517191`, mean bytes/request `6057465.67`.
 - Milvus setup time was `2704.86ms`.
 - Runner RSS for the Milvus run started at `657547264`, peaked at `657547264`, and ended at `454987776`.
@@ -238,4 +238,65 @@ Validation result:
 - `pnpm typecheck` passed.
 - `pnpm lint` passed with existing warnings and no errors.
 - `pnpm exec openspec validate benchmark-bge-m3-vector-backends --strict` passed.
-- OpenSpec apply progress is now `35/38`; remaining tasks are bounded `demo-do30-1c` fixture/matrix and the broader non-comparable audit.
+- OpenSpec apply progress was `35/38` before the bounded `demo-do30-1c` closure below.
+
+## Bounded demo-do30-1c Matrix
+
+Date: 2026-06-15
+
+Setup evidence:
+
+- BGE-M3 sidecar health at `http://127.0.0.1:8000/health`: `{"status":"ok"}`.
+- Milvus was reachable at `localhost:19530`.
+- Qdrant container `qdrant-bge-m3-benchmark` was started; Qdrant reported version `1.18.2`.
+- LanceDB package was installed.
+
+Fixture command:
+
+```bash
+CODE_CHUNK_LIMIT=1000 pnpm benchmark:bge-m3-vector-backends -- --generate-fixture --codebase examples/demo-do30-1c --dataset demo-do30-1c-bounded --one-c-index-scope-profile full --fixture .artifacts/bge-m3-vector-backend-benchmark/fixtures/demo-do30-1c-bounded.json --bounded --bounded-reason CODE_CHUNK_LIMIT=1000 --bge-m3-endpoint http://127.0.0.1:8000
+```
+
+Fixture evidence:
+
+- Fixture: `.artifacts/bge-m3-vector-backend-benchmark/fixtures/demo-do30-1c-bounded.json`
+- Dataset: `demo-do30-1c-bounded`
+- Source: `examples/demo-do30-1c`
+- Scope profile: `full`
+- Boundary: `bounded=true`, `boundedReason=CODE_CHUNK_LIMIT=1000`
+- Context result: `status=limit_reached`, `indexedFiles=24`, `totalChunks=1000`, `codeChunkLimit=1000`
+- Fixture checksum: `26685a6a19330d7b54318c834c532429474b58fa7fc12ce97773d8a604b7ea9d`
+- Fixture stats: dense dimensions `[1024]`, ColBERT dimensions `[1024]`, mean sparse nnz `62.343`, mean ColBERT vectors per document `3.985`
+- Fixture size on disk: about 112 MB
+
+The fixture command now exits with `0` on this bounded capture. The CLI isolates fixture generation in a worker process and accepts the run only after the written fixture is present, non-empty, checksum-valid, and matches the expected chunk guard when one is supplied. The previously observed worker-side `free(): invalid pointer` native teardown is filtered after successful fixture validation and no longer propagates as CLI exit `129`.
+
+Matrix command:
+
+```bash
+pnpm benchmark:bge-m3-vector-backends -- --run --fixture .artifacts/bge-m3-vector-backend-benchmark/fixtures/demo-do30-1c-bounded.json --dataset demo-do30-1c-bounded --backends milvus-current,qdrant-native,lancedb-native --batch-size 100 --bounded --bounded-reason CODE_CHUNK_LIMIT=1000 --cleanup
+```
+
+Matrix evidence:
+
+- Matrix summary: `.artifacts/bge-m3-vector-backend-benchmark/2026-06-15T08-51-00-892Z-demo_do30_1c_bounded/summary.json`
+- Milvus run: `.artifacts/bge-m3-vector-backend-benchmark/2026-06-15T08-51-00-892Z-demo_do30_1c_bounded/demo_do30_1c_bounded-milvus-current/summary.json`
+- Qdrant run: `.artifacts/bge-m3-vector-backend-benchmark/2026-06-15T08-51-00-892Z-demo_do30_1c_bounded/demo_do30_1c_bounded-qdrant-native/summary.json`
+- LanceDB run: `.artifacts/bge-m3-vector-backend-benchmark/2026-06-15T08-51-00-892Z-demo_do30_1c_bounded/demo_do30_1c_bounded-lancedb-native/summary.json`
+
+Bounded matrix write results:
+
+| Backend | Setup ms | Write ms | Requests | Total request bytes | Mean bytes/request | Peak runner RSS | Failures | Search parity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Milvus current | 2303.74 | 11516.43 | 10 | 61552188 | 6155218.80 | 716312576 | 0 | passed |
+| Qdrant native | 355.89 | 1626.83 | 10 | 61439640 | 6143964.00 | 661757952 | 0 | passed |
+| LanceDB native | 40.05 | 687.82 | 10 | 61449447 | 6144944.70 | 688898048 | 0 | passed |
+
+Interpretation:
+
+- All three selected real backends completed the bounded `demo-do30-1c` write matrix with `0` failures.
+- All three backends passed search parity on 5 fixture-vector queries.
+- The matrix summary reports `comparable=false`, `interpretation.rankingAvailable=false`, and `interpretation.boundedResultsExcluded=true`.
+- Each backend run is marked `comparable=false` even though writes and parity passed, because the fixture is bounded.
+- This closes the non-comparable gating requirement for bounded runs: the result is valid operational evidence for backend behavior on the bounded subset, but it is not ranked as a complete throughput winner.
+- `--cleanup` removed benchmark backend artifacts; Qdrant `/collections` showed no benchmark collection after the run.

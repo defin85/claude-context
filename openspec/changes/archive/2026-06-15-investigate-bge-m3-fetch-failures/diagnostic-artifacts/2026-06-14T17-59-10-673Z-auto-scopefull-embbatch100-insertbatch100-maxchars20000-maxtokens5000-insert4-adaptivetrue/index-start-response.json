@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-06-14T17:59:11.437Z",
+  "text": "Started background indexing for codebase '/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c' using AST splitter.\nUsing 1C indexing scope profile: full\nIndexing started immediately.\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.",
+  "structuredContent": {
+    "path": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+    "originalPath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+    "force": true,
+    "splitter": "ast",
+    "customExtensions": [],
+    "ignorePatterns": [],
+    "oneCIndexScopeProfile": "full",
+    "startedImmediately": true,
+    "queuePosition": 0
+  }
+}

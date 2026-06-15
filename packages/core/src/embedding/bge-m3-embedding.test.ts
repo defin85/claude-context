@@ -1,4 +1,4 @@
-import { BgeM3Embedding } from './bge-m3-embedding';
+import { BgeM3Embedding, type BgeM3WorkerFailure } from './bge-m3-embedding';
 
 function jsonResponse(body: unknown): Response {
     return {
@@ -68,7 +68,7 @@ describe('BgeM3Embedding', () => {
             'http://127.0.0.1:8000/embed',
             expect.objectContaining({
                 method: 'POST',
-                headers: { 'content-type': 'application/json' },
+                headers: expect.objectContaining({ 'content-type': 'application/json' }),
                 body: JSON.stringify({
                     input: 'query text',
                     model: 'BAAI/bge-m3',
@@ -654,6 +654,104 @@ describe('BgeM3Embedding', () => {
             }),
         ]);
         expect(extraEmbedBatchCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('captures sanitized fetch-failure diagnostics without raw payload text', async () => {
+        const rawText = 'secret source text that must not be logged';
+        const failures: BgeM3WorkerFailure[] = [];
+        let primaryFailuresRemaining = 1;
+        const fetchError = new TypeError('fetch failed');
+        Object.defineProperty(fetchError, 'cause', {
+            value: {
+                name: 'SocketError',
+                code: 'UND_ERR_SOCKET',
+                message: 'other side closed',
+            },
+        });
+        const fetchMock = jest.fn((url: string, init: RequestInit) => {
+            if (url.endsWith('/health')) {
+                return Promise.resolve(jsonResponse({ ok: true }));
+            }
+            if (url.endsWith('/metadata')) {
+                return Promise.resolve(jsonResponse(fullMetadata));
+            }
+            if (url === 'http://127.0.0.1:8000/embed_batch' && init.method === 'POST') {
+                if (primaryFailuresRemaining > 0) {
+                    primaryFailuresRemaining--;
+                    return Promise.reject(fetchError);
+                }
+                return Promise.resolve(jsonResponse([fullEmbedding]));
+            }
+            return Promise.resolve(jsonResponse([fullEmbedding]));
+        });
+
+        const embedding = new BgeM3Embedding({
+            endpoint: 'http://127.0.0.1:8000',
+            workerEndpoints: ['http://127.0.0.1:8001'],
+            mode: 'full',
+            retryBudget: 1,
+            fetch: fetchMock,
+        });
+
+        await embedding.embedMultiBatchWithWorkerPool([rawText], (_endpoint, _error, failure) => {
+            if (failure) {
+                failures.push(failure);
+            }
+        }, {
+            logicalBatchId: 42,
+            chunkCount: 1,
+            contentCharCount: rawText.length,
+            estimatedTokens: 10,
+            maxContentChars: 20000,
+            maxEstimatedTokens: 5000,
+        });
+
+        expect(failures).toHaveLength(1);
+        expect(failures[0]).toEqual(expect.objectContaining({
+            reason: 'embedding_error',
+            retrySafe: true,
+            evidence: expect.objectContaining({
+                workerEndpoint: 'http://127.0.0.1:8000',
+                category: 'fetch_failed',
+                errorName: 'TypeError',
+                errorMessage: 'fetch failed',
+                causeName: 'SocketError',
+                causeCode: 'UND_ERR_SOCKET',
+                causeMessage: 'other side closed',
+                retryAttempt: 0,
+                timeoutOrCancellationState: 'none',
+                request: expect.objectContaining({
+                    path: '/embed_batch',
+                    logicalBatchId: 42,
+                    chunkCount: 1,
+                    contentCharCount: rawText.length,
+                    estimatedTokens: 10,
+                    mode: 'full',
+                    maxContentChars: 20000,
+                    maxEstimatedTokens: 5000,
+                    payloadBytes: expect.any(Number),
+                }),
+            }),
+        }));
+        expect(JSON.stringify(failures[0].evidence)).not.toContain(rawText);
+        expect(fetchMock).toHaveBeenCalledWith(
+            'http://127.0.0.1:8000/embed_batch',
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'x-claude-context-request-id': expect.stringMatching(/^bge-m3-/),
+                }),
+            }),
+        );
+        expect(embedding.getWorkerSnapshot()[0]).toEqual(expect.objectContaining({
+            lastFailedRequestId: failures[0].evidence?.requestId,
+            lastFailedLogicalBatchId: 42,
+            lastFailureCategory: 'fetch_failed',
+            lastFailureEvidence: expect.objectContaining({
+                requestId: failures[0].evidence?.requestId,
+                request: expect.objectContaining({ logicalBatchId: 42 }),
+            }),
+            rejectionCountsByCategory: expect.objectContaining({ fetch_failed: 1 }),
+        }));
     });
 
     it('keeps a recovered full-mode worker rejected when metadata outputs no longer match', async () => {

@@ -1,0 +1,197 @@
+{
+  "generatedAt": "2026-06-14T18:20:30.000Z",
+  "codebase": "examples/demo-do30-1c",
+  "vectorBackend": "qdrant",
+  "writeCoalescing": true,
+  "insertConcurrency": 4,
+  "boundedWindowMs": 300000,
+  "runs": [
+    {
+      "label": "workers-1-current-payload",
+      "artifactDir": "2026-06-14T17-59-10-673Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert4-adaptivetrue",
+      "maxWorkers": 1,
+      "embeddingConcurrency": 1,
+      "maxContentChars": 20000,
+      "maxEstimatedTokens": 5000,
+      "wallClockMs": 305011,
+      "submittedBatches": 128,
+      "completedBatches": 125,
+      "progressPercentage": 11,
+      "retriedBatches": 0,
+      "clientCauseCounts": {
+        "fetch_failed": 0,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "failedInsertBatches": 0,
+      "insertBacklog": 0,
+      "throttleReason": "memory"
+    },
+    {
+      "label": "workers-2-current-payload",
+      "artifactDir": "2026-06-14T18-04-29-492Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert4-adaptivetrue",
+      "maxWorkers": 2,
+      "embeddingConcurrency": 2,
+      "maxContentChars": 20000,
+      "maxEstimatedTokens": 5000,
+      "wallClockMs": 306220,
+      "submittedBatches": 247,
+      "completedBatches": 243,
+      "progressPercentage": 12,
+      "retriedBatches": 0,
+      "clientCauseCounts": {
+        "fetch_failed": 0,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "failedInsertBatches": 0,
+      "insertBacklog": 0,
+      "throttleReason": "vram"
+    },
+    {
+      "label": "workers-4-current-payload",
+      "artifactDir": "2026-06-14T18-09-51-228Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert4-adaptivetrue",
+      "maxWorkers": 4,
+      "embeddingConcurrency": 4,
+      "maxContentChars": 20000,
+      "maxEstimatedTokens": 5000,
+      "wallClockMs": 303921,
+      "submittedBatches": 162,
+      "completedBatches": 160,
+      "progressPercentage": 11,
+      "retriedBatches": 10,
+      "retryReasons": {
+        "embedding_error": 10
+      },
+      "clientCauseCounts": {
+        "fetch_failed": 10,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "sidecarPhaseCountsFromLastWorkerEvidence": {
+        "unknown": 4
+      },
+      "workerEndpointCounts": {
+        "http://127.0.0.1:8000": 3,
+        "http://127.0.0.1:8001": 3,
+        "http://127.0.0.1:8002": 2,
+        "http://127.0.0.1:8003": 2
+      },
+      "payloadSizeBucketCountsFromLastWorkerEvidence": {
+        "20k-50k": 4
+      },
+      "retrySafeCounts": {
+        "true": 10,
+        "false": 0
+      },
+      "recoveryOutcomeCountsFromLastWorkerEvidence": {
+        "accepted_after_failure": 4
+      },
+      "lastWorkerFailureEvidence": [
+        {
+          "workerEndpoint": "http://127.0.0.1:8000",
+          "causeCode": "UND_ERR_SOCKET",
+          "causeMessage": "other side closed",
+          "logicalBatchId": 125,
+          "chunkCount": 13,
+          "contentCharCount": 19224,
+          "estimatedTokens": 4811,
+          "payloadBytes": 36502
+        },
+        {
+          "workerEndpoint": "http://127.0.0.1:8001",
+          "causeCode": "UND_ERR_SOCKET",
+          "causeMessage": "other side closed",
+          "logicalBatchId": 104,
+          "chunkCount": 12,
+          "contentCharCount": 19632,
+          "estimatedTokens": 4913,
+          "payloadBytes": 37377
+        },
+        {
+          "workerEndpoint": "http://127.0.0.1:8002",
+          "causeCode": "UND_ERR_SOCKET",
+          "causeMessage": "other side closed",
+          "logicalBatchId": 110,
+          "chunkCount": 11,
+          "contentCharCount": 19151,
+          "estimatedTokens": 4791,
+          "payloadBytes": 36728
+        },
+        {
+          "workerEndpoint": "http://127.0.0.1:8003",
+          "causeCode": "UND_ERR_SOCKET",
+          "causeMessage": "other side closed",
+          "logicalBatchId": 123,
+          "chunkCount": 35,
+          "contentCharCount": 19887,
+          "estimatedTokens": 4985,
+          "payloadBytes": 38113
+        }
+      ],
+      "failedInsertBatches": 0,
+      "insertBacklog": 0,
+      "throttleReason": "retry_rate"
+    },
+    {
+      "label": "workers-4-smaller-payload",
+      "artifactDir": "2026-06-14T18-15-09-984Z-auto-scopefull-embbatch100-insertbatch100-maxchars10000-maxtokens2500-insert4-adaptivetrue",
+      "maxWorkers": 4,
+      "embeddingConcurrency": 4,
+      "maxContentChars": 10000,
+      "maxEstimatedTokens": 2500,
+      "wallClockMs": 303867,
+      "submittedBatches": 664,
+      "completedBatches": 655,
+      "progressPercentage": 14,
+      "retriedBatches": 0,
+      "clientCauseCounts": {
+        "fetch_failed": 0,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "failedInsertBatches": 0,
+      "insertBacklog": 0,
+      "throttleReason": "vram"
+    }
+  ],
+  "classification": {
+    "dominantCause": "client_transport_reset_under_combined_worker_count_and_request_size_pressure",
+    "evidence": [
+      "The only reproduced failures were Node fetch failures with causeCode=UND_ERR_SOCKET and causeMessage=other side closed.",
+      "The failures reproduced at 4 BGE-M3 full workers with current 20000/5000 payload caps.",
+      "The same backend and current payload caps produced zero retries at 1 and 2 workers.",
+      "The same 4 worker setup produced zero retries with smaller 10000/2500 payload caps.",
+      "All runs had failedInsertBatches=0 and insertBacklog=0."
+    ],
+    "rejectedHypotheses": {
+      "qdrantInsertPressure": "All diagnostic runs had failedInsertBatches=0 and final insertBacklog=0.",
+      "timeoutPath": "retryFailureCategories.timeout=0 and timeoutOrCancellationState=none for captured failures.",
+      "cancellationPath": "retryFailureCategories.cancellation=0.",
+      "metadataOrStartupFailure": "retryFailureCategories.metadata=0 and startup=0.",
+      "httpErrorPath": "retryFailureCategories.http_error=0; failures occurred before a usable HTTP response."
+    },
+    "defaultsPromoted": false,
+    "followUpRequired": true
+  }
+}

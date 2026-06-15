@@ -1,0 +1,1289 @@
+{
+  "codebasePath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+  "mode": "auto",
+  "oneCIndexScopeProfile": "full",
+  "embeddingBatchSize": 100,
+  "insertBatchSize": 100,
+  "embeddingMaxContentChars": 20000,
+  "embeddingMaxEstimatedTokens": 5000,
+  "embeddingConcurrency": 1,
+  "insertConcurrency": 4,
+  "insertQueueCapacity": 2,
+  "adaptiveBackpressure": true,
+  "force": true,
+  "monitorOnly": false,
+  "cancelledOnTimeout": true,
+  "startedAt": "2026-06-14T17:59:11.197Z",
+  "endedAt": "2026-06-14T18:04:16.208Z",
+  "wallClockMs": 305011,
+  "finalStatus": "indexing",
+  "insertSummary": {
+    "insertConcurrency": 4,
+    "configuredInsertConcurrency": 4,
+    "effectiveInsertConcurrency": 4,
+    "backendClampReason": "none",
+    "vectorWritePolicy": {
+      "backend": "qdrant",
+      "configuredInsertConcurrency": 4,
+      "effectiveInsertConcurrency": 4,
+      "backendClampReason": "none",
+      "coalescingEnabled": true,
+      "targetCoalescedDocumentCount": 200,
+      "maxCoalescedDocumentCount": 400,
+      "coalescingFlushIntervalMs": 250,
+      "ambiguousWriteFailureMode": "retry_safe",
+      "parallelWritesToSameCollection": true,
+      "idempotentUpsert": true
+    },
+    "insertQueueCapacity": 2,
+    "queuedInsertBatches": 0,
+    "runningInsertBatches": 0,
+    "queuedCoalescedDocuments": 25,
+    "coalescedInsertBatches": 0,
+    "coalescedInsertDocuments": 0,
+    "coalescingFlushReasons": {
+      "target_document_count": 0,
+      "max_document_count": 0,
+      "flush_interval": 0,
+      "scheduler_drain": 0,
+      "cancellation": 0,
+      "backend_opt_out": 0
+    },
+    "completedInsertBatches": 125,
+    "failedInsertBatches": 0,
+    "insertMs": 4788
+  },
+  "batchSizeSummary": {
+    "embeddingBatchSize": 100,
+    "insertBatchSize": 100,
+    "embeddingMaxContentChars": 20000,
+    "embeddingMaxEstimatedTokens": 5000,
+    "effectiveEmbeddingMaxContentChars": 20000,
+    "effectiveEmbeddingMaxEstimatedTokens": 5000,
+    "totalChunks": 2777,
+    "submittedBatches": 128,
+    "completedBatches": 125,
+    "failedBatches": 0,
+    "retryRate": 0
+  },
+  "adaptiveSummary": {
+    "enabled": true,
+    "configuredEmbeddingConcurrency": 1,
+    "effectiveEmbeddingConcurrency": 1,
+    "configuredInsertConcurrency": 4,
+    "effectiveInsertConcurrency": 4,
+    "pressureScore": 0.0639,
+    "throttleReason": "memory",
+    "throttleTimeMs": 0,
+    "throttleEvents": 0,
+    "effectiveEmbeddingConcurrencyMin": 1,
+    "effectiveEmbeddingConcurrencyMax": 1,
+    "pressureSignals": {
+      "insertBacklog": 0,
+      "insertQueueDepth": 0,
+      "coalescingQueueDepth": 25,
+      "insertLatencyMs": 38,
+      "retryRate": 0,
+      "submittedBatches": 128,
+      "retriedBatches": 0,
+      "rejectedWorkers": 0,
+      "memoryFreePercent": 46.94
+    }
+  },
+  "lastAcceleratorStructuredContent": {
+    "path": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+    "status": "indexing",
+    "recoveredFromCloud": false,
+    "hasPersistedSyncConfig": true,
+    "accelerator": {
+      "mode": "auto",
+      "active": true,
+      "embeddingBatchSize": 100,
+      "insertBatchSize": 100,
+      "embeddingConcurrency": 1,
+      "insertConcurrency": 4,
+      "insertQueueCapacity": 2,
+      "adaptiveBackpressureEnabled": true,
+      "configuredEmbeddingConcurrency": 1,
+      "configuredInsertConcurrency": 4,
+      "effectiveEmbeddingConcurrency": 1,
+      "effectiveInsertConcurrency": 4,
+      "vectorWritePolicy": {
+        "backend": "qdrant",
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "backendClampReason": "none",
+        "coalescingEnabled": true,
+        "targetCoalescedDocumentCount": 200,
+        "maxCoalescedDocumentCount": 400,
+        "coalescingFlushIntervalMs": 250,
+        "ambiguousWriteFailureMode": "retry_safe",
+        "parallelWritesToSameCollection": true,
+        "idempotentUpsert": true
+      },
+      "backendClampReason": "none",
+      "coalescingEnabled": true,
+      "targetCoalescedDocumentCount": 200,
+      "maxCoalescedDocumentCount": 400,
+      "coalescingFlushIntervalMs": 250,
+      "queuedCoalescedDocuments": 25,
+      "coalescedInsertBatches": 0,
+      "coalescedInsertDocuments": 0,
+      "coalescingFlushReasons": {
+        "target_document_count": 0,
+        "max_document_count": 0,
+        "flush_interval": 0,
+        "scheduler_drain": 0,
+        "cancellation": 0,
+        "backend_opt_out": 0
+      },
+      "adaptivePressureScore": 0.0639,
+      "adaptiveThrottleReason": "memory",
+      "adaptiveThrottleTimeMs": 0,
+      "adaptiveThrottleEvents": 0,
+      "adaptiveEffectiveEmbeddingConcurrencyMin": 1,
+      "adaptiveEffectiveEmbeddingConcurrencyMax": 1,
+      "adaptivePressureSignals": {
+        "insertBacklog": 0,
+        "insertQueueDepth": 0,
+        "coalescingQueueDepth": 25,
+        "insertLatencyMs": 38,
+        "retryRate": 0,
+        "submittedBatches": 128,
+        "retriedBatches": 0,
+        "rejectedWorkers": 0,
+        "memoryFreePercent": 46.94
+      },
+      "maxBgeM3Workers": 1,
+      "vramLimitPercent": 75,
+      "retryBudget": 1,
+      "accelerateBackgroundSync": false,
+      "embeddingMaxContentChars": 20000,
+      "embeddingMaxEstimatedTokens": 5000,
+      "effectiveEmbeddingMaxContentChars": 20000,
+      "effectiveEmbeddingMaxEstimatedTokens": 5000,
+      "inFlightEmbeddingBatches": 1,
+      "inFlightInsertBatches": 0,
+      "queuedBatches": 1,
+      "runningEmbeddingBatches": 1,
+      "queuedInsertBatches": 0,
+      "runningInsertBatches": 0,
+      "completedInsertBatches": 125,
+      "failedInsertBatches": 0,
+      "backpressureWaitMs": 265637,
+      "submittedBatches": 128,
+      "completedBatches": 125,
+      "failedBatches": 0,
+      "retriedBatches": 0,
+      "retryReasons": {
+        "startup": 0,
+        "health": 0,
+        "metadata": 0,
+        "embedding_timeout": 0,
+        "embedding_error": 0,
+        "cancellation": 0,
+        "unknown": 0
+      },
+      "retryFailureCategories": {
+        "fetch_failed": 0,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "retrySafeFailures": 0,
+      "retryUnsafeFailures": 0,
+      "workerLifecycle": {
+        "rejected": 0,
+        "recovered": 0,
+        "recoveryFailed": 0,
+        "byReason": {
+          "startup": 0,
+          "health": 0,
+          "metadata": 0,
+          "embedding_timeout": 0,
+          "embedding_error": 0,
+          "cancellation": 0,
+          "unknown": 0
+        },
+        "byCategory": {
+          "fetch_failed": 0,
+          "http_error": 0,
+          "timeout": 0,
+          "cancellation": 0,
+          "metadata": 0,
+          "startup": 0,
+          "parse_error": 0,
+          "unknown": 0
+        }
+      },
+      "activeWorkers": 1,
+      "rejectedWorkers": 0,
+      "workers": [
+        {
+          "endpoint": "http://127.0.0.1:8000",
+          "healthy": true,
+          "inFlight": 1,
+          "rejectionCountsByCategory": {
+            "fetch_failed": 0,
+            "http_error": 0,
+            "timeout": 0,
+            "cancellation": 0,
+            "metadata": 0,
+            "startup": 0,
+            "parse_error": 0,
+            "unknown": 0
+          },
+          "lastSuccessAt": "2026-06-14T18:03:42.650Z",
+          "recoveryAttempts": 0,
+          "poolState": "accepted"
+        }
+      ],
+      "codeChunkLimit": 900000,
+      "limitReached": false,
+      "scanningMs": 53,
+      "preIndexActive": false,
+      "preIndexPhase": "complete",
+      "preIndexScanMs": 4433,
+      "preIndexHashMs": 9199,
+      "preIndexFileListMs": 3,
+      "preIndexTotalMs": 1763,
+      "preIndexSelectedFileCount": 6595,
+      "preIndexHashedFileCount": 6595,
+      "oneCIndexScope": {
+        "profile": "full",
+        "active": true,
+        "recognized": true,
+        "includedFiles": 6595,
+        "excludedFiles": 0,
+        "includedByReason": {
+          "one-c-bsl-module": 702,
+          "one-c-manager-module": 1125,
+          "one-c-object-module": 465,
+          "one-c-command-module": 530,
+          "one-c-common-module": 1931,
+          "one-c-form-module": 1842
+        },
+        "excludedByReason": {}
+      },
+      "splittingMs": 1092,
+      "embeddingMs": 266504,
+      "insertMs": 4788,
+      "retrySummary": {
+        "retriedBatches": 0,
+        "failedBatches": 0,
+        "retryReasons": {
+          "startup": 0,
+          "health": 0,
+          "metadata": 0,
+          "embedding_timeout": 0,
+          "embedding_error": 0,
+          "cancellation": 0,
+          "unknown": 0
+        },
+        "failureCategories": {
+          "fetch_failed": 0,
+          "http_error": 0,
+          "timeout": 0,
+          "cancellation": 0,
+          "metadata": 0,
+          "startup": 0,
+          "parse_error": 0,
+          "unknown": 0
+        },
+        "retrySafeFailures": 0,
+        "retryUnsafeFailures": 0
+      },
+      "workerSummary": {
+        "activeWorkers": 1,
+        "rejectedWorkers": 0,
+        "lifecycle": {
+          "rejected": 0,
+          "recovered": 0,
+          "recoveryFailed": 0,
+          "byReason": {
+            "startup": 0,
+            "health": 0,
+            "metadata": 0,
+            "embedding_timeout": 0,
+            "embedding_error": 0,
+            "cancellation": 0,
+            "unknown": 0
+          },
+          "byCategory": {
+            "fetch_failed": 0,
+            "http_error": 0,
+            "timeout": 0,
+            "cancellation": 0,
+            "metadata": 0,
+            "startup": 0,
+            "parse_error": 0,
+            "unknown": 0
+          }
+        },
+        "workers": [
+          {
+            "endpoint": "http://127.0.0.1:8000",
+            "poolState": "accepted",
+            "healthy": true,
+            "inFlight": 1,
+            "rejectionCountsByCategory": {
+              "fetch_failed": 0,
+              "http_error": 0,
+              "timeout": 0,
+              "cancellation": 0,
+              "metadata": 0,
+              "startup": 0,
+              "parse_error": 0,
+              "unknown": 0
+            },
+            "recoveryAttempts": 0
+          }
+        ]
+      },
+      "insertSummary": {
+        "insertConcurrency": 4,
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "backendClampReason": "none",
+        "vectorWritePolicy": {
+          "backend": "qdrant",
+          "configuredInsertConcurrency": 4,
+          "effectiveInsertConcurrency": 4,
+          "backendClampReason": "none",
+          "coalescingEnabled": true,
+          "targetCoalescedDocumentCount": 200,
+          "maxCoalescedDocumentCount": 400,
+          "coalescingFlushIntervalMs": 250,
+          "ambiguousWriteFailureMode": "retry_safe",
+          "parallelWritesToSameCollection": true,
+          "idempotentUpsert": true
+        },
+        "insertQueueCapacity": 2,
+        "queuedInsertBatches": 0,
+        "runningInsertBatches": 0,
+        "queuedCoalescedDocuments": 25,
+        "coalescedInsertBatches": 0,
+        "coalescedInsertDocuments": 0,
+        "coalescingFlushReasons": {
+          "target_document_count": 0,
+          "max_document_count": 0,
+          "flush_interval": 0,
+          "scheduler_drain": 0,
+          "cancellation": 0,
+          "backend_opt_out": 0
+        },
+        "completedInsertBatches": 125,
+        "failedInsertBatches": 0,
+        "insertMs": 4788
+      },
+      "batchSizeSummary": {
+        "embeddingBatchSize": 100,
+        "insertBatchSize": 100,
+        "embeddingMaxContentChars": 20000,
+        "embeddingMaxEstimatedTokens": 5000,
+        "effectiveEmbeddingMaxContentChars": 20000,
+        "effectiveEmbeddingMaxEstimatedTokens": 5000,
+        "totalChunks": 2777,
+        "submittedBatches": 128,
+        "completedBatches": 125,
+        "failedBatches": 0,
+        "retryRate": 0
+      },
+      "adaptiveSummary": {
+        "enabled": true,
+        "configuredEmbeddingConcurrency": 1,
+        "effectiveEmbeddingConcurrency": 1,
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "pressureScore": 0.0639,
+        "throttleReason": "memory",
+        "throttleTimeMs": 0,
+        "throttleEvents": 0,
+        "effectiveEmbeddingConcurrencyMin": 1,
+        "effectiveEmbeddingConcurrencyMax": 1,
+        "pressureSignals": {
+          "insertBacklog": 0,
+          "insertQueueDepth": 0,
+          "coalescingQueueDepth": 25,
+          "insertLatencyMs": 38,
+          "retryRate": 0,
+          "submittedBatches": 128,
+          "retriedBatches": 0,
+          "rejectedWorkers": 0,
+          "memoryFreePercent": 46.94
+        }
+      },
+      "batchesSummary": {
+        "count": 128,
+        "byState": {
+          "completed": 125,
+          "queued_insert": 1,
+          "running_embedding": 1,
+          "queued": 1
+        },
+        "byPayloadSplitReason": {
+          "content_chars": 119,
+          "estimated_tokens": 9
+        },
+        "chunkCount": {
+          "count": 128,
+          "min": 9,
+          "max": 49,
+          "avg": 22
+        },
+        "contentChars": {
+          "count": 128,
+          "min": 17296,
+          "max": 19981,
+          "avg": 19221
+        },
+        "tokenEstimate": {
+          "count": 128,
+          "min": 4328,
+          "max": 5000,
+          "avg": 4814
+        },
+        "payloadSplitCount": 128,
+        "singleChunkFatal": false,
+        "insertChunks": {
+          "count": 125,
+          "min": 9,
+          "max": 49,
+          "avg": 22
+        },
+        "activeTail": [
+          {
+            "id": 126,
+            "chunkCount": 25,
+            "attempts": 1,
+            "state": "queued_insert",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19501,
+            "estimatedTokens": 4884,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 127,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "running_embedding",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 18420,
+            "estimatedTokens": 4610,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 128,
+            "chunkCount": 11,
+            "attempts": 1,
+            "state": "queued",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19614,
+            "estimatedTokens": 4908,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          }
+        ],
+        "latestTail": [
+          {
+            "id": 119,
+            "chunkCount": 31,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "contentCharCount": 18633,
+            "estimatedTokens": 4671,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              31
+            ]
+          },
+          {
+            "id": 120,
+            "chunkCount": 15,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ObjectModule.bsl",
+            "contentCharCount": 18289,
+            "estimatedTokens": 4579,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              15
+            ]
+          },
+          {
+            "id": 121,
+            "chunkCount": 22,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ObjectModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ВопросыВыполненияЗадачи/Ext/Form/Module.bsl",
+            "contentCharCount": 19446,
+            "estimatedTokens": 4870,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              22
+            ]
+          },
+          {
+            "id": 122,
+            "chunkCount": 12,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19494,
+            "estimatedTokens": 4879,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              12
+            ]
+          },
+          {
+            "id": 123,
+            "chunkCount": 35,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19887,
+            "estimatedTokens": 4985,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              35
+            ]
+          },
+          {
+            "id": 124,
+            "chunkCount": 26,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 18234,
+            "estimatedTokens": 4569,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              26
+            ]
+          },
+          {
+            "id": 125,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19224,
+            "estimatedTokens": 4811,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              13
+            ]
+          },
+          {
+            "id": 126,
+            "chunkCount": 25,
+            "attempts": 1,
+            "state": "queued_insert",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19501,
+            "estimatedTokens": 4884,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 127,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "running_embedding",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 18420,
+            "estimatedTokens": 4610,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 128,
+            "chunkCount": 11,
+            "attempts": 1,
+            "state": "queued",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19614,
+            "estimatedTokens": 4908,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          }
+        ]
+      }
+    },
+    "retrievalMode": "bge_m3_full",
+    "retrievalSchemaVersion": 1,
+    "oneCIndexScopeProfile": "full",
+    "oneCIndexScope": {
+      "profile": "full",
+      "active": true,
+      "recognized": true,
+      "includedFiles": 6595,
+      "excludedFiles": 0,
+      "includedByReason": {
+        "one-c-bsl-module": 702,
+        "one-c-manager-module": 1125,
+        "one-c-object-module": 465,
+        "one-c-command-module": 530,
+        "one-c-common-module": 1931,
+        "one-c-form-module": 1842
+      },
+      "excludedByReason": {}
+    },
+    "progressPercentage": 11,
+    "progressDetails": {
+      "phase": "Processing files (53/6595)...",
+      "current": 53,
+      "total": 6595,
+      "percentage": 11
+    },
+    "lastUpdated": "2026-06-14T18:03:35.984Z"
+  },
+  "cancellation": {
+    "capturedAt": "2026-06-14T18:04:16.208Z",
+    "text": "Cancelled daemon workload for '/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c'. Queued jobs: 0. Active jobs: 1.",
+    "structuredContent": {
+      "path": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+      "reason": "measure-indexing-baseline timeout after 300000ms",
+      "queued": [],
+      "active": [
+        {
+          "id": "f2cb7425-4500-4bb9-9a40-8d6e3c5f1f46",
+          "type": "interactive-index",
+          "codebasePath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c"
+        }
+      ],
+      "idleAfterCancel": true
+    }
+  },
+  "finalStructuredContent": {
+    "path": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c",
+    "status": "indexing",
+    "recoveredFromCloud": false,
+    "hasPersistedSyncConfig": true,
+    "accelerator": {
+      "mode": "auto",
+      "active": true,
+      "embeddingBatchSize": 100,
+      "insertBatchSize": 100,
+      "embeddingConcurrency": 1,
+      "insertConcurrency": 4,
+      "insertQueueCapacity": 2,
+      "adaptiveBackpressureEnabled": true,
+      "configuredEmbeddingConcurrency": 1,
+      "configuredInsertConcurrency": 4,
+      "effectiveEmbeddingConcurrency": 1,
+      "effectiveInsertConcurrency": 4,
+      "vectorWritePolicy": {
+        "backend": "qdrant",
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "backendClampReason": "none",
+        "coalescingEnabled": true,
+        "targetCoalescedDocumentCount": 200,
+        "maxCoalescedDocumentCount": 400,
+        "coalescingFlushIntervalMs": 250,
+        "ambiguousWriteFailureMode": "retry_safe",
+        "parallelWritesToSameCollection": true,
+        "idempotentUpsert": true
+      },
+      "backendClampReason": "none",
+      "coalescingEnabled": true,
+      "targetCoalescedDocumentCount": 200,
+      "maxCoalescedDocumentCount": 400,
+      "coalescingFlushIntervalMs": 250,
+      "queuedCoalescedDocuments": 25,
+      "coalescedInsertBatches": 0,
+      "coalescedInsertDocuments": 0,
+      "coalescingFlushReasons": {
+        "target_document_count": 0,
+        "max_document_count": 0,
+        "flush_interval": 0,
+        "scheduler_drain": 0,
+        "cancellation": 0,
+        "backend_opt_out": 0
+      },
+      "adaptivePressureScore": 0.0639,
+      "adaptiveThrottleReason": "memory",
+      "adaptiveThrottleTimeMs": 0,
+      "adaptiveThrottleEvents": 0,
+      "adaptiveEffectiveEmbeddingConcurrencyMin": 1,
+      "adaptiveEffectiveEmbeddingConcurrencyMax": 1,
+      "adaptivePressureSignals": {
+        "insertBacklog": 0,
+        "insertQueueDepth": 0,
+        "coalescingQueueDepth": 25,
+        "insertLatencyMs": 38,
+        "retryRate": 0,
+        "submittedBatches": 128,
+        "retriedBatches": 0,
+        "rejectedWorkers": 0,
+        "memoryFreePercent": 46.94
+      },
+      "maxBgeM3Workers": 1,
+      "vramLimitPercent": 75,
+      "retryBudget": 1,
+      "accelerateBackgroundSync": false,
+      "embeddingMaxContentChars": 20000,
+      "embeddingMaxEstimatedTokens": 5000,
+      "effectiveEmbeddingMaxContentChars": 20000,
+      "effectiveEmbeddingMaxEstimatedTokens": 5000,
+      "inFlightEmbeddingBatches": 1,
+      "inFlightInsertBatches": 0,
+      "queuedBatches": 1,
+      "runningEmbeddingBatches": 1,
+      "queuedInsertBatches": 0,
+      "runningInsertBatches": 0,
+      "completedInsertBatches": 125,
+      "failedInsertBatches": 0,
+      "backpressureWaitMs": 265637,
+      "submittedBatches": 128,
+      "completedBatches": 125,
+      "failedBatches": 0,
+      "retriedBatches": 0,
+      "retryReasons": {
+        "startup": 0,
+        "health": 0,
+        "metadata": 0,
+        "embedding_timeout": 0,
+        "embedding_error": 0,
+        "cancellation": 0,
+        "unknown": 0
+      },
+      "retryFailureCategories": {
+        "fetch_failed": 0,
+        "http_error": 0,
+        "timeout": 0,
+        "cancellation": 0,
+        "metadata": 0,
+        "startup": 0,
+        "parse_error": 0,
+        "unknown": 0
+      },
+      "retrySafeFailures": 0,
+      "retryUnsafeFailures": 0,
+      "workerLifecycle": {
+        "rejected": 0,
+        "recovered": 0,
+        "recoveryFailed": 0,
+        "byReason": {
+          "startup": 0,
+          "health": 0,
+          "metadata": 0,
+          "embedding_timeout": 0,
+          "embedding_error": 0,
+          "cancellation": 0,
+          "unknown": 0
+        },
+        "byCategory": {
+          "fetch_failed": 0,
+          "http_error": 0,
+          "timeout": 0,
+          "cancellation": 0,
+          "metadata": 0,
+          "startup": 0,
+          "parse_error": 0,
+          "unknown": 0
+        }
+      },
+      "activeWorkers": 1,
+      "rejectedWorkers": 0,
+      "workers": [
+        {
+          "endpoint": "http://127.0.0.1:8000",
+          "healthy": true,
+          "inFlight": 1,
+          "rejectionCountsByCategory": {
+            "fetch_failed": 0,
+            "http_error": 0,
+            "timeout": 0,
+            "cancellation": 0,
+            "metadata": 0,
+            "startup": 0,
+            "parse_error": 0,
+            "unknown": 0
+          },
+          "lastSuccessAt": "2026-06-14T18:03:42.650Z",
+          "recoveryAttempts": 0,
+          "poolState": "accepted"
+        }
+      ],
+      "codeChunkLimit": 900000,
+      "limitReached": false,
+      "scanningMs": 53,
+      "preIndexActive": false,
+      "preIndexPhase": "complete",
+      "preIndexScanMs": 4433,
+      "preIndexHashMs": 9199,
+      "preIndexFileListMs": 3,
+      "preIndexTotalMs": 1763,
+      "preIndexSelectedFileCount": 6595,
+      "preIndexHashedFileCount": 6595,
+      "oneCIndexScope": {
+        "profile": "full",
+        "active": true,
+        "recognized": true,
+        "includedFiles": 6595,
+        "excludedFiles": 0,
+        "includedByReason": {
+          "one-c-bsl-module": 702,
+          "one-c-manager-module": 1125,
+          "one-c-object-module": 465,
+          "one-c-command-module": 530,
+          "one-c-common-module": 1931,
+          "one-c-form-module": 1842
+        },
+        "excludedByReason": {}
+      },
+      "splittingMs": 1092,
+      "embeddingMs": 266504,
+      "insertMs": 4788,
+      "retrySummary": {
+        "retriedBatches": 0,
+        "failedBatches": 0,
+        "retryReasons": {
+          "startup": 0,
+          "health": 0,
+          "metadata": 0,
+          "embedding_timeout": 0,
+          "embedding_error": 0,
+          "cancellation": 0,
+          "unknown": 0
+        },
+        "failureCategories": {
+          "fetch_failed": 0,
+          "http_error": 0,
+          "timeout": 0,
+          "cancellation": 0,
+          "metadata": 0,
+          "startup": 0,
+          "parse_error": 0,
+          "unknown": 0
+        },
+        "retrySafeFailures": 0,
+        "retryUnsafeFailures": 0
+      },
+      "workerSummary": {
+        "activeWorkers": 1,
+        "rejectedWorkers": 0,
+        "lifecycle": {
+          "rejected": 0,
+          "recovered": 0,
+          "recoveryFailed": 0,
+          "byReason": {
+            "startup": 0,
+            "health": 0,
+            "metadata": 0,
+            "embedding_timeout": 0,
+            "embedding_error": 0,
+            "cancellation": 0,
+            "unknown": 0
+          },
+          "byCategory": {
+            "fetch_failed": 0,
+            "http_error": 0,
+            "timeout": 0,
+            "cancellation": 0,
+            "metadata": 0,
+            "startup": 0,
+            "parse_error": 0,
+            "unknown": 0
+          }
+        },
+        "workers": [
+          {
+            "endpoint": "http://127.0.0.1:8000",
+            "poolState": "accepted",
+            "healthy": true,
+            "inFlight": 1,
+            "rejectionCountsByCategory": {
+              "fetch_failed": 0,
+              "http_error": 0,
+              "timeout": 0,
+              "cancellation": 0,
+              "metadata": 0,
+              "startup": 0,
+              "parse_error": 0,
+              "unknown": 0
+            },
+            "recoveryAttempts": 0
+          }
+        ]
+      },
+      "insertSummary": {
+        "insertConcurrency": 4,
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "backendClampReason": "none",
+        "vectorWritePolicy": {
+          "backend": "qdrant",
+          "configuredInsertConcurrency": 4,
+          "effectiveInsertConcurrency": 4,
+          "backendClampReason": "none",
+          "coalescingEnabled": true,
+          "targetCoalescedDocumentCount": 200,
+          "maxCoalescedDocumentCount": 400,
+          "coalescingFlushIntervalMs": 250,
+          "ambiguousWriteFailureMode": "retry_safe",
+          "parallelWritesToSameCollection": true,
+          "idempotentUpsert": true
+        },
+        "insertQueueCapacity": 2,
+        "queuedInsertBatches": 0,
+        "runningInsertBatches": 0,
+        "queuedCoalescedDocuments": 25,
+        "coalescedInsertBatches": 0,
+        "coalescedInsertDocuments": 0,
+        "coalescingFlushReasons": {
+          "target_document_count": 0,
+          "max_document_count": 0,
+          "flush_interval": 0,
+          "scheduler_drain": 0,
+          "cancellation": 0,
+          "backend_opt_out": 0
+        },
+        "completedInsertBatches": 125,
+        "failedInsertBatches": 0,
+        "insertMs": 4788
+      },
+      "batchSizeSummary": {
+        "embeddingBatchSize": 100,
+        "insertBatchSize": 100,
+        "embeddingMaxContentChars": 20000,
+        "embeddingMaxEstimatedTokens": 5000,
+        "effectiveEmbeddingMaxContentChars": 20000,
+        "effectiveEmbeddingMaxEstimatedTokens": 5000,
+        "totalChunks": 2777,
+        "submittedBatches": 128,
+        "completedBatches": 125,
+        "failedBatches": 0,
+        "retryRate": 0
+      },
+      "adaptiveSummary": {
+        "enabled": true,
+        "configuredEmbeddingConcurrency": 1,
+        "effectiveEmbeddingConcurrency": 1,
+        "configuredInsertConcurrency": 4,
+        "effectiveInsertConcurrency": 4,
+        "pressureScore": 0.0639,
+        "throttleReason": "memory",
+        "throttleTimeMs": 0,
+        "throttleEvents": 0,
+        "effectiveEmbeddingConcurrencyMin": 1,
+        "effectiveEmbeddingConcurrencyMax": 1,
+        "pressureSignals": {
+          "insertBacklog": 0,
+          "insertQueueDepth": 0,
+          "coalescingQueueDepth": 25,
+          "insertLatencyMs": 38,
+          "retryRate": 0,
+          "submittedBatches": 128,
+          "retriedBatches": 0,
+          "rejectedWorkers": 0,
+          "memoryFreePercent": 46.94
+        }
+      },
+      "batchesSummary": {
+        "count": 128,
+        "byState": {
+          "completed": 125,
+          "queued_insert": 1,
+          "running_embedding": 1,
+          "queued": 1
+        },
+        "byPayloadSplitReason": {
+          "content_chars": 119,
+          "estimated_tokens": 9
+        },
+        "chunkCount": {
+          "count": 128,
+          "min": 9,
+          "max": 49,
+          "avg": 22
+        },
+        "contentChars": {
+          "count": 128,
+          "min": 17296,
+          "max": 19981,
+          "avg": 19221
+        },
+        "tokenEstimate": {
+          "count": 128,
+          "min": 4328,
+          "max": 5000,
+          "avg": 4814
+        },
+        "payloadSplitCount": 128,
+        "singleChunkFatal": false,
+        "insertChunks": {
+          "count": 125,
+          "min": 9,
+          "max": 49,
+          "avg": 22
+        },
+        "activeTail": [
+          {
+            "id": 126,
+            "chunkCount": 25,
+            "attempts": 1,
+            "state": "queued_insert",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19501,
+            "estimatedTokens": 4884,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 127,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "running_embedding",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 18420,
+            "estimatedTokens": 4610,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 128,
+            "chunkCount": 11,
+            "attempts": 1,
+            "state": "queued",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19614,
+            "estimatedTokens": 4908,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          }
+        ],
+        "latestTail": [
+          {
+            "id": 119,
+            "chunkCount": 31,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "contentCharCount": 18633,
+            "estimatedTokens": 4671,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              31
+            ]
+          },
+          {
+            "id": 120,
+            "chunkCount": 15,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ObjectModule.bsl",
+            "contentCharCount": 18289,
+            "estimatedTokens": 4579,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              15
+            ]
+          },
+          {
+            "id": 121,
+            "chunkCount": 22,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Ext/ObjectModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ВопросыВыполненияЗадачи/Ext/Form/Module.bsl",
+            "contentCharCount": 19446,
+            "estimatedTokens": 4870,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              22
+            ]
+          },
+          {
+            "id": 122,
+            "chunkCount": 12,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19494,
+            "estimatedTokens": 4879,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              12
+            ]
+          },
+          {
+            "id": 123,
+            "chunkCount": 35,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19887,
+            "estimatedTokens": 4985,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              35
+            ]
+          },
+          {
+            "id": 124,
+            "chunkCount": 26,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 18234,
+            "estimatedTokens": 4569,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              26
+            ]
+          },
+          {
+            "id": 125,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "completed",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "contentCharCount": 19224,
+            "estimatedTokens": 4811,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars",
+            "insertChunkCounts": [
+              13
+            ]
+          },
+          {
+            "id": 126,
+            "chunkCount": 25,
+            "attempts": 1,
+            "state": "queued_insert",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/РешениеВопросовВыполненияЗадач/Forms/ФормаБизнесПроцесса/Ext/Form/Module.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19501,
+            "estimatedTokens": 4884,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 127,
+            "chunkCount": 13,
+            "attempts": 1,
+            "state": "running_embedding",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 18420,
+            "estimatedTokens": 4610,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          },
+          {
+            "id": 128,
+            "chunkCount": 11,
+            "attempts": 1,
+            "state": "queued",
+            "firstFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "lastFile": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/examples/demo-do30-1c/BusinessProcesses/Согласование/Ext/ManagerModule.bsl",
+            "contentCharCount": 19614,
+            "estimatedTokens": 4908,
+            "effectiveMaxContentChars": 20000,
+            "effectiveMaxEstimatedTokens": 5000,
+            "payloadSplitReason": "content_chars"
+          }
+        ]
+      }
+    },
+    "retrievalMode": "bge_m3_full",
+    "retrievalSchemaVersion": 1,
+    "oneCIndexScopeProfile": "full",
+    "oneCIndexScope": {
+      "profile": "full",
+      "active": true,
+      "recognized": true,
+      "includedFiles": 6595,
+      "excludedFiles": 0,
+      "includedByReason": {
+        "one-c-bsl-module": 702,
+        "one-c-manager-module": 1125,
+        "one-c-object-module": 465,
+        "one-c-command-module": 530,
+        "one-c-common-module": 1931,
+        "one-c-form-module": 1842
+      },
+      "excludedByReason": {}
+    },
+    "progressPercentage": 11,
+    "progressDetails": {
+      "phase": "Processing files (53/6595)...",
+      "current": 53,
+      "total": 6595,
+      "percentage": 11
+    },
+    "lastUpdated": "2026-06-14T18:03:35.984Z"
+  },
+  "samplesPath": "/run/media/egor/D6B64A72B64A52E3/Projects/AgentHarness/claude-context/openspec/changes/investigate-bge-m3-fetch-failures/diagnostic-artifacts/2026-06-14T17-59-10-673Z-auto-scopefull-embbatch100-insertbatch100-maxchars20000-maxtokens5000-insert4-adaptivetrue/samples.jsonl"
+}

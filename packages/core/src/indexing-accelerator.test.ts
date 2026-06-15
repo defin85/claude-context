@@ -359,6 +359,71 @@ describe('indexing accelerator configuration', () => {
         expect(signals.memoryFreePercent).toBeGreaterThan(0);
     });
 
+    it('records retry and worker lifecycle failure categories', () => {
+        const runtimeConfig = {
+            mode: 'auto' as const,
+            embeddingBatchSize: 100,
+            insertBatchSize: 100,
+            embeddingConcurrency: 2,
+            insertConcurrency: 1,
+            insertQueueCapacity: 2,
+            maxBgeM3Workers: 1,
+            vramLimitPercent: 75,
+            retryBudget: 1,
+            accelerateBackgroundSync: false,
+            adaptiveBackpressure: createDefaultAdaptiveBackpressureConfig(true),
+        };
+        const runtime = new IndexingAcceleratorRuntime(runtimeConfig, true);
+        runtime.recordBatchQueued({ id: 1, chunkCount: 1 });
+        runtime.recordBatchRetried(1, 'embedding_error', true, {
+            requestId: 'request-1',
+            workerEndpoint: 'http://127.0.0.1:8000',
+            occurredAt: '2026-06-14T00:00:00.000Z',
+            durationMs: 12,
+            retryAttempt: 0,
+            retrySafe: true,
+            reason: 'embedding_error',
+            category: 'fetch_failed',
+            timeoutOrCancellationState: 'none',
+            errorName: 'TypeError',
+            errorMessage: 'fetch failed',
+            request: {
+                requestId: 'request-1',
+                path: '/embed_batch',
+                logicalBatchId: 1,
+                chunkCount: 1,
+                contentCharCount: 40,
+                estimatedTokens: 10,
+                mode: 'full',
+                maxContentChars: 20000,
+                maxEstimatedTokens: 5000,
+                payloadBytes: 100,
+            },
+        });
+        runtime.updateWorkerCounts(0, 1, [{
+            endpoint: 'http://127.0.0.1:8000',
+            healthy: false,
+            inFlight: 0,
+            rejectedFailureReason: 'embedding_error',
+            rejectedRetrySafe: true,
+            lastFailedRequestId: 'request-1',
+            lastFailureCategory: 'fetch_failed',
+            recoveryAttempts: 0,
+            poolState: 'rejected',
+        }]);
+
+        const snapshot = runtime.getSnapshot();
+
+        expect(snapshot.retryReasons.embedding_error).toBe(1);
+        expect(snapshot.retryFailureCategories.fetch_failed).toBe(1);
+        expect(snapshot.workerLifecycle.byReason.embedding_error).toBe(1);
+        expect(snapshot.workerLifecycle.byCategory.fetch_failed).toBe(1);
+        expect(snapshot.workers?.[0]).toEqual(expect.objectContaining({
+            lastFailedRequestId: 'request-1',
+            lastFailureCategory: 'fetch_failed',
+        }));
+    });
+
     it('reports coalescing depth without treating buffered documents as insert backlog', () => {
         const runtimeConfig = {
             mode: 'auto' as const,
