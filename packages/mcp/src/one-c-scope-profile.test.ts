@@ -6,9 +6,19 @@ import test from 'node:test';
 import { ToolHandlers } from './handlers.js';
 import { SnapshotManager } from './snapshot.js';
 import { CodebaseConfigManager } from './codebase-config.js';
-import type { CodebaseSessionConfig, Context } from '@zilliz/claude-context-core';
+import type { CodebaseSessionConfig, Context, RankingProfile, SemanticSearchResult } from '@zilliz/claude-context-core';
 
-function createFakeContext(hasIndex: boolean = true): Context {
+function createFakeContext(
+    hasIndex: boolean = true,
+    onSemanticSearch?: (args: {
+        codebasePath: string;
+        query: string;
+        topK: number;
+        threshold: number;
+        filterExpr?: string;
+        rankingProfile?: RankingProfile;
+    }) => SemanticSearchResult[],
+): Context {
     return {
         hasIndex: async () => hasIndex,
         getCollectionName: () => 'code_chunks_test',
@@ -19,6 +29,24 @@ function createFakeContext(hasIndex: boolean = true): Context {
             query: async () => [{ 'count(*)': 34 }],
         }),
         configureCodebaseSession: (_codebasePath: string, config: CodebaseSessionConfig) => config,
+        semanticSearch: async (
+            codebasePath: string,
+            query: string,
+            topK: number,
+            threshold: number,
+            filterExpr?: string,
+            options?: { rankingProfile?: RankingProfile },
+        ) => onSemanticSearch?.({
+            codebasePath,
+            query,
+            topK,
+            threshold,
+            filterExpr,
+            rankingProfile: options?.rankingProfile,
+        }) || [],
+        getEmbedding: () => ({
+            getProvider: () => 'fake',
+        }),
         clearIndex: async () => undefined,
         getLastAcceleratorSnapshot: () => undefined,
     } as unknown as Context;
@@ -33,7 +61,10 @@ function getStructuredContent(result: unknown): Record<string, unknown> {
     return structuredContent as Record<string, unknown>;
 }
 
-async function createIndexedCodebase(previousProfile?: 'full' | 'developer' | 'minimal') {
+async function createIndexedCodebase(
+    previousProfile?: 'full' | 'developer' | 'minimal',
+    context?: Context,
+) {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-one-c-scope-'));
     const rawCodebasePath = path.join(workspacePath, 'cf');
     await fs.mkdir(rawCodebasePath, { recursive: true });
@@ -58,7 +89,7 @@ async function createIndexedCodebase(previousProfile?: 'full' | 'developer' | 'm
     }
 
     const handlers = new ToolHandlers(
-        createFakeContext(true),
+        context || createFakeContext(true),
         snapshotManager,
         codebaseConfigManager,
     );
@@ -123,4 +154,69 @@ test('get_indexing_status reports reduced 1C scope warning', async () => {
     assert.match(String(structuredContent.reducedCoverageWarning), /developer/);
     assert.match(String(structuredContent.reducedCoverageWarning), /may not contain all files/);
     assert.match(result.content[0].text, /1C scope/);
+});
+
+test('search_code accepts ranking profile and reports resolved profile', async () => {
+    let capturedRankingProfile: RankingProfile | undefined;
+    const context = createFakeContext(true, (args) => {
+        capturedRankingProfile = args.rankingProfile;
+        return [{
+            relativePath: 'src/Documents/Foo.ts',
+            language: 'typescript',
+            startLine: 1,
+            endLine: 3,
+            score: 0.7,
+            content: 'export function foo() {}',
+            metadata: { rankingProfile: args.rankingProfile },
+        }];
+    });
+    const { codebasePath, handlers } = await createIndexedCodebase(undefined, context);
+
+    const result = await handlers.handleSearchCode({
+        path: codebasePath,
+        query: 'foo',
+        rankingProfile: 'generic',
+    });
+
+    assert.equal((result as { isError?: boolean }).isError, undefined);
+    assert.equal(capturedRankingProfile, 'generic');
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.rankingProfile, 'generic');
+    assert.equal((structuredContent.results as Array<Record<string, unknown>>)[0].relativePath, 'src/Documents/Foo.ts');
+});
+
+test('search_code rejects invalid ranking profile before search', async () => {
+    const { codebasePath, handlers } = await createIndexedCodebase();
+
+    const result = await handlers.handleSearchCode({
+        path: codebasePath,
+        query: 'foo',
+        rankingProfile: 'typescript',
+    });
+
+    assert.equal((result as { isError?: boolean }).isError, true);
+    assert.match(result.content[0].text, /Invalid rankingProfile/);
+});
+
+test('search_code keeps ranking profile independent from 1C indexing scope', async () => {
+    const context = createFakeContext(true, (args) => [{
+        relativePath: 'src/cf/Catalogs/Контрагенты/Ext/ObjectModule.bsl',
+        language: 'bsl',
+        startLine: 1,
+        endLine: 3,
+        score: 0.7,
+        content: 'Процедура Обработка() КонецПроцедуры',
+        metadata: { rankingProfile: args.rankingProfile },
+    }]);
+    const { codebasePath, handlers } = await createIndexedCodebase('developer', context);
+
+    const result = await handlers.handleSearchCode({
+        path: codebasePath,
+        query: 'контрагенты',
+        rankingProfile: 'generic',
+    });
+
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.rankingProfile, 'generic');
+    assert.equal(structuredContent.oneCIndexScopeProfile, 'developer');
 });

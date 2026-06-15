@@ -388,6 +388,12 @@ This tool is versatile and can be used before completing various tasks to retrie
                                 },
                                 description: "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
                                 default: []
+                            },
+                            rankingProfile: {
+                                type: 'string',
+                                description: "Optional retrieval ranking profile. 'auto' preserves current path-based behavior, 'generic' disables 1C-specific boosts, and 'one-c' explicitly enables 1C ranking signals for exported 1C configurations.",
+                                enum: ['auto', 'generic', 'one-c'],
+                                default: 'auto'
                             }
                         },
                         required: ['path', 'query']

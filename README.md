@@ -499,6 +499,10 @@ Index a codebase directory for hybrid search (BM25 + dense vector).
 #### 2. `search_code`
 
 Search the indexed codebase using natural language queries with hybrid search (BM25 + dense vector).
+Pass `rankingProfile` when you need deterministic ranking behavior:
+`auto` preserves backward-compatible path-based behavior, `generic` disables
+1C-specific ranking boosts, and `one-c` explicitly enables 1C ranking signals
+for exported 1C configurations.
 
 #### 3. `clear_index`
 

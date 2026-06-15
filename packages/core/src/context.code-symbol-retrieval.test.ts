@@ -13,6 +13,8 @@ import {
     HybridSearchRequest,
     HybridSearchResult,
     MultiVectorEmbedding,
+    parseRankingProfile,
+    resolveRankingProfile,
     RlmToolsBslSubprocessProvider,
     VectorDatabase,
     VectorDocument,
@@ -171,6 +173,17 @@ const typescriptExactSymbolDocument: VectorDocument = {
 };
 
 describe('Context code-symbol retrieval', () => {
+    it('parses and resolves ranking profiles with auto fallback', () => {
+        expect(parseRankingProfile('auto')).toBe('auto');
+        expect(parseRankingProfile('generic')).toBe('generic');
+        expect(parseRankingProfile('one-c')).toBe('one-c');
+        expect(parseRankingProfile(undefined)).toBeUndefined();
+        expect(resolveRankingProfile()).toBe('auto');
+        expect(resolveRankingProfile({ persistedCodebaseDefault: 'one-c' })).toBe('one-c');
+        expect(resolveRankingProfile({ searchTimeProfile: 'generic', persistedCodebaseDefault: 'one-c' })).toBe('generic');
+        expect(() => parseRankingProfile('typescript')).toThrow(/Invalid rankingProfile/);
+    });
+
     it('ranks a BSL exact symbol chunk above related semantic distractors', async () => {
         const vectorDatabase = createDb([exactSymbolDocument, relatedDistractor]);
         vectorDatabase.bgeM3SearchResults = [
@@ -226,6 +239,7 @@ describe('Context code-symbol retrieval', () => {
             oneCObjectKindBoost: expect.any(Number),
             oneCObjectNameBoost: expect.any(Number),
             oneCIntentBoost: expect.any(Number),
+            rankingProfile: 'auto',
             duplicatePenalty: expect.any(Number),
             diversityReason: expect.any(String),
             fusionScore: expect.any(Number),
@@ -233,6 +247,25 @@ describe('Context code-symbol retrieval', () => {
         expect(results[0].metadata).not.toHaveProperty('dense');
         expect(results[0].metadata).not.toHaveProperty('sparse');
         expect(results[0].metadata).not.toHaveProperty('colbertVectors');
+    });
+
+    it('keeps ranking profile diagnostics when fusion returns semantic-only results', async () => {
+        const genericTypescript = {
+            ...typescriptExactSymbolDocument,
+            id: 'semantic-only-typescript',
+            content: 'export function calculateSalesReport() { return []; }',
+            relativePath: 'src/reports/sales.ts',
+            metadata: { language: 'typescript' },
+        };
+        const vectorDatabase = createDb([genericTypescript]);
+        vectorDatabase.bgeM3SearchResults = [{ document: genericTypescript, score: 0.8 }];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'unmatched query', 1, 0.5, undefined, {
+            rankingProfile: 'generic',
+        });
+
+        expect(results[0].metadata?.rankingProfile).toBe('generic');
     });
 
     it('uses bounded 1C object-kind and metadata-name signals for representative object paths', async () => {
@@ -281,6 +314,100 @@ describe('Context code-symbol retrieval', () => {
             expect(results[0].metadata?.oneCObjectNameBoost).toBeLessThanOrEqual(1.3);
             expect(results[0].metadata?.oneCIntentBoost).toBeLessThanOrEqual(1.1);
         }
+    });
+
+    it('does not apply 1C-specific boosts to misleading non-1C paths under generic profile', async () => {
+        const misleadingDocuments = [
+            doc({
+                id: 'typescript-document',
+                content: 'export function renderDocumentForm() { return "document"; }',
+                relativePath: 'src/Documents/Foo.ts',
+                startLine: 1,
+                endLine: 3,
+            }),
+            doc({
+                id: 'typescript-catalog',
+                content: 'export const ProductCatalog = new Map();',
+                relativePath: 'src/Catalogs/Product.ts',
+                startLine: 1,
+                endLine: 3,
+            }),
+            doc({
+                id: 'typescript-report',
+                content: 'export function buildSalesReport() { return []; }',
+                relativePath: 'src/Reports/Sales.ts',
+                startLine: 1,
+                endLine: 3,
+            }),
+        ].map((document) => ({
+            ...document,
+            fileExtension: '.ts',
+            metadata: { language: 'typescript' },
+        }));
+        const vectorDatabase = createDb(misleadingDocuments);
+        vectorDatabase.bgeM3SearchResults = misleadingDocuments.map((document) => ({ document, score: 0.6 }));
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'документ отчет справочник карточка форма списка', 3, 0.5, undefined, {
+            rankingProfile: 'generic',
+        });
+
+        expect(results).toHaveLength(3);
+        for (const result of results) {
+            expect(result.metadata?.rankingProfile).toBe('generic');
+            expect(result.metadata?.oneCObjectKindBoost ?? 0).toBe(0);
+            expect(result.metadata?.oneCObjectNameBoost ?? 0).toBe(0);
+            expect(result.metadata?.oneCIntentBoost ?? 0).toBe(0);
+        }
+    });
+
+    it('keeps one-c eligible for bounded boosts on recognized 1C paths', async () => {
+        const catalogForm = doc({
+            id: 'catalog-form-one-c',
+            content: 'Форма карточки контрагента реквизиты контактная информация',
+            relativePath: 'src/cf/Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([catalogForm]);
+        vectorDatabase.bgeM3SearchResults = [{ document: catalogForm, score: 0.6 }];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'справочник контрагенты карточка', 1, 0.5, undefined, {
+            rankingProfile: 'one-c',
+        });
+
+        expect(results[0].metadata?.rankingProfile).toBe('one-c');
+        expect(
+            (results[0].metadata?.oneCObjectKindBoost || 0) +
+            (results[0].metadata?.oneCObjectNameBoost || 0) +
+            (results[0].metadata?.oneCIntentBoost || 0),
+        ).toBeGreaterThan(0);
+    });
+
+    it('keeps omitted profile and auto profile behavior equivalent', async () => {
+        const catalogForm = doc({
+            id: 'catalog-form-auto',
+            content: 'Форма карточки контрагента реквизиты контактная информация',
+            relativePath: 'src/cf/Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const omittedDb = createDb([catalogForm]);
+        omittedDb.bgeM3SearchResults = [{ document: catalogForm, score: 0.6 }];
+        const autoDb = createDb([catalogForm]);
+        autoDb.bgeM3SearchResults = [{ document: catalogForm, score: 0.6 }];
+
+        const omitted = await createContext(omittedDb).semanticSearch('/tmp/example', 'справочник контрагенты карточка', 1);
+        const auto = await createContext(autoDb).semanticSearch('/tmp/example', 'справочник контрагенты карточка', 1, 0.5, undefined, {
+            rankingProfile: 'auto',
+        });
+
+        expect(omitted[0].metadata?.rankingProfile).toBe('auto');
+        expect(auto[0].metadata?.rankingProfile).toBe('auto');
+        expect(auto[0].metadata?.oneCObjectKindBoost).toBe(omitted[0].metadata?.oneCObjectKindBoost);
+        expect(auto[0].metadata?.oneCObjectNameBoost).toBe(omitted[0].metadata?.oneCObjectNameBoost);
+        expect(auto[0].metadata?.oneCIntentBoost).toBe(omitted[0].metadata?.oneCIntentBoost);
     });
 
     it('treats print intent as candidate contexts instead of one fixed exported path', async () => {
@@ -548,6 +675,46 @@ describe('Context code-symbol retrieval', () => {
             objectKind: 'CommonModule',
             export: true,
         }));
+    });
+
+    it('keeps exact-symbol and provider-backed ordering active under generic profile', async () => {
+        const provider = new FakeProvider();
+        provider.candidates = [{
+            providerName: 'rlm-tools-bsl',
+            providerStatus: 'available',
+            relativePath: exactSymbolDocument.relativePath,
+            startLine: 125,
+            endLine: 125,
+            symbolName: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+            declarationKind: 'function',
+            moduleName: 'ЗаполнениеДокументовВЕТИС',
+            objectKind: 'CommonModule',
+            export: true,
+            providerRank: 0,
+            lexicalScore: 4,
+        }];
+        const vectorDatabase = createDb([exactSymbolDocument, relatedDistractor]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: relatedDistractor, score: 0.99 },
+        ];
+        const context = createContext(vectorDatabase, [provider]);
+
+        const results = await context.semanticSearch(
+            '/tmp/example',
+            'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+            3,
+            0.5,
+            undefined,
+            { rankingProfile: 'generic' },
+        );
+
+        expect(results[0].relativePath).toBe(exactSymbolDocument.relativePath);
+        expect(results[0].metadata?.rankingProfile).toBe('generic');
+        expect(results[0].metadata?.exactSymbolBoost).toBeGreaterThan(0);
+        expect(results[0].metadata?.providerRankBoost).toBeGreaterThan(0);
+        expect(results[0].metadata?.oneCObjectKindBoost).toBe(0);
+        expect(results[0].metadata?.oneCObjectNameBoost).toBe(0);
+        expect(results[0].metadata?.oneCIntentBoost).toBe(0);
     });
 
     it('fails open when provider is missing and keeps semantic results', async () => {

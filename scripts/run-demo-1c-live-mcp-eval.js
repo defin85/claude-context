@@ -17,6 +17,7 @@ const repoRoot = path.resolve(__dirname, '..');
 const defaultDatasetPath = path.join(repoRoot, 'evaluation', 'retrieval', 'demo-1c-relevance.json');
 const defaultCodebasePath = path.join(repoRoot, 'examples', 'demo-1c');
 const defaultArtifactDir = path.join(repoRoot, '.artifacts', 'hybrid-code-symbol-retrieval');
+const rankingProfiles = new Set(['auto', 'generic', 'one-c']);
 
 function parseArgs(argv) {
   const args = {};
@@ -51,6 +52,14 @@ function writeJson(filePath, value) {
 function readClientConfig(configPath) {
   const resolved = configPath || path.join(os.homedir(), '.context', 'mcp', 'daemon', 'client-config.json');
   return readJson(resolved);
+}
+
+function parseRankingProfile(value) {
+  const rankingProfile = value || 'one-c';
+  if (!rankingProfiles.has(rankingProfile)) {
+    throw new Error(`Invalid --ranking-profile ${JSON.stringify(rankingProfile)}. Expected one of: ${[...rankingProfiles].join(', ')}.`);
+  }
+  return rankingProfile;
 }
 
 async function callTool(clientConfig, name, args) {
@@ -130,12 +139,16 @@ async function collectResults(clientConfig, dataset, options) {
         path: options.codebasePath,
         query: query.query,
         limit: options.limit,
+        rankingProfile: options.rankingProfile,
       });
     } catch (toolError) {
       error = toolError instanceof Error ? toolError.message : String(toolError);
     }
     const elapsedMs = Date.now() - started;
     const text = toolResult ? textFromResult(toolResult) : '';
+    if (!error && toolResult?.isError) {
+      error = text || 'MCP tool returned isError=true.';
+    }
     const structured = toolResult?.structuredContent || {};
     const top10 = summarizeTopResults(structured.results || []);
     if (error) {
@@ -149,6 +162,7 @@ async function collectResults(clientConfig, dataset, options) {
       query: query.query,
       kind: query.kind,
       expectedPrefixes: query.expectedPathPrefixes,
+      rankingProfile: structured.rankingProfile || options.rankingProfile,
       elapsedMs,
       error,
       resultCount: top10.length,
@@ -185,6 +199,7 @@ async function main() {
     codebasePath,
     backendLabel,
     limit: Number(args.limit || 10),
+    rankingProfile: parseRankingProfile(args.rankingProfile),
     oneCIndexScopeProfile: args.oneCIndexScopeProfile || 'developer',
     indexFirst: Boolean(args.indexFirst),
     forceIndex: Boolean(args.forceIndex),
@@ -199,6 +214,7 @@ async function main() {
     version: dataset.version,
     codebasePath,
     backend: backendLabel,
+    rankingProfile: options.rankingProfile,
     startedAt,
     finishedAt,
     indexStatus: {
@@ -218,6 +234,7 @@ async function main() {
   const labelValidation = validateLabels(dataset, codebasePath);
   const summary = score(dataset, resultsById, {
     backendLabel,
+    rankingProfile: options.rankingProfile,
     codebasePath,
     datasetPath,
     resultsPath: rawPath,
@@ -267,6 +284,7 @@ async function main() {
     markdownPath,
     labelValidationPath,
     comparePath,
+    rankingProfile: options.rankingProfile,
     hitAt10Count: summary.metrics.hitAt10Count,
     queryCount: summary.metrics.queryCount,
     toolErrors: collected.errors.toolErrors,

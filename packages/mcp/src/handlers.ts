@@ -7,10 +7,11 @@ import {
     Context,
     COLLECTION_LIMIT_MESSAGE,
     isReducedOneCIndexScopeProfile,
+    parseRankingProfile,
     parseOneCIndexScopeProfile,
     resolveOneCIndexScopeProfile,
 } from "@zilliz/claude-context-core";
-import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
@@ -1066,6 +1067,16 @@ export class ToolHandlers {
         const query = typeof args.query === 'string' ? args.query : '';
         const resultLimit = typeof args.limit === 'number' ? args.limit : 10;
         const extensionFilter = args.extensionFilter;
+        let rankingProfile: RankingProfile;
+        try {
+            rankingProfile = parseRankingProfile(args.rankingProfile) || 'auto';
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: 'text', text: `Error: ${errorMessage}` }],
+                isError: true
+            };
+        }
         const executeSearch = async () => {
             try {
                 // Sync indexed codebases from cloud first
@@ -1159,6 +1170,7 @@ export class ToolHandlers {
 
                 console.log(`[SEARCH] Searching in codebase: ${absolutePath}`);
                 console.log(`[SEARCH] Query: "${query}"`);
+                console.log(`[SEARCH] Ranking profile: ${rankingProfile}`);
                 console.log(`[SEARCH] Indexing status: ${isIndexing ? 'In Progress' : (hasCloudIndex ? 'Completed' : 'No collection yet')}`);
 
                 // Log embedding provider information before search
@@ -1190,7 +1202,8 @@ export class ToolHandlers {
                     query,
                     Math.min(resultLimit, 50),
                     0.3,
-                    filterExpr
+                    filterExpr,
+                    { rankingProfile }
                 );
 
                 console.log(`[SEARCH] ✅ Search completed! Found ${searchResults.length} results using ${embeddingProvider.getProvider()} embeddings`);
@@ -1218,6 +1231,7 @@ export class ToolHandlers {
                             path: absolutePath,
                             query,
                             limit: Math.min(resultLimit, 50),
+                            rankingProfile,
                             indexingStatus: isIndexing ? 'indexing' : 'indexed',
                             ...oneCScopeStatus,
                             results: []
@@ -1252,6 +1266,7 @@ export class ToolHandlers {
                         path: absolutePath,
                         query,
                         limit: Math.min(resultLimit, 50),
+                        rankingProfile,
                         indexingStatus: isIndexing ? 'indexing' : 'indexed',
                         ...oneCScopeStatus,
                         results: searchResults.map((result): SearchResultSummary => ({

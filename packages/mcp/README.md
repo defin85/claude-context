@@ -782,6 +782,7 @@ Search the indexed codebase using natural language queries with hybrid search (B
 - `query` (required): Natural language query to search for in the codebase
 - `limit` (optional): Maximum number of results to return (default: 10, max: 50)
 - `extensionFilter` (optional): List of file extensions to filter results (e.g., ['.ts', '.py']) (default: [])
+- `rankingProfile` (optional): Retrieval ranking profile. Use `auto` for backward-compatible path-based behavior, `generic` to disable 1C-specific boosts, or `one-c` to explicitly enable 1C ranking signals for exported 1C configurations (default: `auto`).
 
 ### 3. `clear_index`
 

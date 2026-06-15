@@ -65,6 +65,7 @@ function normalizeResultItem(item) {
     exactSymbolBoost: item.exactSymbolBoost ?? metadata.exactSymbolBoost,
     pathBoost: item.pathBoost ?? metadata.pathBoost,
     fusionScore: item.fusionScore ?? metadata.fusionScore,
+    rankingProfile: item.rankingProfile ?? metadata.rankingProfile,
   };
 }
 
@@ -497,6 +498,7 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   lines.push('');
   lines.push(`- Dataset: \`${summary.dataset}\` ${summary.version || ''}`.trim());
   lines.push(`- Backend: ${summary.run.backendLabel || 'unspecified'}`);
+  lines.push(`- Ranking profile: ${summary.run.rankingProfile || 'unspecified'}`);
   lines.push(`- Codebase: \`${summary.run.codebasePath || summary.fixture || 'unspecified'}\``);
   lines.push(`- Query count: ${summary.metrics.queryCount}`);
   lines.push(`- Hit@10: ${summary.metrics.hitAt10Count}/${summary.metrics.queryCount} (${(summary.metrics.hitAt10 * 100).toFixed(1)}%)`);
@@ -562,6 +564,7 @@ function main() {
     : undefined;
   const summary = score(dataset, resultsById, {
     backendLabel: args.backendLabel || args.backend || rawResults.backend,
+    rankingProfile: args.rankingProfile || rawResults.rankingProfile,
     codebasePath: args.codebasePath || rawResults.codebasePath || dataset.fixture,
     datasetPath,
     resultsPath: args.results,

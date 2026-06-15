@@ -44,9 +44,46 @@ test('normalizes live top10 path rows before scoring', () => {
 
   const summary = score(dataset, normalizeResults(results, dataset), { backendLabel: 'unit' });
 
-  assert.equal(summary.metrics.hitAt10Count, 1);
-  assert.equal(summary.perQuery[0].topResults[0].relativePath, results[0].top10[0].path);
-  assert.equal(summary.perQuery[0].topResults[0].fusionScore, 1.5);
+    assert.equal(summary.metrics.hitAt10Count, 1);
+    assert.equal(summary.perQuery[0].topResults[0].relativePath, results[0].top10[0].path);
+    assert.equal(summary.perQuery[0].topResults[0].fusionScore, 1.5);
+});
+
+test('preserves ranking profile metadata in score and Markdown reports', () => {
+  const dataset = {
+    dataset: 'unit',
+    version: '1',
+    fixture: 'examples/demo-1c',
+    labelsAreProductionRules: false,
+    queries: [{
+      id: 'q1',
+      query: 'печать расходной накладной',
+      kind: 'unit',
+      expectedPathPrefixes: ['Documents/РасходТовара'],
+    }],
+  };
+  const results = [{
+    id: 'q1',
+    query: 'печать расходной накладной',
+    rankingProfile: 'one-c',
+    top10: [{
+      path: 'Documents/РасходТовара/Ext/ObjectModule.bsl',
+      rankingProfile: 'one-c',
+      metadata: { rankingProfile: 'one-c' },
+    }],
+  }];
+  const summary = score(dataset, normalizeResults(results, dataset), {
+    backendLabel: 'unit',
+    rankingProfile: 'one-c',
+  });
+  const reportPath = path.join(repoRoot, '.artifacts', 'tmp', 'ranking-profile-report.md');
+
+  writeMarkdownReport(reportPath, summary);
+  const markdown = fs.readFileSync(reportPath, 'utf8');
+
+  assert.equal(summary.run.rankingProfile, 'one-c');
+  assert.equal(summary.perQuery[0].topResults[0].rankingProfile, 'one-c');
+  assert.match(markdown, /Ranking profile: one-c/);
 });
 
 test('rejects unsupported live result schemas explicitly', () => {

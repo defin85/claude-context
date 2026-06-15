@@ -132,6 +132,12 @@ override. Search and indexing status expose `oneCIndexScopeProfile`,
 `oneCIndexScope`, and `reducedCoverageWarning` for reduced indexes so users can
 distinguish scoped results from full coverage.
 
+MCP `search_code` separately accepts `rankingProfile` for search-time ranking
+behavior. Use `generic` to disable 1C-specific boosts for non-1C repositories,
+`one-c` for explicit 1C retrieval validation, or omit the parameter to keep
+the backward-compatible `auto` behavior. This does not change
+`oneCIndexScopeProfile` and does not require reindexing.
+
 ### Accelerated Indexing Backpressure
 
 These options apply to accelerated indexing when `INDEX_ACCELERATOR_MODE=auto`.

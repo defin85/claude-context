@@ -22,6 +22,8 @@ import {
     RlmToolsBslSubprocessProvider,
     collectCodeSymbolCandidates,
     fuseCodeSearchResults,
+    RankingProfile,
+    resolveRankingProfile,
 } from "./code-symbol-retrieval";
 import {
     DEFAULT_IGNORE_PATTERNS,
@@ -175,6 +177,10 @@ export interface CodebaseSessionConfig {
     retrievalMode?: RetrievalMode;
     retrievalSchemaVersion?: number;
     oneCIndexScopeProfile?: OneCIndexScopeProfile;
+}
+
+export interface SemanticSearchOptions {
+    rankingProfile?: RankingProfile;
 }
 
 interface ProcessFileListOptions {
@@ -1433,8 +1439,12 @@ export class Context {
         topK: number = 5,
         threshold: number = 0.5,
         filterExpr?: string,
+        options: SemanticSearchOptions = {},
     ): Promise<SemanticSearchResult[]> {
         codebasePath = normalizeCodebasePath(codebasePath);
+        const rankingProfile = resolveRankingProfile({
+            searchTimeProfile: options.rankingProfile,
+        });
         const isHybrid = this.getIsHybrid();
         const searchType =
             isHybrid === true ? "hybrid search" : "semantic search";
@@ -1532,6 +1542,7 @@ export class Context {
                 query,
                 topK,
                 codeSymbolRetrieval.diagnostics,
+                { rankingProfile },
             );
         }
 
@@ -1632,6 +1643,7 @@ export class Context {
                 query,
                 topK,
                 codeSymbolRetrieval.diagnostics,
+                { rankingProfile },
             );
             const dedupedResults = this.deduplicateResults(fusedResults);
             console.log(
@@ -1678,6 +1690,7 @@ export class Context {
                 query,
                 topK,
                 codeSymbolRetrieval.diagnostics,
+                { rankingProfile },
             );
             const dedupedResults = this.deduplicateResults(fusedResults);
             console.log(

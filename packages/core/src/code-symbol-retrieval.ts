@@ -85,6 +85,41 @@ export interface CodeSymbolRetrievalResult {
     diagnostics: CodeSymbolRetrievalDiagnostics;
 }
 
+export const RANKING_PROFILES = ['auto', 'generic', 'one-c'] as const;
+
+export type RankingProfile = typeof RANKING_PROFILES[number];
+
+export interface RankingProfileResolutionOptions {
+    searchTimeProfile?: RankingProfile;
+    persistedCodebaseDefault?: RankingProfile;
+}
+
+export interface CodeSearchFusionOptions {
+    rankingProfile?: RankingProfile;
+}
+
+export function isRankingProfile(value: unknown): value is RankingProfile {
+    return typeof value === 'string' && RANKING_PROFILES.includes(value as RankingProfile);
+}
+
+export function parseRankingProfile(value: unknown, fieldName = 'rankingProfile'): RankingProfile | undefined {
+    if (value === undefined || value === null || value === '') {
+        return undefined;
+    }
+
+    if (isRankingProfile(value)) {
+        return value;
+    }
+
+    throw new Error(
+        `Invalid ${fieldName}: ${JSON.stringify(value)}. Expected one of: ${RANKING_PROFILES.join(', ')}.`,
+    );
+}
+
+export function resolveRankingProfile(options: RankingProfileResolutionOptions = {}): RankingProfile {
+    return options.searchTimeProfile || options.persistedCodebaseDefault || 'auto';
+}
+
 const IDENTIFIER_PATTERN = /[\p{L}_][\p{L}\p{N}_]{2,}/gu;
 const PATH_SPLIT_PATTERN = /[\\/.:#()"'\s-]+/u;
 
@@ -211,13 +246,23 @@ export function fuseCodeSearchResults(
     query: string,
     topK: number,
     diagnostics: CodeSymbolRetrievalDiagnostics,
+    options: CodeSearchFusionOptions = {},
 ): SemanticSearchResult[] {
+    const rankingProfile = resolveRankingProfile({
+        searchTimeProfile: options.rankingProfile,
+    });
     const hasDiagnostics =
         diagnostics.providerStatuses.length > 0 ||
         diagnostics.providerUnmappedCandidates.length > 0 ||
         Boolean(diagnostics.lexicalFailure);
     if (lexicalCandidates.length === 0 && !hasDiagnostics) {
-        return semanticResults;
+        return semanticResults.map((result) => ({
+            ...result,
+            metadata: {
+                ...sanitizeResultMetadata(result.metadata || {}),
+                rankingProfile,
+            },
+        }));
     }
 
     const tokens = tokenizeCodeSymbolQuery(query);
@@ -245,7 +290,7 @@ export function fuseCodeSearchResults(
         const existing = byKey.get(key);
         const exactSymbolBoost = scoreExactSymbol(tokens, result.content);
         const pathBoost = scorePath(tokens, result.relativePath, result.metadata);
-        const oneCSignals = scoreOneCPathSignals(tokens, result.relativePath, result.content, result.metadata);
+        const oneCSignals = scoreOneCPathSignals(tokens, result.relativePath, result.content, result.metadata, rankingProfile);
         const mergedMetadata = {
             ...sanitizeResultMetadata(existing?.metadata || {}),
             ...sanitizeResultMetadata(result.metadata || {}),
@@ -328,6 +373,7 @@ export function fuseCodeSearchResults(
                 oneCObjectKindBoost: result._oneCObjectKindBoost,
                 oneCObjectNameBoost: result._oneCObjectNameBoost,
                 oneCIntentBoost: result._oneCIntentBoost,
+                rankingProfile,
                 providerRankBoost,
                 duplicatePenalty: 0,
                 diversityReason: 'first_file_result',
@@ -760,7 +806,12 @@ function scoreOneCPathSignals(
     relativePath: string,
     content: string,
     metadata?: Record<string, any>,
+    rankingProfile: RankingProfile = 'auto',
 ): OneCSignalScores {
+    if (rankingProfile === 'generic') {
+        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0 };
+    }
+
     const pathInfo = parseOneCPath(relativePath);
     if (!pathInfo.recognized) {
         return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0 };
