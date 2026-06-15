@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const {
   enforceAcceptance,
+  parseCsvList,
   normalizeResults,
   score,
   validateLabels,
@@ -221,6 +222,8 @@ async function main() {
     datasetPath,
     resultsPath: rawPath,
     acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
+    residualQueryIds: parseCsvList(args.residualQueryIds),
+    baselineMode: args.baselineMode || undefined,
     startedAt,
     finishedAt,
     rawSummary: rawReport.summary,
@@ -256,6 +259,7 @@ async function main() {
     allowToolErrors: Boolean(args.allowToolErrors),
     allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
     allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+    baselineMode: args.baselineMode,
   });
   console.log(JSON.stringify({
     rawPath,

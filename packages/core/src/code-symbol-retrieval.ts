@@ -568,8 +568,8 @@ function buildLexicalFilters(tokens: CodeSymbolQueryTokens): Array<string | unde
         .map(escapeFilterString);
     const filters: string[] = [];
     for (const term of terms) {
-        filters.push(`content like "%${term}%"`);
         filters.push(`relativePath like "%${term}%"`);
+        filters.push(`content like "%${term}%"`);
     }
     return filters.length > 0 ? filters : [undefined];
 }
@@ -752,6 +752,8 @@ const ONE_C_KIND_TERMS: Record<string, string[]> = {
 };
 
 const PRINT_TERMS = ['печать', 'печатная', 'печатный', 'прайс', 'макет', 'табличный документ', 'накладная'];
+const STOCK_REPORT_TERMS = ['остат', 'склад', 'отчет'];
+const PRODUCT_CARD_TERMS = ['карточк', 'реквизит', 'цена', 'артикул', 'штрихкод'];
 
 function scoreOneCPathSignals(
     tokens: CodeSymbolQueryTokens,
@@ -853,12 +855,18 @@ function scoreOneCObjectName(tokens: CodeSymbolQueryTokens, pathInfo: OneCPathIn
     }
 
     const queryTerms = new Set(tokens.naturalTerms);
+    const queryTermStems = new Set(tokens.naturalTerms.map(stemOneCTerm));
     const fullName = normalizeText(objectName);
     if (tokens.normalizedQuery.includes(fullName) || metadataText.includes(fullName)) {
         return 1.2;
     }
 
-    const matchedTerms = nameTerms.filter((term) => queryTerms.has(term) || tokens.normalizedQuery.includes(term));
+    const matchedTerms = nameTerms.filter((term) => {
+        const stem = stemOneCTerm(term);
+        return queryTerms.has(term) ||
+            tokens.normalizedQuery.includes(term) ||
+            (stem.length >= 4 && queryTermStems.has(stem));
+    });
     if (matchedTerms.length === nameTerms.length) {
         return 1.0;
     }
@@ -871,6 +879,44 @@ function scoreOneCObjectName(tokens: CodeSymbolQueryTokens, pathInfo: OneCPathIn
 function scoreOneCFormAndCommandIntent(normalizedQuery: string, normalizedContent: string, pathInfo: OneCPathInfo): number {
     let score = 0;
     const hasPrintIntent = PRINT_TERMS.some((term) => normalizedQuery.includes(normalizeText(term)));
+    const normalizedObjectName = normalizeText(pathInfo.objectName || '');
+    const normalizedAreaName = normalizeText(pathInfo.areaName || '');
+    const hasStockReportIntent =
+        normalizedQuery.includes(STOCK_REPORT_TERMS[0]) &&
+        (normalizedQuery.includes(STOCK_REPORT_TERMS[1]) || normalizedQuery.includes(STOCK_REPORT_TERMS[2]));
+    const hasProductCardIntent =
+        (normalizedQuery.includes('карточк') && normalizedQuery.includes('товар')) ||
+        (normalizedQuery.includes('товар') && PRODUCT_CARD_TERMS.some((term) => normalizedQuery.includes(term)));
+
+    if (hasStockReportIntent) {
+        if (pathInfo.objectKind === 'report') {
+            score += 0.9;
+        } else if (pathInfo.area === 'Commands' && normalizedAreaName.includes('остат')) {
+            score += 0.75;
+        } else if (pathInfo.objectKind === 'catalog' &&
+            stemOneCTerm(normalizedObjectName) === 'товар' &&
+            pathInfo.area === 'Forms' &&
+            (normalizedAreaName.includes('остат') || normalizedAreaName.includes('спис'))) {
+            score += 0.75;
+        }
+        if (normalizedContent.includes('остат') && normalizedContent.includes('склад')) {
+            score += 0.3;
+        }
+    }
+
+    if (hasProductCardIntent && pathInfo.objectKind === 'catalog' && stemOneCTerm(normalizedObjectName) === 'товар') {
+        if (pathInfo.area === 'Forms' && normalizedAreaName.includes('формаэлемента')) {
+            score += 0.95;
+        } else if (pathInfo.moduleKind === 'objectModule') {
+            score += 0.7;
+        } else if (pathInfo.area === 'Commands') {
+            score += 0.15;
+        }
+        if (PRODUCT_CARD_TERMS.some((term) => normalizedContent.includes(term))) {
+            score += 0.3;
+        }
+    }
+
     if (hasPrintIntent) {
         if (pathInfo.area === 'Commands') {
             score += 0.9;
@@ -910,6 +956,15 @@ function splitOneCNameTerms(value: string): string[] {
         .filter((term) => term.length >= 3));
 }
 
+function stemOneCTerm(value: string): string {
+    const normalized = normalizeText(value);
+    if (normalized.length <= 4) {
+        return normalized;
+    }
+    return normalized
+        .replace(/(ого|его|ами|ями|ах|ях|ов|ев|ом|ем|ам|ям|ой|ый|ий|ая|яя|ое|ые|ие|а|я|ы|и)$/u, '');
+}
+
 function applyDuplicateDiversity(results: SemanticSearchResult[]): SemanticSearchResult[] {
     const seenByFile = new Map<string, number>();
     return results.map((result) => {
@@ -924,7 +979,9 @@ function applyDuplicateDiversity(results: SemanticSearchResult[]): SemanticSearc
             ? 0
             : protectedByEvidence
                 ? Math.min(0.4, duplicateIndex * 0.1)
-                : Math.min(1.2, duplicateIndex * 0.35);
+                : duplicateIndex === 1
+                    ? 0.6
+                    : Math.min(4, 1.8 + (duplicateIndex - 2) * 1.2);
         const adjustedScore = result.score - duplicatePenalty;
         const diversityReason = duplicateIndex === 0
             ? 'first_file_result'

@@ -7,9 +7,11 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  buildComparison,
   enforceAcceptance,
   normalizeResults,
   score,
+  writeMarkdownReport,
 } = require('./run-demo-1c-relevance-eval.js');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -129,4 +131,163 @@ test('enforces acceptance threshold and live backend correctness', () => {
     allowToolErrors: true,
     allowMissingColbertErrors: true,
   }));
+});
+
+test('supports non-regression baseline mode without requiring strict improvement', () => {
+  const baseline = {
+    dataset: 'unit',
+    version: '1',
+    metrics: {
+      hitAt10Count: 26,
+      hitAt10: 0.8667,
+    },
+    run: {},
+    perQuery: [],
+  };
+  const equalSummary = {
+    dataset: 'unit',
+    version: '1',
+    metrics: {
+      hitAt10Count: 26,
+      queryCount: 30,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+    },
+    perQuery: [],
+  };
+  equalSummary.comparison = buildComparison(baseline, equalSummary);
+
+  assert.throws(
+    () => enforceAcceptance(equalSummary, { baselineMode: 'strict-improvement' }),
+    /does not improve over baseline 26/,
+  );
+  assert.doesNotThrow(() => enforceAcceptance(equalSummary, { baselineMode: 'non-regression' }));
+
+  const lowerSummary = {
+    ...equalSummary,
+    metrics: {
+      ...equalSummary.metrics,
+      hitAt10Count: 25,
+    },
+  };
+  lowerSummary.comparison = buildComparison(baseline, lowerSummary);
+
+  assert.throws(
+    () => enforceAcceptance(lowerSummary, { baselineMode: 'non-regression' }),
+    /is below baseline 26/,
+  );
+});
+
+test('reports residual queries from caller-provided ids only', () => {
+  const dataset = {
+    dataset: 'unit',
+    version: '1',
+    fixture: 'examples/demo-1c',
+    labelsAreProductionRules: false,
+    queries: [
+      { id: 'r01', query: 'остатки', kind: 'unit', expectedPathPrefixes: ['Reports/A'] },
+      { id: 'r06', query: 'карточка', kind: 'unit', expectedPathPrefixes: ['Catalogs/A'] },
+      { id: 'other', query: 'другое', kind: 'unit', expectedPathPrefixes: ['CommonModules/A'] },
+    ],
+  };
+  const resultsById = {
+    r01: { results: [] },
+    r06: { results: [] },
+    other: { results: [] },
+  };
+
+  const summary = score(dataset, resultsById, {
+    residualQueryIds: ['r06'],
+  });
+
+  assert.deepEqual(summary.residualQueries.map((row) => row.id), ['r06']);
+  assert.equal(Object.prototype.hasOwnProperty.call(summary, 'knownMisses'), false);
+});
+
+test('keeps residual evaluation labels out of production ranking code', () => {
+  const productionRanking = fs.readFileSync(
+    path.join(repoRoot, 'packages', 'core', 'src', 'code-symbol-retrieval.ts'),
+    'utf8',
+  );
+
+  for (const forbidden of [
+    'r01',
+    'r05',
+    'r06',
+    'r28',
+    'expectedPathPrefixes',
+    'labelsAreProductionRules',
+    'residualQueryIds',
+  ]) {
+    assert.equal(productionRanking.includes(forbidden), false, `unexpected production ranking reference: ${forbidden}`);
+  }
+});
+
+test('writes residual query outcomes to markdown reports', () => {
+  const outPath = path.join(repoRoot, '.artifacts', 'test', 'residual-report.md');
+  const summary = {
+    dataset: 'unit',
+    version: '1',
+    fixture: 'examples/demo-1c',
+    run: { backendLabel: 'unit' },
+    metrics: {
+      queryCount: 2,
+      hitAt10Count: 1,
+      hitAt10: 0.5,
+      mrrAt10: 0.5,
+      precisionAt10: 0.05,
+      failures: 0,
+    },
+    perQuery: [
+      {
+        id: 'r01',
+        firstRelevantRank: null,
+        latencyMs: 12,
+        topResultPaths: ['Documents/РасходТовара/Ext/ObjectModule.bsl'],
+      },
+      {
+        id: 'r06',
+        firstRelevantRank: 2,
+        latencyMs: 10,
+        topResultPaths: ['Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl'],
+      },
+    ],
+    residualQueries: [
+      {
+        id: 'r01',
+        firstRelevantRank: null,
+        latencyMs: 12,
+        topResultPaths: ['Documents/РасходТовара/Ext/ObjectModule.bsl'],
+      },
+      {
+        id: 'r06',
+        firstRelevantRank: 2,
+        latencyMs: 10,
+        topResultPaths: ['Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl'],
+      },
+    ],
+  };
+  const comparison = {
+    baseline: {
+      hitAt10Count: 1,
+    },
+    comparable: true,
+    improvements: [{ id: 'r06' }],
+    perQuery: [
+      { id: 'r01', status: 'unchanged' },
+      { id: 'r06', status: 'improved' },
+    ],
+    regressions: [],
+  };
+
+  writeMarkdownReport(outPath, summary, undefined, comparison);
+
+  const markdown = fs.readFileSync(outPath, 'utf8');
+  assert.match(markdown, /## Residual queries/);
+  assert.match(markdown, /\| r01 \| unchanged \|/);
+  assert.match(markdown, /\| r06 \| improved \| 2 \|/);
 });

@@ -310,6 +310,107 @@ describe('Context code-symbol retrieval', () => {
         expect(results.every((result) => (result.metadata?.oneCIntentBoost || 0) > 0)).toBe(true);
     });
 
+    it('surfaces stock report contexts above broad document modules for stock-balance report intent', async () => {
+        const report = doc({
+            id: 'stock-report',
+            content: 'Отчет ОстаткиТоваровНаСкладах Склад Товар КоличествоОстаток Сформировать',
+            relativePath: 'src/cf/Reports/ОстаткиТоваровНаСкладах/Templates/ОсновнаяСхемаКомпоновкиДанных/Ext/Template.xml',
+            startLine: 1,
+            endLine: 3,
+        });
+        const stockList = doc({
+            id: 'stock-list',
+            content: 'Форма списка с остатками по складу ТоварныеЗапасыОстатки Склад',
+            relativePath: 'src/cf/Catalogs/Товары/Forms/ФормаСпискаСОстатками/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const broadDocument = doc({
+            id: 'broad-document',
+            content: 'Расход товара склад остатки товар документ движение склад',
+            relativePath: 'src/cf/Documents/РасходТовара/Ext/ObjectModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([report, stockList, broadDocument]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: broadDocument, score: 0.7 },
+            { document: report, score: 0.55 },
+            { document: stockList, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'остатки товаров на складах отчет по складу', 3);
+
+        expect(results[0].relativePath).toBe(report.relativePath);
+        expect(results.map((result) => result.relativePath)).toContain(stockList.relativePath);
+        expect(results[0].metadata?.oneCIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces product card contexts above scanner and barcode commands for product-card intent', async () => {
+        const productCard = doc({
+            id: 'product-card',
+            content: 'Форма карточки товара Реквизиты Артикул ШтрихКод Цена Поставщик',
+            relativePath: 'src/cf/Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const scannerCommand = doc({
+            id: 'scanner-command',
+            content: 'Настроить сканер штрихкодов подключение оборудования штрихкод',
+            relativePath: 'src/cf/CommonCommands/НастроитьСканерШтрихКодов/Ext/CommandModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const barcodeCommand = doc({
+            id: 'barcode-command',
+            content: 'Печать штрихкода товара команда штрихкод',
+            relativePath: 'src/cf/Catalogs/Товары/Commands/ПечатьШтрихкода/Ext/CommandModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([productCard, scannerCommand, barcodeCommand]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: scannerCommand, score: 0.65 },
+            { document: barcodeCommand, score: 0.65 },
+            { document: productCard, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'карточка товара реквизиты цена артикул штрихкод', 3);
+
+        expect(results[0].relativePath).toBe(productCard.relativePath);
+        expect(results[0].metadata?.oneCIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces common forms whose path name nearly matches the query', async () => {
+        const mobileSettings = doc({
+            id: 'mobile-settings',
+            content: 'Настройки выбора провайдера мобильного устройства мобильный клиент',
+            relativePath: 'src/cf/CommonForms/НастройкиМобильногоУстройства/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const genericSettings = doc({
+            id: 'generic-settings',
+            content: 'Настройки пользователя форма настройки',
+            relativePath: 'src/cf/DataProcessors/НастройкиПользователя/Forms/Форма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([mobileSettings, genericSettings]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: genericSettings, score: 0.7 },
+            { document: mobileSettings, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'настройки мобильного устройства форма настройки', 2);
+
+        expect(results[0].relativePath).toBe(mobileSettings.relativePath);
+        expect(results[0].metadata?.oneCObjectNameBoost).toBeGreaterThan(0);
+    });
+
     it('keeps unknown and customized layouts neutral for 1C-specific signals', async () => {
         const unknown = doc({
             id: 'unknown-layout',
@@ -373,6 +474,44 @@ describe('Context code-symbol retrieval', () => {
             result.relativePath === broadChunks[8].relativePath &&
             result.metadata?.symbolName === 'ТочныйСимволПечати',
         )).toBe(true);
+    });
+
+    it('penalizes third-and-later broad duplicate chunks enough to keep distinct evidence visible', async () => {
+        const broadChunks = Array.from({ length: 8 }, (_, index) => doc({
+            id: `broad-stock-${index}`,
+            content: 'остатки товаров склад документ движение товар склад отчет',
+            relativePath: 'src/cf/Documents/РасходТовара/Ext/ObjectModule.bsl',
+            startLine: index * 10 + 1,
+            endLine: index * 10 + 3,
+        }));
+        const report = doc({
+            id: 'stock-report-distinct',
+            content: 'остатки товаров на складах отчет склад товар',
+            relativePath: 'src/cf/Reports/ОстаткиТоваровНаСкладах/Forms/ФормаОтчета/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const stockList = doc({
+            id: 'stock-list-distinct',
+            content: 'остатки товаров по складу список товары склад',
+            relativePath: 'src/cf/Catalogs/Товары/Forms/ФормаСпискаСОстатками/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([...broadChunks, report, stockList]);
+        vectorDatabase.bgeM3SearchResults = [
+            ...broadChunks.map((document) => ({ document, score: 0.8 })),
+            { document: report, score: 0.6 },
+            { document: stockList, score: 0.6 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'остатки товаров на складах отчет по складу', 5);
+
+        expect(results.map((result) => result.relativePath)).toContain(report.relativePath);
+        expect(results.map((result) => result.relativePath)).toContain(stockList.relativePath);
+        expect(results.filter((result) => result.relativePath === broadChunks[0].relativePath).length).toBeLessThanOrEqual(3);
+        expect(results.some((result) => result.metadata?.duplicatePenalty >= 1.2)).toBe(true);
     });
 
     it('maps fake rlm-tools-bsl provider results to indexed chunks with diagnostics', async () => {

@@ -27,6 +27,16 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function parseCsvList(value) {
+  if (!value || value === true) {
+    return [];
+  }
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function normalizeText(value) {
   return String(value || '')
     .trim()
@@ -302,6 +312,7 @@ function score(dataset, resultsById, runMetadata = {}) {
     metrics.latencyMs.max = null;
   }
 
+  const residualQueryIds = new Set(runMetadata.residualQueryIds || []);
   return {
     dataset: dataset.dataset,
     version: dataset.version,
@@ -310,12 +321,9 @@ function score(dataset, resultsById, runMetadata = {}) {
     run: runMetadata,
     metrics,
     perQuery,
-    knownMisses: perQuery.filter((row) => [
-      'r01',
-      'r05',
-      'r06',
-      'r28',
-    ].includes(row.id)),
+    ...(residualQueryIds.size > 0
+      ? { residualQueries: perQuery.filter((row) => residualQueryIds.has(row.id)) }
+      : {}),
   };
 }
 
@@ -439,6 +447,7 @@ function enforceAcceptance(summary, options = {}) {
   const toolErrors = Number(rawSummary.toolErrors || 0);
   const missingColbertErrors = Number(rawSummary.missingColbertErrors || 0);
   const baselineHitAt10Count = Number(summary.comparison?.baseline?.hitAt10Count);
+  const baselineMode = options.baselineMode || 'strict-improvement';
 
   if (Number.isFinite(acceptanceThreshold) &&
     !options.allowBelowAcceptanceThreshold &&
@@ -453,12 +462,18 @@ function enforceAcceptance(summary, options = {}) {
   if (!options.allowMissingColbertErrors && missingColbertErrors > 0) {
     throw new Error(`Expected 0 missing ColBERT vector errors, got ${missingColbertErrors}.`);
   }
-  if (Number.isFinite(baselineHitAt10Count) &&
-    !options.allowNoBaselineImprovement &&
-    summary.metrics.hitAt10Count <= baselineHitAt10Count) {
-    throw new Error(
-      `Hit@10 count ${summary.metrics.hitAt10Count} does not improve over baseline ${baselineHitAt10Count}.`,
-    );
+  if (Number.isFinite(baselineHitAt10Count) && !options.allowNoBaselineImprovement) {
+    if (baselineMode === 'non-regression') {
+      if (summary.metrics.hitAt10Count < baselineHitAt10Count) {
+        throw new Error(
+          `Hit@10 count ${summary.metrics.hitAt10Count} is below baseline ${baselineHitAt10Count}.`,
+        );
+      }
+    } else if (summary.metrics.hitAt10Count <= baselineHitAt10Count) {
+      throw new Error(
+        `Hit@10 count ${summary.metrics.hitAt10Count} does not improve over baseline ${baselineHitAt10Count}.`,
+      );
+    }
   }
 }
 
@@ -477,6 +492,7 @@ function compareRanks(before, after) {
 
 function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   const lines = [];
+  const comparisonById = new Map((comparison?.perQuery || []).map((row) => [row.id, row]));
   lines.push(`# Demo 1C relevance report`);
   lines.push('');
   lines.push(`- Dataset: \`${summary.dataset}\` ${summary.version || ''}`.trim());
@@ -508,6 +524,17 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   lines.push('| --- | ---: | ---: | ---: | --- |');
   for (const row of summary.perQuery) {
     lines.push(`| ${row.id} | ${row.firstRelevantRank ? 'yes' : 'no'} | ${row.firstRelevantRank ?? ''} | ${row.latencyMs ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+  }
+  if (summary.residualQueries?.length) {
+    lines.push('');
+    lines.push('## Residual queries');
+    lines.push('| id | status | first relevant rank | top paths |');
+    lines.push('| --- | --- | ---: | --- |');
+    for (const row of summary.residualQueries) {
+      const comparisonRow = comparisonById.get(row.id);
+      const status = comparisonRow?.status || (row.firstRelevantRank ? 'hit' : 'missing');
+      lines.push(`| ${row.id} | ${status} | ${row.firstRelevantRank ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
   }
   if (comparison?.regressions.length) {
     lines.push('');
@@ -543,6 +570,8 @@ function main() {
     startedAt: rawResults.startedAt,
     finishedAt: rawResults.finishedAt,
     rawSummary: rawResults.summary,
+    residualQueryIds: parseCsvList(args.residualQueryIds),
+    baselineMode: args.baselineMode || undefined,
     labelValidation: labelValidation ? {
       codebasePath: labelValidation.codebasePath,
       unreachablePrefixCount: labelValidation.unreachablePrefixCount,
@@ -590,6 +619,7 @@ function main() {
       allowToolErrors: Boolean(args.allowToolErrors),
       allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
       allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+      baselineMode: args.baselineMode,
     });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -603,6 +633,7 @@ if (require.main === module) {
 
 module.exports = {
   enforceAcceptance,
+  parseCsvList,
   normalizeResults,
   score,
   validateLabels,
