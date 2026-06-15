@@ -28,6 +28,7 @@ The system SHALL provide a committed workflow for collecting and scoring live MC
 - **THEN** every expected path prefix SHALL be checked against the indexed `examples/demo-1c` fixture or an equivalent fixture path manifest
 - **AND** stale, unreachable, or intentionally ambiguous expected prefixes SHALL be corrected in the dataset or listed by query ID in the report before a final Hit@10 threshold is used as a hard completion gate
 - **AND** the final threshold SHALL be documented after label validation, using Hit@10 24/30 only when the current label set is confirmed reachable and unambiguous enough for that target
+- **AND** the acceptance runner SHALL exit unsuccessfully when a configured acceptance threshold is not reached, unless the run explicitly marks itself as a baseline or measurement pass that allows a below-threshold result
 - **AND** label corrections SHALL remain evaluation data and SHALL NOT be used by production `search_code`
 
 ### Requirement: Ranking diagnostics explain score composition
@@ -86,6 +87,7 @@ The system SHALL improve the live Qdrant default ranking score on the `demo-1c` 
 - **THEN** the tuned run SHALL have 0 MCP tool errors
 - **AND** it SHALL have 0 missing ColBERT vector errors
 - **AND** it SHALL improve Hit@10 over the recorded 18/30 baseline
+- **AND** the acceptance runner SHALL exit unsuccessfully if any of those backend correctness conditions fail, unless an explicit non-acceptance override is provided
 
 #### Scenario: Tuned Qdrant live run reaches target threshold
 - **WHEN** current dataset labels are confirmed valid for the indexed `examples/demo-1c` fixture

@@ -1,0 +1,278 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const {
+  enforceAcceptance,
+  normalizeResults,
+  score,
+  validateLabels,
+  buildComparison,
+  writeMarkdownReport,
+} = require('./run-demo-1c-relevance-eval.js');
+
+const repoRoot = path.resolve(__dirname, '..');
+const defaultDatasetPath = path.join(repoRoot, 'evaluation', 'retrieval', 'demo-1c-relevance.json');
+const defaultCodebasePath = path.join(repoRoot, 'examples', 'demo-1c');
+const defaultArtifactDir = path.join(repoRoot, '.artifacts', 'hybrid-code-symbol-retrieval');
+
+function parseArgs(argv) {
+  const args = {};
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg.startsWith('--')) {
+      continue;
+    }
+    const key = arg
+      .slice(2)
+      .replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+    const next = argv[index + 1];
+    if (!next || next.startsWith('--')) {
+      args[key] = true;
+    } else {
+      args[key] = next;
+      index += 1;
+    }
+  }
+  return args;
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function writeJson(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function readClientConfig(configPath) {
+  const resolved = configPath || path.join(os.homedir(), '.context', 'mcp', 'daemon', 'client-config.json');
+  return readJson(resolved);
+}
+
+async function callTool(clientConfig, name, args) {
+  const endpointUrl = clientConfig.endpointUrl || clientConfig.url;
+  const token = clientConfig.bearerToken || clientConfig.token;
+  if (!endpointUrl || !token) {
+    throw new Error('Daemon client config is missing endpointUrl/url or bearerToken/token.');
+  }
+  const response = await fetch(endpointUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json, text/event-stream',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: Date.now(),
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: args,
+      },
+    }),
+  });
+  const body = await response.text();
+  const dataLine = body.split('\n').find((line) => line.startsWith('data: '));
+  const payload = JSON.parse(dataLine ? dataLine.slice(6) : body);
+  if (payload.error) {
+    throw new Error(JSON.stringify(payload.error));
+  }
+  return payload.result;
+}
+
+function textFromResult(result) {
+  return (result.content || [])
+    .map((item) => item.text || '')
+    .join('\n');
+}
+
+async function ensureIndexed(clientConfig, options) {
+  if (options.indexFirst) {
+    return callTool(clientConfig, 'index_codebase', {
+      path: options.codebasePath,
+      force: Boolean(options.forceIndex),
+      oneCIndexScopeProfile: options.oneCIndexScopeProfile,
+    });
+  }
+  return callTool(clientConfig, 'get_indexing_status', {
+    path: options.codebasePath,
+  });
+}
+
+function summarizeTopResults(results) {
+  return (results || []).slice(0, 10).map((result, index) => ({
+    rank: index + 1,
+    path: result.relativePath,
+    relativePath: result.relativePath,
+    lines: [result.startLine, result.endLine],
+    startLine: result.startLine,
+    endLine: result.endLine,
+    score: result.score,
+    metadata: result.metadata,
+  }));
+}
+
+async function collectResults(clientConfig, dataset, options) {
+  const results = [];
+  let toolErrors = 0;
+  let missingColbertErrors = 0;
+  for (const query of dataset.queries) {
+    const started = Date.now();
+    let toolResult;
+    let error = null;
+    try {
+      toolResult = await callTool(clientConfig, 'search_code', {
+        path: options.codebasePath,
+        query: query.query,
+        limit: options.limit,
+      });
+    } catch (toolError) {
+      error = toolError instanceof Error ? toolError.message : String(toolError);
+    }
+    const elapsedMs = Date.now() - started;
+    const text = toolResult ? textFromResult(toolResult) : '';
+    const structured = toolResult?.structuredContent || {};
+    const top10 = summarizeTopResults(structured.results || []);
+    if (error) {
+      toolErrors += 1;
+    }
+    if (/missing colbert|colbert.*missing/i.test(`${error || ''}\n${text}`)) {
+      missingColbertErrors += 1;
+    }
+    results.push({
+      id: query.id,
+      query: query.query,
+      kind: query.kind,
+      expectedPrefixes: query.expectedPathPrefixes,
+      elapsedMs,
+      error,
+      resultCount: top10.length,
+      top10,
+    });
+    console.error(`[live-eval] ${query.id} ${error ? 'error' : 'ok'} ${elapsedMs}ms ${top10.length} result(s)`);
+  }
+  return {
+    results,
+    errors: {
+      toolErrors,
+      missingColbertErrors,
+    },
+  };
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  const datasetPath = args.dataset || defaultDatasetPath;
+  const dataset = readJson(datasetPath);
+  const codebasePath = path.resolve(args.codebasePath || defaultCodebasePath);
+  const backendLabel = args.backendLabel || 'qdrant-default-live';
+  const artifactDir = path.resolve(args.artifactDir || defaultArtifactDir);
+  const runName = args.runName || `${new Date().toISOString().replace(/[:.]/g, '-')}-demo-1c-live`;
+  const runDir = path.join(artifactDir, runName);
+  const rawPath = args.rawOut || path.join(runDir, 'raw-results.json');
+  const summaryPath = args.out || path.join(runDir, 'summary.json');
+  const markdownPath = args.markdownOut || path.join(runDir, 'summary.md');
+  const labelValidationPath = args.labelValidationOut || path.join(runDir, 'label-validation.json');
+  const comparePath = args.compareOut || (args.baseline ? path.join(runDir, 'comparison.json') : undefined);
+  const clientConfig = readClientConfig(args.clientConfig);
+
+  const options = {
+    codebasePath,
+    backendLabel,
+    limit: Number(args.limit || 10),
+    oneCIndexScopeProfile: args.oneCIndexScopeProfile || 'developer',
+    indexFirst: Boolean(args.indexFirst),
+    forceIndex: Boolean(args.forceIndex),
+  };
+
+  const startedAt = new Date().toISOString();
+  const indexStatus = await ensureIndexed(clientConfig, options);
+  const collected = await collectResults(clientConfig, dataset, options);
+  const finishedAt = new Date().toISOString();
+  const rawReport = {
+    dataset: dataset.dataset,
+    version: dataset.version,
+    codebasePath,
+    backend: backendLabel,
+    startedAt,
+    finishedAt,
+    indexStatus: {
+      text: textFromResult(indexStatus),
+      structuredContent: indexStatus.structuredContent,
+    },
+    caseCount: dataset.queries.length,
+    summary: {
+      toolErrors: collected.errors.toolErrors,
+      missingColbertErrors: collected.errors.missingColbertErrors,
+    },
+    results: collected.results,
+  };
+  writeJson(rawPath, rawReport);
+
+  const resultsById = normalizeResults(rawReport.results, dataset, undefined);
+  const labelValidation = validateLabels(dataset, codebasePath);
+  const summary = score(dataset, resultsById, {
+    backendLabel,
+    codebasePath,
+    datasetPath,
+    resultsPath: rawPath,
+    acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
+    startedAt,
+    finishedAt,
+    rawSummary: rawReport.summary,
+    labelValidation: {
+      codebasePath: labelValidation.codebasePath,
+      unreachablePrefixCount: labelValidation.unreachablePrefixCount,
+      ambiguousQueryIds: labelValidation.ambiguousQueryIds,
+      thresholdRecommendation: labelValidation.unreachablePrefixCount === 0
+        ? 'Hit@10 24/30 is valid for the current reachable label set.'
+        : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
+    },
+  });
+  const comparison = args.baseline ? buildComparison(readJson(args.baseline), summary) : undefined;
+  if (comparison) {
+    summary.comparison = comparison;
+  }
+  writeJson(summaryPath, summary);
+  writeJson(labelValidationPath, labelValidation);
+  if (comparePath && comparison) {
+    writeJson(comparePath, comparison);
+  }
+  writeMarkdownReport(markdownPath, summary, labelValidation, comparison);
+
+  if (args.expectHitAt10Count !== undefined) {
+    const expected = Number(args.expectHitAt10Count);
+    if (summary.metrics.hitAt10Count !== expected) {
+      throw new Error(`Expected Hit@10 count ${expected}, got ${summary.metrics.hitAt10Count}.`);
+    }
+  }
+  enforceAcceptance(summary, {
+    acceptanceThreshold: args.acceptanceThreshold,
+    allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
+    allowToolErrors: Boolean(args.allowToolErrors),
+    allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
+    allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+  });
+  console.log(JSON.stringify({
+    rawPath,
+    summaryPath,
+    markdownPath,
+    labelValidationPath,
+    comparePath,
+    hitAt10Count: summary.metrics.hitAt10Count,
+    queryCount: summary.metrics.queryCount,
+    toolErrors: collected.errors.toolErrors,
+    missingColbertErrors: collected.errors.missingColbertErrors,
+  }, null, 2));
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message || String(error));
+    process.exit(1);
+  });
+}

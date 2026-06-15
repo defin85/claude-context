@@ -198,6 +198,183 @@ describe('Context code-symbol retrieval', () => {
         expect(results[0].metadata?.pathBoost).toBeGreaterThan(0);
     });
 
+    it('returns compact ranking diagnostics without vector payloads', async () => {
+        const catalogForm = doc({
+            id: 'catalog-form',
+            content: 'Процедура ПриОткрытии() КонецПроцедуры',
+            relativePath: 'src/cf/Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        catalogForm.metadata = {
+            language: 'bsl',
+            dense: [1, 2, 3],
+            sparse: { indices: [1], values: [0.5] },
+            colbertVectors: [[1, 0]],
+        };
+        const vectorDatabase = createDb([catalogForm]);
+        vectorDatabase.bgeM3SearchResults = [{ document: catalogForm, score: 0.6 }];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'карточка контрагенты', 1);
+
+        expect(results[0].metadata).toEqual(expect.objectContaining({
+            semanticScore: expect.any(Number),
+            lexicalScore: expect.any(Number),
+            exactSymbolBoost: expect.any(Number),
+            pathBoost: expect.any(Number),
+            oneCObjectKindBoost: expect.any(Number),
+            oneCObjectNameBoost: expect.any(Number),
+            oneCIntentBoost: expect.any(Number),
+            duplicatePenalty: expect.any(Number),
+            diversityReason: expect.any(String),
+            fusionScore: expect.any(Number),
+        }));
+        expect(results[0].metadata).not.toHaveProperty('dense');
+        expect(results[0].metadata).not.toHaveProperty('sparse');
+        expect(results[0].metadata).not.toHaveProperty('colbertVectors');
+    });
+
+    it('uses bounded 1C object-kind and metadata-name signals for representative object paths', async () => {
+        const fixtures = [
+            { query: 'справочник контрагенты карточка', path: 'src/cf/Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form/Module.bsl' },
+            { query: 'справочник склады форма списка', path: 'src/cf/Catalogs/Склады/Forms/ФормаСписка/Ext/Form/Module.bsl' },
+            { query: 'пользователи форма элемента', path: 'src/cf/Catalogs/Пользователи/Forms/ФормаЭлемента/Ext/Form/Module.bsl' },
+            { query: 'единицы измерения справочник', path: 'src/cf/Catalogs/ЕдиницыИзмерения/Ext/ObjectModule.bsl' },
+            { query: 'регистр остатки товаров', path: 'src/cf/AccumulationRegisters/ОстаткиТоваров/Ext/ManagerModule.bsl' },
+            { query: 'документ расход товара форма документа', path: 'src/cf/Documents/РасходТовара/Forms/ФормаДокумента/Ext/Form/Module.bsl' },
+            { query: 'отчет остатки товаров', path: 'src/cf/Reports/ОстаткиТоваровНаСкладах/Ext/ObjectModule.bsl' },
+            { query: 'команда печать расходной накладной', path: 'src/cf/Documents/РасходТовара/Commands/ПечатьРасходнойНакладной/Ext/CommandModule.bsl' },
+        ];
+
+        for (const [index, fixture] of fixtures.entries()) {
+            const matching = doc({
+                id: `matching-${index}`,
+                content: 'Процедура ВыполнитьКоманду() КонецПроцедуры',
+                relativePath: fixture.path,
+                startLine: 1,
+                endLine: 3,
+            });
+            const generic = doc({
+                id: `generic-${index}`,
+                content: 'Процедура ВыполнитьКоманду() товар контрагент форма КонецПроцедуры',
+                relativePath: 'src/cf/Documents/Продажа/Forms/ФормаСписка/Ext/Form/Module.bsl',
+                startLine: 1,
+                endLine: 3,
+            });
+            const vectorDatabase = createDb([matching, generic]);
+            vectorDatabase.bgeM3SearchResults = [
+                { document: generic, score: 0.5 },
+                { document: matching, score: 0.5 },
+            ];
+            const context = createContext(vectorDatabase);
+
+            const results = await context.semanticSearch('/tmp/example', fixture.query, 2);
+
+            expect(results[0].relativePath).toBe(fixture.path);
+            expect(
+                (results[0].metadata?.oneCObjectKindBoost || 0) +
+                (results[0].metadata?.oneCObjectNameBoost || 0) +
+                (results[0].metadata?.oneCIntentBoost || 0),
+            ).toBeGreaterThan(0);
+            expect(results[0].metadata?.oneCObjectKindBoost).toBeLessThanOrEqual(1.2);
+            expect(results[0].metadata?.oneCObjectNameBoost).toBeLessThanOrEqual(1.3);
+            expect(results[0].metadata?.oneCIntentBoost).toBeLessThanOrEqual(1.1);
+        }
+    });
+
+    it('treats print intent as candidate contexts instead of one fixed exported path', async () => {
+        const printContexts = [
+            'src/cf/Documents/РасходТовара/Commands/ПечатьРасходнойНакладной/Ext/CommandModule.bsl',
+            'src/cf/Documents/РасходТовара/Forms/ФормаДокумента/Ext/Form/Module.bsl',
+            'src/cf/Reports/ПрайсЛист/Ext/ObjectModule.bsl',
+            'src/cf/Documents/РасходТовара/Ext/ObjectModule.bsl',
+            'src/cf/Documents/РасходТовара/Ext/ManagerModule.bsl',
+            'src/cf/CommonModules/ПечатьДокументов/Ext/Module.bsl',
+            'src/cf/Documents/РасходТовара/Templates/МакетПечати/Ext/Template.txt',
+        ];
+        const docs = printContexts.map((relativePath, index) => doc({
+            id: `print-context-${index}`,
+            content: 'Процедура Печать() ТабличныйДокумент = Новый ТабличныйДокумент; КонецПроцедуры',
+            relativePath,
+            startLine: 1,
+            endLine: 3,
+        }));
+        const vectorDatabase = createDb(docs);
+        vectorDatabase.bgeM3SearchResults = docs.map((document) => ({ document, score: 0.4 }));
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'печать расходной накладной макет табличный документ', 10);
+
+        expect(results.map((result) => result.relativePath)).toEqual(expect.arrayContaining(printContexts));
+        expect(results.every((result) => (result.metadata?.oneCIntentBoost || 0) > 0)).toBe(true);
+    });
+
+    it('keeps unknown and customized layouts neutral for 1C-specific signals', async () => {
+        const unknown = doc({
+            id: 'unknown-layout',
+            content: 'Процедура Печать() КонецПроцедуры',
+            relativePath: 'vendor/custom/objects/РасходТовара/forms/Print/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([unknown]);
+        vectorDatabase.bgeM3SearchResults = [{ document: unknown, score: 0.8 }];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'печать расход товара форма документа', 1);
+
+        expect(results[0].relativePath).toBe(unknown.relativePath);
+        expect(results[0].metadata?.oneCObjectKindBoost).toBe(0);
+        expect(results[0].metadata?.oneCObjectNameBoost).toBe(0);
+        expect(results[0].metadata?.oneCIntentBoost).toBe(0);
+    });
+
+    it('applies soft duplicate control without removing exact or provider-backed chunks', async () => {
+        const broadChunks = Array.from({ length: 11 }, (_, index) => doc({
+            id: `broad-${index}`,
+            content: index === 8
+                ? 'Функция ТочныйСимволПечати() Экспорт Возврат Истина; КонецФункции'
+                : 'Процедура Печать() товар товар товар форма КонецПроцедуры',
+            relativePath: 'src/cf/Documents/РасходТовара/Ext/ObjectModule.bsl',
+            startLine: index * 10 + 1,
+            endLine: index * 10 + 3,
+        }));
+        const specific = doc({
+            id: 'specific-command',
+            content: 'Процедура ПечатьРасходнойНакладной() Печать(); КонецПроцедуры',
+            relativePath: 'src/cf/Documents/РасходТовара/Commands/ПечатьРасходнойНакладной/Ext/CommandModule.bsl',
+            startLine: 1,
+            endLine: 4,
+        });
+        const provider = new FakeProvider();
+        provider.candidates = [{
+            providerName: 'rlm-tools-bsl',
+            providerStatus: 'available',
+            relativePath: broadChunks[8].relativePath,
+            startLine: broadChunks[8].startLine,
+            endLine: broadChunks[8].endLine,
+            symbolName: 'ТочныйСимволПечати',
+            providerRank: 0,
+            lexicalScore: 4,
+        }];
+        const vectorDatabase = createDb([...broadChunks, specific]);
+        vectorDatabase.bgeM3SearchResults = [
+            ...broadChunks.map((document) => ({ document, score: 0.9 })),
+            { document: specific, score: 0.75 },
+        ];
+        const context = createContext(vectorDatabase, [provider]);
+
+        const results = await context.semanticSearch('/tmp/example', 'ТочныйСимволПечати печать расходной накладной', 10);
+
+        expect(results.map((result) => result.relativePath)).toContain(specific.relativePath);
+        expect(results.some((result) => result.metadata?.duplicatePenalty > 0)).toBe(true);
+        expect(results.some((result) =>
+            result.relativePath === broadChunks[8].relativePath &&
+            result.metadata?.symbolName === 'ТочныйСимволПечати',
+        )).toBe(true);
+    });
+
     it('maps fake rlm-tools-bsl provider results to indexed chunks with diagnostics', async () => {
         const provider = new FakeProvider();
         provider.candidates = [{

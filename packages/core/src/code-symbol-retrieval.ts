@@ -227,6 +227,9 @@ export function fuseCodeSearchResults(
         _lexicalScore: number;
         _exactSymbolBoost: number;
         _pathBoost: number;
+        _oneCObjectKindBoost: number;
+        _oneCObjectNameBoost: number;
+        _oneCIntentBoost: number;
         _providerRank: number;
     }>();
 
@@ -242,10 +245,11 @@ export function fuseCodeSearchResults(
         const existing = byKey.get(key);
         const exactSymbolBoost = scoreExactSymbol(tokens, result.content);
         const pathBoost = scorePath(tokens, result.relativePath, result.metadata);
+        const oneCSignals = scoreOneCPathSignals(tokens, result.relativePath, result.content, result.metadata);
         const mergedMetadata = {
-            ...(existing?.metadata || {}),
-            ...(result.metadata || {}),
-            ...extraMetadata,
+            ...sanitizeResultMetadata(existing?.metadata || {}),
+            ...sanitizeResultMetadata(result.metadata || {}),
+            ...sanitizeResultMetadata(extraMetadata),
         };
         const retrievalSources = unique([
             ...toStringArray(existing?.metadata?.retrievalSources),
@@ -264,6 +268,9 @@ export function fuseCodeSearchResults(
             _lexicalScore: Math.max(existing?._lexicalScore ?? 0, lexicalScore),
             _exactSymbolBoost: Math.max(existing?._exactSymbolBoost ?? 0, exactSymbolBoost),
             _pathBoost: Math.max(existing?._pathBoost ?? 0, pathBoost),
+            _oneCObjectKindBoost: Math.max(existing?._oneCObjectKindBoost ?? 0, oneCSignals.objectKindBoost),
+            _oneCObjectNameBoost: Math.max(existing?._oneCObjectNameBoost ?? 0, oneCSignals.objectNameBoost),
+            _oneCIntentBoost: Math.max(existing?._oneCIntentBoost ?? 0, oneCSignals.intentBoost),
             _providerRank: Math.min(existing?._providerRank ?? Number.MAX_SAFE_INTEGER, providerRank),
         });
     };
@@ -292,12 +299,18 @@ export function fuseCodeSearchResults(
     });
 
     const fused = [...byKey.values()].map((result) => {
-        const fusionScore =
+        const providerRankBoost = result._providerRank < Number.MAX_SAFE_INTEGER
+            ? Math.max(0, 1.5 - result._providerRank * 0.05)
+            : 0;
+        const baseFusionScore =
             result._semanticScore +
             result._lexicalScore +
             result._exactSymbolBoost +
             result._pathBoost +
-            (result._providerRank < Number.MAX_SAFE_INTEGER ? Math.max(0, 1.5 - result._providerRank * 0.05) : 0);
+            result._oneCObjectKindBoost +
+            result._oneCObjectNameBoost +
+            result._oneCIntentBoost +
+            providerRankBoost;
 
         return {
             content: result.content,
@@ -305,14 +318,21 @@ export function fuseCodeSearchResults(
             startLine: result.startLine,
             endLine: result.endLine,
             language: result.language,
-            score: fusionScore,
+            score: baseFusionScore,
             metadata: {
                 ...result.metadata,
                 semanticScore: result._semanticScore,
                 lexicalScore: result._lexicalScore,
                 exactSymbolBoost: result._exactSymbolBoost,
                 pathBoost: result._pathBoost,
-                fusionScore,
+                oneCObjectKindBoost: result._oneCObjectKindBoost,
+                oneCObjectNameBoost: result._oneCObjectNameBoost,
+                oneCIntentBoost: result._oneCIntentBoost,
+                providerRankBoost,
+                duplicatePenalty: 0,
+                diversityReason: 'first_file_result',
+                baseFusionScore,
+                fusionScore: baseFusionScore,
                 providerDiagnostics: diagnostics.providerStatuses,
                 providerUnmappedCandidates: diagnostics.providerUnmappedCandidates,
                 ...(diagnostics.lexicalFailure ? { lexicalFailure: diagnostics.lexicalFailure } : {}),
@@ -320,7 +340,13 @@ export function fuseCodeSearchResults(
         };
     });
 
-    return fused
+    return applyDuplicateDiversity(fused
+        .sort((left, right) =>
+            right.score - left.score ||
+            compareExactness(right, left, tokens) ||
+            left.relativePath.localeCompare(right.relativePath) ||
+            left.startLine - right.startLine,
+        ))
         .sort((left, right) =>
             right.score - left.score ||
             compareExactness(right, left, tokens) ||
@@ -685,6 +711,240 @@ function scorePath(tokens: CodeSymbolQueryTokens, relativePath: string, metadata
     return score;
 }
 
+interface OneCPathInfo {
+    objectKind?: string;
+    objectName?: string;
+    area?: string;
+    areaName?: string;
+    moduleKind?: string;
+    recognized: boolean;
+}
+
+interface OneCSignalScores {
+    objectKindBoost: number;
+    objectNameBoost: number;
+    intentBoost: number;
+}
+
+const ONE_C_OBJECT_KIND_BY_SEGMENT: Record<string, string> = {
+    Catalogs: 'catalog',
+    Documents: 'document',
+    AccumulationRegisters: 'register',
+    InformationRegisters: 'register',
+    AccountingRegisters: 'register',
+    CalculationRegisters: 'register',
+    Reports: 'report',
+    DataProcessors: 'dataProcessor',
+    CommonCommands: 'command',
+    CommonForms: 'form',
+    CommonModules: 'commonModule',
+};
+
+const ONE_C_KIND_TERMS: Record<string, string[]> = {
+    catalog: ['справочник', 'справочники', 'каталог'],
+    document: ['документ', 'документы', 'накладная', 'заказ'],
+    register: ['регистр', 'регистры', 'остатки', 'взаиморасчеты'],
+    report: ['отчет', 'отчеты', 'ведомость'],
+    command: ['команда', 'команды'],
+    form: ['форма', 'форму', 'формы'],
+    commonModule: ['общий модуль', 'общем модуле', 'common module'],
+    dataProcessor: ['обработка', 'обработки'],
+};
+
+const PRINT_TERMS = ['печать', 'печатная', 'печатный', 'прайс', 'макет', 'табличный документ', 'накладная'];
+
+function scoreOneCPathSignals(
+    tokens: CodeSymbolQueryTokens,
+    relativePath: string,
+    content: string,
+    metadata?: Record<string, any>,
+): OneCSignalScores {
+    const pathInfo = parseOneCPath(relativePath);
+    if (!pathInfo.recognized) {
+        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0 };
+    }
+
+    const normalizedQuery = tokens.normalizedQuery;
+    const normalizedContent = normalizeText(content);
+    const metadataText = normalizeText(JSON.stringify(metadata || {}));
+
+    const objectKindBoost = Math.min(1.2, scoreOneCObjectKindIntent(normalizedQuery, pathInfo));
+    const objectNameBoost = Math.min(1.3, scoreOneCObjectName(tokens, pathInfo, metadataText));
+    const intentBoost = Math.min(1.1, scoreOneCFormAndCommandIntent(normalizedQuery, normalizedContent, pathInfo));
+
+    return {
+        objectKindBoost,
+        objectNameBoost,
+        intentBoost,
+    };
+}
+
+function parseOneCPath(relativePath: string): OneCPathInfo {
+    const segments = normalizePath(relativePath).split('/').filter(Boolean);
+    const rootIndex = segments.findIndex((segment) => Object.prototype.hasOwnProperty.call(ONE_C_OBJECT_KIND_BY_SEGMENT, segment));
+    if (rootIndex < 0) {
+        return { recognized: false };
+    }
+
+    const root = segments[rootIndex];
+    const objectKind = ONE_C_OBJECT_KIND_BY_SEGMENT[root];
+    const objectName = objectKind === 'commonModule' || objectKind === 'command' || objectKind === 'form'
+        ? segments[rootIndex + 1]
+        : segments[rootIndex + 1];
+    const tail = segments.slice(rootIndex + 2);
+    const areaIndex = tail.findIndex((segment) => ['Forms', 'Commands', 'Ext', 'Templates', 'Layouts'].includes(segment));
+    const area = areaIndex >= 0 ? tail[areaIndex] : undefined;
+    const areaName = areaIndex >= 0 ? tail[areaIndex + 1] : undefined;
+    const fileName = segments[segments.length - 1] || '';
+    const moduleKind = fileName === 'ObjectModule.bsl'
+        ? 'objectModule'
+        : fileName === 'ManagerModule.bsl'
+            ? 'managerModule'
+            : fileName === 'Module.bsl'
+                ? 'module'
+                : undefined;
+
+    return {
+        objectKind,
+        objectName,
+        area,
+        areaName,
+        moduleKind,
+        recognized: true,
+    };
+}
+
+function scoreOneCObjectKindIntent(normalizedQuery: string, pathInfo: OneCPathInfo): number {
+    let score = 0;
+    for (const term of ONE_C_KIND_TERMS[pathInfo.objectKind || ''] || []) {
+        if (normalizedQuery.includes(normalizeText(term))) {
+            score += 0.8;
+            break;
+        }
+    }
+
+    if (normalizedQuery.includes('форма списка') && pathInfo.area === 'Forms' && normalizeText(pathInfo.areaName || '').includes('формасписка')) {
+        score += 0.9;
+    }
+    if ((normalizedQuery.includes('форма элемента') || normalizedQuery.includes('карточк')) &&
+        pathInfo.area === 'Forms' &&
+        normalizeText(pathInfo.areaName || '').includes('формаэлемента')) {
+        score += 0.9;
+    }
+    if (normalizedQuery.includes('форма документа') && pathInfo.area === 'Forms' && normalizeText(pathInfo.areaName || '').includes('формадокумента')) {
+        score += 0.9;
+    }
+    if (normalizedQuery.includes('команд') && pathInfo.area === 'Commands') {
+        score += 0.7;
+    }
+
+    return score;
+}
+
+function scoreOneCObjectName(tokens: CodeSymbolQueryTokens, pathInfo: OneCPathInfo, metadataText: string): number {
+    const objectName = pathInfo.objectName || '';
+    if (!objectName) {
+        return 0;
+    }
+
+    const nameTerms = splitOneCNameTerms(objectName);
+    if (nameTerms.length === 0) {
+        return 0;
+    }
+
+    const queryTerms = new Set(tokens.naturalTerms);
+    const fullName = normalizeText(objectName);
+    if (tokens.normalizedQuery.includes(fullName) || metadataText.includes(fullName)) {
+        return 1.2;
+    }
+
+    const matchedTerms = nameTerms.filter((term) => queryTerms.has(term) || tokens.normalizedQuery.includes(term));
+    if (matchedTerms.length === nameTerms.length) {
+        return 1.0;
+    }
+    if (matchedTerms.length > 0 && nameTerms.some((term) => term.length >= 5)) {
+        return 0.45;
+    }
+    return 0;
+}
+
+function scoreOneCFormAndCommandIntent(normalizedQuery: string, normalizedContent: string, pathInfo: OneCPathInfo): number {
+    let score = 0;
+    const hasPrintIntent = PRINT_TERMS.some((term) => normalizedQuery.includes(normalizeText(term)));
+    if (hasPrintIntent) {
+        if (pathInfo.area === 'Commands') {
+            score += 0.9;
+        } else if (pathInfo.objectKind === 'report') {
+            score += 0.65;
+        } else if (pathInfo.area === 'Forms') {
+            score += 0.45;
+        } else if (pathInfo.moduleKind === 'objectModule' || pathInfo.moduleKind === 'managerModule' || pathInfo.objectKind === 'commonModule') {
+            score += 0.35;
+        } else if (pathInfo.area === 'Templates' || pathInfo.area === 'Layouts') {
+            score += 0.45;
+        }
+        if (PRINT_TERMS.some((term) => normalizedContent.includes(normalizeText(term)))) {
+            score += 0.35;
+        }
+    }
+
+    if ((normalizedQuery.includes('список') || normalizedQuery.includes('списка')) &&
+        pathInfo.area === 'Forms' &&
+        normalizeText(pathInfo.areaName || '').includes('спис')) {
+        score += 0.45;
+    }
+    if ((normalizedQuery.includes('карточк') || normalizedQuery.includes('элемент')) &&
+        pathInfo.area === 'Forms' &&
+        normalizeText(pathInfo.areaName || '').includes('элемент')) {
+        score += 0.45;
+    }
+
+    return score;
+}
+
+function splitOneCNameTerms(value: string): string[] {
+    return unique(value
+        .replace(/([а-яёa-z])([А-ЯЁA-Z])/gu, '$1 $2')
+        .split(/[^\p{L}\p{N}]+/u)
+        .map((term) => normalizeText(term))
+        .filter((term) => term.length >= 3));
+}
+
+function applyDuplicateDiversity(results: SemanticSearchResult[]): SemanticSearchResult[] {
+    const seenByFile = new Map<string, number>();
+    return results.map((result) => {
+        const fileKey = normalizePath(result.relativePath);
+        const duplicateIndex = seenByFile.get(fileKey) || 0;
+        seenByFile.set(fileKey, duplicateIndex + 1);
+
+        const exactSymbolBoost = Number(result.metadata?.exactSymbolBoost || 0);
+        const providerRankBoost = Number(result.metadata?.providerRankBoost || 0);
+        const protectedByEvidence = exactSymbolBoost > 0 || providerRankBoost > 0;
+        const duplicatePenalty = duplicateIndex === 0
+            ? 0
+            : protectedByEvidence
+                ? Math.min(0.4, duplicateIndex * 0.1)
+                : Math.min(1.2, duplicateIndex * 0.35);
+        const adjustedScore = result.score - duplicatePenalty;
+        const diversityReason = duplicateIndex === 0
+            ? 'first_file_result'
+            : protectedByEvidence
+                ? 'duplicate_soft_penalty_preserved_by_exact_or_provider_evidence'
+                : 'duplicate_soft_penalty';
+
+        return {
+            ...result,
+            score: adjustedScore,
+            metadata: {
+                ...result.metadata,
+                duplicatePenalty,
+                diversityReason,
+                fusionScore: adjustedScore,
+            },
+        };
+    });
+}
+
 function compareExactness(left: SemanticSearchResult, right: SemanticSearchResult, tokens: CodeSymbolQueryTokens): number {
     const leftExact = scoreExactSymbol(tokens, left.content) + scorePath(tokens, left.relativePath, left.metadata);
     const rightExact = scoreExactSymbol(tokens, right.content) + scorePath(tokens, right.relativePath, right.metadata);
@@ -812,6 +1072,28 @@ function unique(values: string[]): string[] {
 
 function toStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function sanitizeResultMetadata(metadata: Record<string, any>): Record<string, any> {
+    const forbiddenKeys = new Set([
+        'vector',
+        'vectors',
+        'dense',
+        'denseVector',
+        'sparse',
+        'sparseVector',
+        'colbert',
+        'colbertVector',
+        'colbertVectors',
+    ]);
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+        if (forbiddenKeys.has(key)) {
+            continue;
+        }
+        sanitized[key] = value;
+    }
+    return sanitized;
 }
 
 function parseMetadata(value: unknown): Record<string, any> {
