@@ -725,7 +725,6 @@ export class ToolHandlers {
             const hasExistingIndex = cloudHasIndex || snapshotHasIndex;
             const persistedOneCIndexScopeProfile = this.getPersistedOneCIndexScopeProfile(existingInfo, existingSessionConfig);
             if (
-                hasExistingIndex &&
                 !forceReindex &&
                 existingSessionConfig?.retrievalMode &&
                 requestedSessionConfig.retrievalMode &&

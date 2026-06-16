@@ -112,3 +112,34 @@ Final verification results:
 - MCP typecheck passed.
 - MCP build passed.
 - `openspec validate retrieval-performance-profiles --strict` passed.
+
+## 2026-06-16 Finish To 100 Closure
+
+Closed the final review blocker for `Incompatible profile without force`:
+
+- `index_codebase` now rejects incompatible retrieval profile changes from the
+  persisted per-codebase config even when the local snapshot entry is missing.
+  The synchronous MCP response reports `force=true` instead of starting a
+  background job that later fails during collection preparation.
+
+TDD red check:
+
+```bash
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/one-c-scope-profile.test.ts
+```
+
+Expected failure before implementation:
+
+- `index_codebase rejects incompatible retrieval profile when snapshot is missing`
+  returned a started background indexing response (`isError` was undefined)
+  instead of the expected `forceRequired=true` error.
+
+Green check after implementation:
+
+```bash
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/one-c-scope-profile.test.ts
+```
+
+Result:
+
+- MCP handler/codebase-config tests passed: 14 tests, 0 failed.

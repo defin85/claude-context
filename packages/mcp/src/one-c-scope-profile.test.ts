@@ -168,6 +168,40 @@ test('index_codebase rejects incompatible retrieval profile changes without forc
     assert.equal(structuredContent.forceRequired, true);
 });
 
+test('index_codebase rejects incompatible retrieval profile when snapshot is missing', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-retrieval-profile-drift-'));
+    const rawCodebasePath = path.join(workspacePath, 'cf');
+    await fs.mkdir(rawCodebasePath, { recursive: true });
+    const codebasePath = await fs.realpath(rawCodebasePath);
+    const snapshotManager = new SnapshotManager({
+        workspacePath,
+        saveDebounceMs: 10,
+    });
+    const codebaseConfigManager = new CodebaseConfigManager({ workspacePath });
+    await codebaseConfigManager.saveConfig(codebasePath, {
+        retrievalProfile: 'fast',
+        retrievalMode: 'dense',
+        retrievalSchemaVersion: 1,
+    });
+    const handlers = new ToolHandlers(
+        createFakeContext(false),
+        snapshotManager,
+        codebaseConfigManager,
+    );
+
+    const result = await handlers.handleIndexCodebase({
+        path: codebasePath,
+        retrievalProfile: 'quality',
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /retrievalProfile change requires force=true/);
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.retrievalProfile, 'quality');
+    assert.equal(structuredContent.persistedRetrievalProfile, 'fast');
+    assert.equal(structuredContent.forceRequired, true);
+});
+
 test('get_indexing_status reports persisted retrieval profile', async () => {
     const { codebasePath, handlers } = await createIndexedCodebase(undefined, undefined, {
         retrievalProfile: 'fast',
