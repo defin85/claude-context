@@ -495,6 +495,11 @@ For detailed explanation of file inclusion and exclusion rules, and how to custo
 #### 1. `index_codebase`
 
 Index a codebase directory for hybrid search (BM25 + dense vector).
+Pass `retrievalProfile` to choose indexing and storage cost per codebase:
+`fast` uses the cheapest dense-only shape, `balanced` keeps lexical help where
+available without stored ColBERT vectors, and `quality` enables the best
+available retrieval path such as full BGE-M3 dense+sparse+ColBERT. Incompatible
+profile changes require `force=true`.
 
 #### 2. `search_code`
 
@@ -503,6 +508,8 @@ Pass `rankingProfile` when you need deterministic ranking behavior:
 `auto` preserves backward-compatible path-based behavior, `generic` disables
 1C-specific ranking boosts, and `one-c` explicitly enables 1C ranking signals
 for exported 1C configurations.
+`rankingProfile` is search-time scoring only; it does not change
+`retrievalProfile` and does not require reindexing.
 
 #### 3. `clear_index`
 

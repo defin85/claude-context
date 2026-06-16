@@ -184,6 +184,42 @@ describe('Context retrieval modes', () => {
         expect(sessionConfig.retrievalSchemaVersion).toBe(1);
     });
 
+    it('persists configured BGE-M3 fast profile as dense-only retrieval metadata', () => {
+        const context = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase: new TestVectorDatabase(),
+        });
+
+        const sessionConfig = context.configureCodebaseSession('/tmp/example', {
+            retrievalProfile: 'fast',
+        });
+
+        expect(context.getCollectionName('/tmp/example')).toMatch(/^bge_m3_dense_code_chunks_[0-9a-f]{8}$/);
+        expect(sessionConfig.retrievalProfile).toBe('fast');
+        expect(sessionConfig.retrievalMode).toBe('bge_m3_dense');
+        expect(sessionConfig.retrievalSchemaVersion).toBe(1);
+    });
+
+    it('search uses persisted retrieval profile rather than the current default mode', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase,
+        });
+        context.configureCodebaseSession('/tmp/example', {
+            retrievalProfile: 'fast',
+            retrievalMode: 'bge_m3_dense',
+            retrievalSchemaVersion: 1,
+        });
+        const collectionName = context.getCollectionName('/tmp/example');
+        vectorDatabase.collections.add(collectionName);
+
+        await context.semanticSearch('/tmp/example', 'query', 2);
+
+        expect(collectionName).toMatch(/^bge_m3_dense_code_chunks_/);
+        expect(vectorDatabase.bgeM3SearchRequests).toHaveLength(0);
+    });
+
     it('requires force reindex when a BM25 hybrid index already exists for BGE-M3 full mode', async () => {
         process.env.HYBRID_MODE = 'true';
         const vectorDatabase = new TestVectorDatabase();

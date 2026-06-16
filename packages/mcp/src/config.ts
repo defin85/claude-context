@@ -1,7 +1,13 @@
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { envManager, getIndexingAcceleratorConfig } from "@zilliz/claude-context-core";
+import {
+    envManager,
+    getIndexingAcceleratorConfig,
+    parseRetrievalProfile,
+    resolveRetrievalProfile,
+} from "@zilliz/claude-context-core";
+import type { ResolvedRetrievalProfile, RetrievalProfile } from "@zilliz/claude-context-core";
 import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import { McpRuntimeMode } from './access-policy.js';
 import { normalizeCodebasePath } from './utils.js';
@@ -34,6 +40,8 @@ export interface ContextMcpConfig {
     bgeM3CandidateLimit: number;
     bgeM3RerankLimit?: number;
     bgeM3StoreColbert: boolean;
+    retrievalProfile?: RetrievalProfile;
+    resolvedRetrievalProfile: ResolvedRetrievalProfile;
     acceleratorMode: 'off' | 'auto';
     indexEmbeddingBatchSize: number;
     indexInsertBatchSize: number;
@@ -294,6 +302,8 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   BGE_M3_ENDPOINT: ${envManager.get('BGE_M3_ENDPOINT') || 'NOT SET'}`);
     console.log(`[DEBUG]   BGE_M3_MODEL: ${envManager.get('BGE_M3_MODEL') || 'NOT SET'}`);
     console.log(`[DEBUG]   BGE_M3_MODE: ${envManager.get('BGE_M3_MODE') || 'NOT SET'}`);
+    console.log(`[DEBUG]   RETRIEVAL_PROFILE: ${envManager.get('RETRIEVAL_PROFILE') || 'NOT SET'}`);
+    console.log(`[DEBUG]   HYBRID_MODE: ${envManager.get('HYBRID_MODE') || 'NOT SET'}`);
     console.log(`[DEBUG]   VECTOR_DATABASE_BACKEND: ${envManager.get('VECTOR_DATABASE_BACKEND') || 'NOT SET'}`);
     console.log(`[DEBUG]   LANCEDB_URI: ${envManager.get('LANCEDB_URI') || 'NOT SET'}`);
     console.log(`[DEBUG]   QDRANT_URL: ${envManager.get('QDRANT_URL') || 'NOT SET'}`);
@@ -303,7 +313,25 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   NODE_ENV: ${envManager.get('NODE_ENV') || 'NOT SET'}`);
 
     const embeddingProvider = (envManager.get('EMBEDDING_PROVIDER') as EmbeddingProviderName) || 'OpenAI';
+    const retrievalProfile = parseRetrievalProfile(envManager.get('RETRIEVAL_PROFILE'), 'RETRIEVAL_PROFILE');
+    const rawBgeM3Mode = envManager.get('BGE_M3_MODE');
+    const rawBgeM3StoreColbert = envManager.get('BGE_M3_STORE_COLBERT');
+    const rawHybridMode = envManager.get('HYBRID_MODE');
     const bgeM3Mode = getBgeM3ModeFromEnv();
+    const bgeM3StoreColbert = getBooleanFromEnv('BGE_M3_STORE_COLBERT', true);
+    const hybridMode = rawHybridMode === undefined || rawHybridMode === null
+        ? true
+        : rawHybridMode.toLowerCase() === 'true';
+    const resolvedRetrievalProfile = resolveRetrievalProfile({
+        embeddingProvider,
+        retrievalProfile,
+        bgeM3Mode,
+        bgeM3StoreColbert,
+        hybridMode,
+        explicitBgeM3Mode: Boolean(rawBgeM3Mode),
+        explicitBgeM3StoreColbert: Boolean(rawBgeM3StoreColbert),
+        explicitHybridMode: Boolean(rawHybridMode),
+    });
     const acceleratorMode = parseAcceleratorMode(envManager.get('INDEX_ACCELERATOR_MODE') || envManager.get('BGE_M3_ACCELERATOR'));
     const indexingAcceleratorConfig = getIndexingAcceleratorConfig();
 
@@ -327,10 +355,12 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3Endpoint: envManager.get('BGE_M3_ENDPOINT'),
         bgeM3WorkerEndpoints: parseEndpointList(envManager.get('BGE_M3_WORKER_ENDPOINTS')),
         bgeM3Model: envManager.get('BGE_M3_MODEL'),
-        bgeM3Mode,
+        bgeM3Mode: resolvedRetrievalProfile.bgeM3Mode,
         bgeM3CandidateLimit: getPositiveIntegerFromEnvWithDefault('BGE_M3_CANDIDATE_LIMIT', 100),
         bgeM3RerankLimit: getPositiveIntegerFromEnv('BGE_M3_RERANK_LIMIT'),
-        bgeM3StoreColbert: getBooleanFromEnv('BGE_M3_STORE_COLBERT', true),
+        bgeM3StoreColbert: resolvedRetrievalProfile.storeColbert,
+        retrievalProfile,
+        resolvedRetrievalProfile,
         acceleratorMode,
         indexEmbeddingBatchSize: indexingAcceleratorConfig.embeddingBatchSize,
         indexInsertBatchSize: indexingAcceleratorConfig.insertBatchSize,
@@ -377,7 +407,7 @@ export function createMcpConfig(): ContextMcpConfig {
         milvusToken: envManager.get('MILVUS_TOKEN')
     };
 
-    if (config.embeddingProvider === 'BGE_M3' && config.bgeM3Mode === 'full' && !config.bgeM3StoreColbert) {
+    if (!retrievalProfile && config.embeddingProvider === 'BGE_M3' && config.bgeM3Mode === 'full' && !config.bgeM3StoreColbert) {
         throw new Error('BGE_M3_STORE_COLBERT=false is incompatible with BGE_M3_MODE=full because full retrieval requires stored ColBERT vectors for reranking.');
     }
 
@@ -604,6 +634,8 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
     console.log(`[MCP]   Embedding Provider: ${config.embeddingProvider}`);
     console.log(`[MCP]   Embedding Model: ${config.embeddingModel}`);
     console.log(`[MCP]   Vector Database Backend: ${config.vectorDatabaseBackend}`);
+    console.log(`[MCP]   Retrieval Profile: ${config.retrievalProfile || 'unset (low-level compatibility)'}`);
+    console.log(`[MCP]   Resolved Retrieval: profile=${config.resolvedRetrievalProfile.retrievalProfile}, mode=${config.resolvedRetrievalProfile.retrievalMode}, schema=${config.resolvedRetrievalProfile.retrievalSchemaVersion}`);
     switch (config.vectorDatabaseBackend) {
         case 'qdrant':
             console.log(`[MCP]   Qdrant URL: ${config.qdrantUrl || 'http://127.0.0.1:6333'}`);
@@ -749,6 +781,7 @@ Environment Variables:
   EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama, BGE_M3 (default: OpenAI)
   EMBEDDING_MODEL         Embedding model name (works for all providers)
   EMBEDDING_DIMENSION     Optional embedding dimension override for Ollama
+  RETRIEVAL_PROFILE       Retrieval performance profile: fast, balanced, or quality (unset preserves low-level settings)
   
   Provider-specific API Keys:
   OPENAI_API_KEY          OpenAI API key (required for OpenAI provider)

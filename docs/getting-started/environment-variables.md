@@ -78,6 +78,33 @@ Use Python 3.10-3.12, install `python/requirements-bge-m3-sidecar.txt`, and run
 ColBERT vectors can be large; the default storage cap keeps local Milvus payloads
 small enough for typical code chunks.
 
+### Retrieval Performance Profiles
+
+`RETRIEVAL_PROFILE` is the recommended high-level setting for choosing indexing
+cost versus retrieval quality. When it is unset, Claude Context preserves the
+existing low-level behavior from `BGE_M3_MODE`, `BGE_M3_STORE_COLBERT`, and
+`HYBRID_MODE` for compatibility.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RETRIEVAL_PROFILE` | Retrieval performance profile: `fast`, `balanced`, or `quality` | Unset; low-level compatibility mode |
+
+| Profile | BGE-M3 provider | Non-BGE provider | Indexing/storage cost | Query behavior |
+|---------|-----------------|------------------|-----------------------|----------------|
+| `fast` | Dense-only BGE-M3; no sparse or ColBERT storage | Dense-only search | Lowest | Lowest latency, least lexical help |
+| `balanced` | Dense-only BGE-M3 in this first version; no sparse-without-ColBERT path | Dense + BM25 sparse hybrid | Moderate for non-BGE, low for BGE-M3 | Keeps lexical help where available without ColBERT storage |
+| `quality` | Full BGE-M3 dense+sparse+ColBERT with stored document ColBERT vectors | Best available existing behavior, normally hybrid | Highest | Best recall/reranking path available |
+
+Profile selection changes the collection shape and is persisted per codebase
+with `retrievalMode` and `retrievalSchemaVersion`. Changing an existing index to
+an incompatible profile is rejected unless `index_codebase` is called with
+`force=true`; existing collections are not migrated automatically.
+
+If `RETRIEVAL_PROFILE` is set, conflicting low-level settings fail clearly
+instead of being silently normalized. For example,
+`RETRIEVAL_PROFILE=quality` with `BGE_M3_STORE_COLBERT=false`, or
+`RETRIEVAL_PROFILE=fast` with `HYBRID_MODE=true`, is invalid.
+
 Full BGE-M3 indexes use more local Milvus disk than dense-only indexes because
 they store dense vectors, model-generated sparse weights, and ColBERT token
 vectors. On local Milvus, inspect usage with:
@@ -137,6 +164,11 @@ behavior. Use `generic` to disable 1C-specific boosts for non-1C repositories,
 `one-c` for explicit 1C retrieval validation, or omit the parameter to keep
 the backward-compatible `auto` behavior. This does not change
 `oneCIndexScopeProfile` and does not require reindexing.
+
+`retrievalProfile` is different from `rankingProfile`: `retrievalProfile`
+chooses the storage and search shape at indexing time and can require
+`force=true` reindexing, while `rankingProfile` only changes how already
+retrieved candidates are scored at search time.
 
 ### Accelerated Indexing Backpressure
 

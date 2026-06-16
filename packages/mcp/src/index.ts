@@ -133,6 +133,7 @@ class ContextMcpServer {
         this.context = new Context({
             embedding: embedding as ContextOptions['embedding'],
             vectorDatabase: vectorDatabase as ContextOptions['vectorDatabase'],
+            retrievalProfile: config.retrievalProfile,
             acceleratorResourceSnapshotProvider: () => {
                 const vramPlanning = this.managedBgeM3WorkerManager?.getSnapshot().vramPlanning;
                 if (!vramPlanning?.totalMiB) {
@@ -356,6 +357,11 @@ This tool is versatile and can be used before completing various tasks to retrie
                                 description: "Optional 1C exported-configuration scope profile. 'full' preserves existing behavior; 'developer' excludes generated or low-value 1C export files; 'minimal' indexes only developer-maintained BSL modules. Changing the profile for an existing index requires force=true.",
                                 enum: ['full', 'developer', 'minimal'],
                                 default: 'full'
+                            },
+                            retrievalProfile: {
+                                type: 'string',
+                                description: "Optional retrieval performance profile. 'fast' minimizes indexing/storage cost, 'balanced' uses the balanced retrieval shape, and 'quality' enables the highest-quality available retrieval. Changing incompatible profiles requires force=true.",
+                                enum: ['fast', 'balanced', 'quality']
                             }
                         },
                         required: ['path']
@@ -528,7 +534,18 @@ This tool is versatile and can be used before completing various tasks to retrie
         const operatorStatus = await readDaemonOperatorStatus();
         const accelerator = this.context.getLastAcceleratorSnapshot();
         const managedBgeM3Workers = this.managedBgeM3WorkerManager?.getSnapshot();
-        return createDaemonStatusResult(operatorStatus, accelerator, managedBgeM3Workers);
+        return createDaemonStatusResult(operatorStatus, accelerator, managedBgeM3Workers, {
+            retrievalProfile: this.config.retrievalProfile,
+            resolvedRetrievalProfile: this.config.resolvedRetrievalProfile.retrievalProfile,
+            explicitProfile: this.config.resolvedRetrievalProfile.explicitProfile,
+            retrievalMode: this.config.resolvedRetrievalProfile.retrievalMode,
+            retrievalSchemaVersion: this.config.resolvedRetrievalProfile.retrievalSchemaVersion,
+            bgeM3Mode: this.config.resolvedRetrievalProfile.bgeM3Mode,
+            storeColbert: this.config.resolvedRetrievalProfile.storeColbert,
+            usesHybridSearch: this.config.resolvedRetrievalProfile.usesHybridSearch,
+            usesBgeM3Sparse: this.config.resolvedRetrievalProfile.usesBgeM3Sparse,
+            usesColbert: this.config.resolvedRetrievalProfile.usesColbert,
+        });
     }
 
     private async handleCancelCodebaseWorkloadTool(args: ToolArgs) {

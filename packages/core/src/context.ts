@@ -54,9 +54,15 @@ import {
     shouldAccelerateIndexing,
 } from "./indexing-accelerator";
 import { EmbeddingBatchScheduler } from "./embedding-batch-scheduler";
+import {
+    inferRetrievalProfile,
+    resolveRetrievalProfile,
+    RETRIEVAL_SCHEMA_VERSION,
+    RetrievalProfile,
+    ResolvedRetrievalProfile,
+} from "./retrieval-profile";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
-const RETRIEVAL_SCHEMA_VERSION = 1;
 
 type PreparedChunkBatchInsert = {
     collectionName: string;
@@ -169,11 +175,13 @@ export interface ContextConfig {
     collectionNameOverride?: string;
     acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
     codeSymbolProviders?: CodeSymbolProvider[];
+    retrievalProfile?: RetrievalProfile;
 }
 
 export interface CodebaseSessionConfig {
     customExtensions?: string[];
     customIgnorePatterns?: string[];
+    retrievalProfile?: RetrievalProfile;
     retrievalMode?: RetrievalMode;
     retrievalSchemaVersion?: number;
     oneCIndexScopeProfile?: OneCIndexScopeProfile;
@@ -198,6 +206,9 @@ interface CodebaseSessionState {
     codebasePath: string;
     customExtensions: string[];
     customIgnorePatterns: string[];
+    retrievalProfile?: RetrievalProfile;
+    retrievalMode?: RetrievalMode;
+    retrievalSchemaVersion?: number;
     oneCIndexScopeProfile?: OneCIndexScopeProfile;
     fileIgnorePatterns: string[];
     effectiveExtensions: string[];
@@ -246,6 +257,7 @@ export class Context {
     private defaultSupportedExtensions: string[];
     private defaultIgnorePatterns: string[];
     private collectionNameOverride?: string;
+    private defaultRetrievalProfile?: RetrievalProfile;
     private warnedOverrideSanitization = new Set<string>();
     private codebaseSessions = new Map<string, CodebaseSessionState>();
     private synchronizers = new Map<string, FileSynchronizer>();
@@ -302,6 +314,7 @@ export class Context {
         // Remove duplicates
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
         this.collectionNameOverride = config.collectionNameOverride;
+        this.defaultRetrievalProfile = config.retrievalProfile;
         this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
         this.codeSymbolProviders = config.codeSymbolProviders || this.createCodeSymbolProvidersFromEnv();
 
@@ -377,12 +390,13 @@ export class Context {
     private getEffectiveEmbeddingConcurrency(
         acceleratorConfig: IndexingAcceleratorConfig,
         accelerationActive: boolean,
+        codebasePath?: string,
     ): number {
         if (!accelerationActive) {
             return 1;
         }
 
-        if (this.getRetrievalMode() !== "bge_m3_full") {
+        if (this.getResolvedRetrievalProfile(codebasePath).retrievalMode !== "bge_m3_full") {
             return acceleratorConfig.embeddingConcurrency;
         }
 
@@ -398,6 +412,7 @@ export class Context {
     }
 
     private resetAcceleratorSnapshotForPreIndex(
+        codebasePath: string,
         preIndexTraversal: PreIndexTraversalResult,
         options: { allowAcceleration: boolean; isBackgroundSync: boolean },
     ): void {
@@ -409,6 +424,7 @@ export class Context {
         const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
             accelerationDecision.active,
+            codebasePath,
         );
         const effectiveAcceleratorConfig = {
             ...acceleratorConfig,
@@ -431,6 +447,7 @@ export class Context {
     }
 
     private resetAcceleratorSnapshotForPreIndexStart(
+        codebasePath: string,
         options: { allowAcceleration: boolean; isBackgroundSync: boolean },
     ): void {
         const acceleratorConfig = getIndexingAcceleratorConfig();
@@ -441,6 +458,7 @@ export class Context {
         const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
             accelerationDecision.active,
+            codebasePath,
         );
         const effectiveAcceleratorConfig = {
             ...acceleratorConfig,
@@ -520,6 +538,7 @@ export class Context {
             codebasePath: normalizedPath,
             customExtensions: [],
             customIgnorePatterns: [],
+            retrievalProfile: this.defaultRetrievalProfile,
             fileIgnorePatterns: [],
             effectiveExtensions: [...this.defaultSupportedExtensions],
             effectiveIgnorePatterns: [...this.defaultIgnorePatterns],
@@ -558,6 +577,9 @@ export class Context {
         session.customIgnorePatterns = this.normalizeIgnorePatternsList(
             config.customIgnorePatterns || [],
         );
+        session.retrievalProfile = config.retrievalProfile ?? this.defaultRetrievalProfile;
+        session.retrievalMode = config.retrievalMode;
+        session.retrievalSchemaVersion = config.retrievalSchemaVersion;
         session.oneCIndexScopeProfile = config.oneCIndexScopeProfile;
         this.updateSessionEffectiveState(session);
 
@@ -577,11 +599,13 @@ export class Context {
             return undefined;
         }
 
+        const resolvedRetrieval = this.getResolvedRetrievalProfile(session.codebasePath);
         return {
             customExtensions: [...session.customExtensions],
             customIgnorePatterns: [...session.customIgnorePatterns],
-            retrievalMode: this.getRetrievalMode(),
-            retrievalSchemaVersion: RETRIEVAL_SCHEMA_VERSION,
+            retrievalProfile: session.retrievalProfile ?? resolvedRetrieval.retrievalProfile,
+            retrievalMode: resolvedRetrieval.retrievalMode,
+            retrievalSchemaVersion: resolvedRetrieval.retrievalSchemaVersion,
             ...(session.oneCIndexScopeProfile ? { oneCIndexScopeProfile: session.oneCIndexScopeProfile } : {}),
         };
     }
@@ -708,7 +732,7 @@ export class Context {
         return isHybridEnv.toLowerCase() === "true";
     }
 
-    private getRetrievalMode(): RetrievalMode {
+    private getRawRetrievalMode(): RetrievalMode {
         if (this.embedding.getProvider() === "BGE_M3") {
             const bgeMode = (this.embedding as Embedding & { getMode?: () => string }).getMode?.();
             return bgeMode === "dense" ? "bge_m3_dense" : "bge_m3_full";
@@ -717,7 +741,36 @@ export class Context {
         return this.getIsHybrid() ? "hybrid_bm25" : "dense";
     }
 
-    private getCollectionPrefixForMode(mode: RetrievalMode = this.getRetrievalMode()): string {
+    private getResolvedRetrievalProfile(codebasePath?: string): ResolvedRetrievalProfile {
+        const session = codebasePath ? this.getCodebaseSession(codebasePath) : undefined;
+        const bgeMode = (this.embedding as Embedding & { getMode?: () => string }).getMode?.() === "dense"
+            ? "dense"
+            : "full";
+        const resolved = resolveRetrievalProfile({
+            embeddingProvider: this.embedding.getProvider(),
+            retrievalProfile: session?.retrievalProfile ?? this.defaultRetrievalProfile,
+            bgeM3Mode: bgeMode,
+            bgeM3StoreColbert: bgeMode === "full",
+            hybridMode: this.getIsHybrid(),
+        });
+
+        if (
+            session?.retrievalMode &&
+            session.retrievalSchemaVersion === RETRIEVAL_SCHEMA_VERSION &&
+            (session.retrievalProfile === undefined || inferRetrievalProfile(session.retrievalMode) === resolved.retrievalProfile)
+        ) {
+            return {
+                ...resolved,
+                retrievalProfile: session.retrievalProfile ?? inferRetrievalProfile(session.retrievalMode),
+                retrievalMode: session.retrievalMode,
+                retrievalSchemaVersion: session.retrievalSchemaVersion,
+            };
+        }
+
+        return resolved;
+    }
+
+    private getCollectionPrefixForMode(mode: RetrievalMode = this.getRawRetrievalMode()): string {
         switch (mode) {
             case "bge_m3_full":
                 return "bge_m3_code_chunks";
@@ -936,6 +989,7 @@ export class Context {
     private getRetrievalCollectionDescription(codebasePath: string, retrievalMode: RetrievalMode): string {
         return [
             `codebasePath:${codebasePath}`,
+            `retrievalProfile:${inferRetrievalProfile(retrievalMode)}`,
             `retrievalMode:${retrievalMode}`,
             `retrievalSchemaVersion:${RETRIEVAL_SCHEMA_VERSION}`,
         ].join("\n");
@@ -963,13 +1017,22 @@ export class Context {
         return metadata;
     }
 
-    private async validateExistingBgeM3Collection(collectionName: string, codebasePath: string): Promise<void> {
+    private async validateExistingCollection(collectionName: string, codebasePath: string, requestedMode: RetrievalMode): Promise<void> {
         const description = await this.vectorDatabase.getCollectionDescription(collectionName);
         const metadata = this.parseRetrievalCollectionDescription(description || "");
 
-        if (metadata.retrievalMode !== "bge_m3_full" || metadata.schemaVersion !== RETRIEVAL_SCHEMA_VERSION) {
+        if (!metadata.retrievalMode && requestedMode !== "bge_m3_full") {
+            return;
+        }
+
+        if (metadata.retrievalMode !== requestedMode || metadata.schemaVersion !== RETRIEVAL_SCHEMA_VERSION) {
+            if (requestedMode === "bge_m3_full") {
+                throw new Error(
+                    `Existing collection '${collectionName}' for '${codebasePath}' has incompatible BGE-M3 collection metadata. Re-run indexing with force=true.`,
+                );
+            }
             throw new Error(
-                `Existing collection '${collectionName}' for '${codebasePath}' has incompatible BGE-M3 collection metadata. Re-run indexing with force=true.`,
+                `Existing collection '${collectionName}' for '${codebasePath}' has incompatible retrieval metadata. Re-run indexing with force=true.`,
             );
         }
     }
@@ -996,9 +1059,11 @@ export class Context {
      * Generate collection name based on codebase path and hybrid mode
      */
     public getCollectionName(codebasePath: string): string {
+        const normalizedPath = normalizeCodebasePath(codebasePath);
+        const retrievalMode = this.getResolvedRetrievalProfile(normalizedPath).retrievalMode;
         return this.getCollectionNameForPrefix(
-            codebasePath,
-            this.getCollectionPrefixForMode(),
+            normalizedPath,
+            this.getCollectionPrefixForMode(retrievalMode),
         );
     }
 
@@ -1071,7 +1136,8 @@ export class Context {
     }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
-        const isHybrid = this.getIsHybrid();
+        const startRetrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const isHybrid = startRetrievalMode === "hybrid_bm25" || startRetrievalMode === "bge_m3_full";
         const searchType =
             isHybrid === true ? "hybrid search" : "semantic search";
         console.log(
@@ -1096,7 +1162,7 @@ export class Context {
         await this.prepareCollection(codebasePath, forceReindex);
         throwIfOperationAborted(abortSignal);
 
-        this.resetAcceleratorSnapshotForPreIndexStart({
+        this.resetAcceleratorSnapshotForPreIndexStart(codebasePath, {
             allowAcceleration: true,
             isBackgroundSync: false,
         });
@@ -1157,7 +1223,7 @@ export class Context {
                 console.warn(`[Context] ⚠️ ${scope.warning}`);
             }
         }
-        this.resetAcceleratorSnapshotForPreIndex(preIndexTraversal, {
+        this.resetAcceleratorSnapshotForPreIndex(codebasePath, preIndexTraversal, {
             allowAcceleration: true,
             isBackgroundSync: false,
         });
@@ -1445,9 +1511,12 @@ export class Context {
         const rankingProfile = resolveRankingProfile({
             searchTimeProfile: options.rankingProfile,
         });
-        const isHybrid = this.getIsHybrid();
+        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
         const searchType =
-            isHybrid === true ? "hybrid search" : "semantic search";
+            retrievalMode === "bge_m3_full"
+                ? "BGE-M3 full multivector search"
+                : isHybrid === true ? "hybrid search" : "semantic search";
         console.log(
             `[Context] 🔍 Executing ${searchType}: "${query}" in ${codebasePath}`,
         );
@@ -1480,7 +1549,7 @@ export class Context {
                 diagnostics: { providerStatuses: [], providerUnmappedCandidates: [] },
             });
 
-        if (this.getRetrievalMode() === "bge_m3_full") {
+        if (retrievalMode === "bge_m3_full") {
             const multiVectorEmbedding = this.getMultiVectorBatchEmbeddingProvider();
             if (!multiVectorEmbedding) {
                 throw new Error("BGE-M3 full retrieval requires an embedding provider with embedMulti support.");
@@ -1912,7 +1981,7 @@ export class Context {
         codebasePath: string,
         forceReindex: boolean = false,
     ): Promise<void> {
-        const retrievalMode = this.getRetrievalMode();
+        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
         const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
         const collectionType =
             retrievalMode === "bge_m3_full"
@@ -1932,25 +2001,25 @@ export class Context {
             await this.vectorDatabase.hasCollection(collectionName);
 
         if (collectionExists && !forceReindex) {
-            if (retrievalMode === "bge_m3_full") {
-                await this.validateExistingBgeM3Collection(collectionName, codebasePath);
-            }
+            await this.validateExistingCollection(collectionName, codebasePath, retrievalMode);
             console.log(
                 `📋 Collection ${collectionName} already exists, skipping creation`,
             );
             return;
         }
 
-        if (retrievalMode === "bge_m3_full" && !forceReindex) {
+        if (!forceReindex) {
             const incompatibleCollections = [
                 this.getCollectionNameForPrefix(codebasePath, "code_chunks"),
                 this.getCollectionNameForPrefix(codebasePath, "hybrid_code_chunks"),
-            ];
+                this.getCollectionNameForPrefix(codebasePath, "bge_m3_dense_code_chunks"),
+                this.getCollectionNameForPrefix(codebasePath, "bge_m3_code_chunks"),
+            ].filter((candidate) => candidate !== collectionName);
 
             for (const incompatibleCollection of incompatibleCollections) {
                 if (await this.vectorDatabase.hasCollection(incompatibleCollection)) {
                     throw new Error(
-                        `BGE-M3 full retrieval for '${codebasePath}' requires explicit reindexing because existing incompatible collection '${incompatibleCollection}' was found. Re-run indexing with force=true.`,
+                        `Retrieval profile change for '${codebasePath}' requires explicit reindexing because existing incompatible collection '${incompatibleCollection}' was found. Re-run indexing with force=true.`,
                     );
                 }
             }
@@ -1979,19 +2048,19 @@ export class Context {
             await this.vectorDatabase.createBgeM3Collection(
                 collectionName,
                 dimension,
-                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
+            this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
             );
         } else if (isHybrid === true) {
             await this.vectorDatabase.createHybridCollection(
                 collectionName,
                 dimension,
-                `codebasePath:${codebasePath}`,
+                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
             );
         } else {
             await this.vectorDatabase.createCollection(
                 collectionName,
                 dimension,
-                `codebasePath:${codebasePath}`,
+                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
             );
         }
 
@@ -2044,7 +2113,8 @@ export class Context {
         codeChunkLimit: number;
     }> {
         const abortSignal = options.abortSignal;
-        const isHybrid = this.getIsHybrid();
+        const processRetrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const isHybrid = processRetrievalMode === "hybrid_bm25" || processRetrievalMode === "bge_m3_full";
         const CODE_CHUNK_LIMIT = getCodeChunkLimit();
         const acceleratorConfig = getIndexingAcceleratorConfig();
         const embeddingBatchSize = acceleratorConfig.embeddingBatchSize;
@@ -2056,6 +2126,7 @@ export class Context {
         const effectiveEmbeddingConcurrency = this.getEffectiveEmbeddingConcurrency(
             acceleratorConfig,
             accelerationDecision.active,
+            codebasePath,
         );
         const effectiveAcceleratorConfig = {
             ...acceleratorConfig,
@@ -2063,7 +2134,7 @@ export class Context {
         };
         const effectivePayloadLimits = getEffectiveEmbeddingPayloadLimits(
             acceleratorConfig,
-            this.getRetrievalMode(),
+            this.getResolvedRetrievalProfile(codebasePath).retrievalMode,
         );
         const acceleratorRuntime = new IndexingAcceleratorRuntime(
             effectiveAcceleratorConfig,
@@ -2529,7 +2600,8 @@ export class Context {
         // Estimate tokens (rough estimation: 1 token ≈ 4 characters)
         const estimatedTokens = this.estimateChunkTokens(chunks);
 
-        const isHybrid = this.getIsHybrid();
+        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
         const searchType = isHybrid === true ? "hybrid" : "regular";
         console.log(
             `[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`,
@@ -2564,7 +2636,8 @@ export class Context {
         const chunks = chunkBuffer.map((item) => item.chunk);
         const codebasePath = chunkBuffer[0].codebasePath;
         const estimatedTokens = this.estimateChunkTokens(chunks);
-        const isHybrid = this.getIsHybrid();
+        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
         const searchType = isHybrid === true ? "hybrid" : "regular";
         console.log(
             `[Context] 🔄 Processing batch of ${chunks.length} chunks (~${estimatedTokens} tokens) for ${searchType}`,
@@ -2648,7 +2721,7 @@ export class Context {
             `Single embedding chunk exceeded payload-safe retry capacity: ` +
             `file=${filePath}, chunkIndex=${chunkIndex}, ` +
             `contentChars=${chunk.content.length}, estimatedTokens=${this.estimateChunkTokens([chunk])}, ` +
-            `retrievalMode=${this.getRetrievalMode()}, provider=${this.embedding.getProvider()}: ${message}`,
+            `retrievalMode=${this.getResolvedRetrievalProfile(codebasePath).retrievalMode}, provider=${this.embedding.getProvider()}: ${message}`,
         );
         if (cause instanceof Error && cause.stack) {
             error.stack = `${error.stack}\nCaused by: ${cause.stack}`;
@@ -2662,7 +2735,7 @@ export class Context {
         acceleratorRuntime?: IndexingAcceleratorRuntime,
         batchId?: number,
     ): Promise<PreparedChunkBatchInsert> {
-        const retrievalMode = this.getRetrievalMode();
+        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
         const isHybrid = retrievalMode === "hybrid_bm25";
 
         // Generate embedding vectors

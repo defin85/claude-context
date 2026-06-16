@@ -8,10 +8,11 @@ import {
     COLLECTION_LIMIT_MESSAGE,
     isReducedOneCIndexScopeProfile,
     parseRankingProfile,
+    parseRetrievalProfile,
     parseOneCIndexScopeProfile,
     resolveOneCIndexScopeProfile,
 } from "@zilliz/claude-context-core";
-import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile } from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile, RetrievalProfile } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
@@ -358,11 +359,13 @@ export class ToolHandlers {
     private createPersistedSessionConfig(
         customExtensions: string[],
         customIgnorePatterns: string[],
+        retrievalProfile?: RetrievalProfile,
         oneCIndexScopeProfile?: OneCIndexScopeProfile
     ): CodebaseSessionConfig {
         return {
             customExtensions,
             customIgnorePatterns,
+            ...(retrievalProfile ? { retrievalProfile } : {}),
             ...(oneCIndexScopeProfile ? { oneCIndexScopeProfile } : {})
         };
     }
@@ -606,6 +609,16 @@ export class ToolHandlers {
         const codebasePath = typeof args.path === 'string' ? args.path : '';
         const forceReindex = args.force === true;
         const splitterType = typeof args.splitter === 'string' ? args.splitter : 'ast'; // Default to AST
+        let retrievalProfile: RetrievalProfile | undefined;
+        try {
+            retrievalProfile = parseRetrievalProfile(args.retrievalProfile);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: 'text', text: `Error: ${errorMessage}` }],
+                isError: true
+            };
+        }
         const oneCIndexScopeProfile = this.normalizeOneCIndexScopeProfile(args.oneCIndexScopeProfile ?? args['1cIndexScopeProfile']);
         const customFileExtensions = Array.isArray(args.customExtensions)
             ? args.customExtensions.filter((extension): extension is string => typeof extension === 'string')
@@ -616,6 +629,7 @@ export class ToolHandlers {
         const persistedSessionConfig = this.createPersistedSessionConfig(
             customFileExtensions,
             customIgnorePatterns,
+            retrievalProfile,
             oneCIndexScopeProfile,
         );
         let ownershipClaimed = false;
@@ -676,6 +690,7 @@ export class ToolHandlers {
             const existingSessionConfig = hasPersistedSyncConfig
                 ? await this.codebaseConfigManager.getConfig(absolutePath)
                 : null;
+            const requestedSessionConfig = this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
 
             // Reconcile local snapshot with cloud truth for this specific codebase
             if (snapshotHasIndex !== cloudHasIndex) {
@@ -709,6 +724,38 @@ export class ToolHandlers {
             const existingInfo = this.snapshotManager.getCodebaseInfo(absolutePath);
             const hasExistingIndex = cloudHasIndex || snapshotHasIndex;
             const persistedOneCIndexScopeProfile = this.getPersistedOneCIndexScopeProfile(existingInfo, existingSessionConfig);
+            if (
+                hasExistingIndex &&
+                !forceReindex &&
+                existingSessionConfig?.retrievalMode &&
+                requestedSessionConfig.retrievalMode &&
+                (
+                    existingSessionConfig.retrievalMode !== requestedSessionConfig.retrievalMode ||
+                    existingSessionConfig.retrievalSchemaVersion !== requestedSessionConfig.retrievalSchemaVersion
+                )
+            ) {
+                if (existingSessionConfig) {
+                    this.context.configureCodebaseSession(absolutePath, existingSessionConfig);
+                }
+                return {
+                    content: [{
+                        type: "text",
+                        text:
+                            `Error: retrievalProfile change requires force=true for '${absolutePath}'. ` +
+                            `Persisted profile is '${existingSessionConfig.retrievalProfile || 'inferred'}' (${existingSessionConfig.retrievalMode}), ` +
+                            `requested profile is '${requestedSessionConfig.retrievalProfile || 'inferred'}' (${requestedSessionConfig.retrievalMode}).`
+                    }],
+                    structuredContent: {
+                        path: absolutePath,
+                        retrievalProfile: requestedSessionConfig.retrievalProfile,
+                        persistedRetrievalProfile: existingSessionConfig.retrievalProfile,
+                        retrievalMode: requestedSessionConfig.retrievalMode,
+                        persistedRetrievalMode: existingSessionConfig.retrievalMode,
+                        forceRequired: true,
+                    },
+                    isError: true
+                };
+            }
             if (
                 hasExistingIndex &&
                 !forceReindex &&
@@ -822,9 +869,7 @@ export class ToolHandlers {
                 await this.context.clearIndex(absolutePath);
             }
 
-            const configuredSessionConfig = this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
-            await this.codebaseConfigManager.saveConfig(absolutePath, configuredSessionConfig);
-            await this.runtimeStatusManager?.refresh('codebase-sync-config-saved');
+            const configuredSessionConfig = requestedSessionConfig;
 
             // Check current status and log if retrying after failure
             if (ownershipClaim.previousInfo?.status === 'indexfailed') {
@@ -840,7 +885,7 @@ export class ToolHandlers {
                 try {
                     const managedEndpoints = await this.managedBgeM3WorkerManager?.ensureStarted(`interactive indexing for ${absolutePath}`) || [];
                     this.registerManagedBgeM3WorkerEndpoints(managedEndpoints);
-                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, signal);
+                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, configuredSessionConfig, signal);
                 } finally {
                     ownershipHeartbeat.stop();
                     this.scheduleManagedWorkerStopWhenIdle(`indexing workload idle after ${absolutePath}`);
@@ -874,6 +919,9 @@ export class ToolHandlers {
                 (isReducedOneCIndexScopeProfile(oneCIndexScopeProfile)
                     ? `\nWarning: 1C scope '${oneCIndexScopeProfile}' intentionally indexes reduced coverage.`
                     : '');
+            const retrievalInfo = configuredSessionConfig.retrievalProfile
+                ? `\nUsing retrieval performance profile: ${configuredSessionConfig.retrievalProfile} (${configuredSessionConfig.retrievalMode}, schema v${configuredSessionConfig.retrievalSchemaVersion})`
+                : `\nUsing retrieval mode: ${configuredSessionConfig.retrievalMode} (schema v${configuredSessionConfig.retrievalSchemaVersion})`;
 
             const queueInfo = queuedIndexingJob.startedImmediately
                 ? `\nIndexing started immediately.`
@@ -882,7 +930,7 @@ export class ToolHandlers {
             return {
                 content: [{
                     type: "text",
-                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${scopeInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
+                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${scopeInfo}${retrievalInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
                 }],
                 structuredContent: {
                     path: absolutePath,
@@ -891,6 +939,9 @@ export class ToolHandlers {
                     splitter: splitterType,
                     customExtensions: customFileExtensions,
                     ignorePatterns: customIgnorePatterns,
+                    retrievalProfile: configuredSessionConfig.retrievalProfile,
+                    retrievalMode: configuredSessionConfig.retrievalMode,
+                    retrievalSchemaVersion: configuredSessionConfig.retrievalSchemaVersion,
                     oneCIndexScopeProfile,
                     startedImmediately: queuedIndexingJob.startedImmediately,
                     queuePosition: queuedIndexingJob.queuePosition
@@ -928,6 +979,7 @@ export class ToolHandlers {
         codebasePath: string,
         forceReindex: boolean,
         splitterType: string,
+        sessionConfig: CodebaseSessionConfig | undefined,
         abortSignal?: AbortSignal
     ) {
         const absolutePath = codebasePath;
@@ -959,7 +1011,7 @@ export class ToolHandlers {
                 console.log(`[BACKGROUND-INDEX] ℹ️  Force reindex mode - collection was already cleared during validation`);
             }
 
-            const persistedConfig = await this.codebaseConfigManager.getConfig(absolutePath);
+            const persistedConfig = sessionConfig || await this.codebaseConfigManager.getConfig(absolutePath);
             if (!persistedConfig) {
                 throw new Error(`Persisted codebase sync config is missing for '${absolutePath}'. Re-run index_codebase with force=true.`);
             }
@@ -1028,6 +1080,8 @@ export class ToolHandlers {
             }, forceReindex, abortSignal);
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
             this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
+            await this.codebaseConfigManager.saveConfig(absolutePath, this.context.getCodebaseSessionConfig(absolutePath) || persistedConfig);
+            await this.runtimeStatusManager?.refresh('codebase-sync-config-saved');
 
             const completed = await this.snapshotManager.completeIndexingOwnership(absolutePath, stats);
             if (!completed) {
@@ -1115,10 +1169,13 @@ export class ToolHandlers {
                 trackCodebasePath(absolutePath);
 
                 // Check status with cloud as source of truth and snapshot as progress source
+                const persistedSearchConfig = await this.codebaseConfigManager.getConfig(absolutePath);
+                if (persistedSearchConfig) {
+                    this.context.configureCodebaseSession(absolutePath, persistedSearchConfig);
+                }
                 const isIndexedInSnapshot = this.snapshotManager.getIndexedCodebases().includes(absolutePath);
                 const isIndexing = this.snapshotManager.getIndexingCodebases().includes(absolutePath);
                 const hasCloudIndex = await this.context.hasIndex(absolutePath);
-                const persistedSearchConfig = await this.codebaseConfigManager.getConfig(absolutePath);
                 const oneCScopeStatus = this.getOneCScopeStatus(
                     this.snapshotManager.getCodebaseInfo(absolutePath),
                     persistedSearchConfig,
@@ -1232,6 +1289,9 @@ export class ToolHandlers {
                             query,
                             limit: Math.min(resultLimit, 50),
                             rankingProfile,
+                            retrievalProfile: persistedSearchConfig?.retrievalProfile,
+                            retrievalMode: persistedSearchConfig?.retrievalMode,
+                            retrievalSchemaVersion: persistedSearchConfig?.retrievalSchemaVersion,
                             indexingStatus: isIndexing ? 'indexing' : 'indexed',
                             ...oneCScopeStatus,
                             results: []
@@ -1267,6 +1327,9 @@ export class ToolHandlers {
                         query,
                         limit: Math.min(resultLimit, 50),
                         rankingProfile,
+                        retrievalProfile: persistedSearchConfig?.retrievalProfile,
+                        retrievalMode: persistedSearchConfig?.retrievalMode,
+                        retrievalSchemaVersion: persistedSearchConfig?.retrievalSchemaVersion,
                         indexingStatus: isIndexing ? 'indexing' : 'indexed',
                         ...oneCScopeStatus,
                         results: searchResults.map((result): SearchResultSummary => ({
@@ -1517,11 +1580,14 @@ export class ToolHandlers {
             let status = this.snapshotManager.getCodebaseStatus(absolutePath);
             let info = this.snapshotManager.getCodebaseInfo(absolutePath);
             let recoveredFromCloud = false;
-            const hasCloudIndex = await this.context.hasIndex(absolutePath);
             const hasPersistedSyncConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
             const persistedSyncConfig = hasPersistedSyncConfig
                 ? await this.codebaseConfigManager.getConfig(absolutePath)
                 : null;
+            if (persistedSyncConfig) {
+                this.context.configureCodebaseSession(absolutePath, persistedSyncConfig);
+            }
+            const hasCloudIndex = await this.context.hasIndex(absolutePath);
 
             // Self-heal snapshot if cloud has index but local status is missing
             if (status === 'not_found' && hasCloudIndex) {
@@ -1577,6 +1643,7 @@ export class ToolHandlers {
                 structuredStatus.accelerator = accelerator;
             }
             if (persistedSyncConfig?.retrievalMode) {
+                structuredStatus.retrievalProfile = persistedSyncConfig.retrievalProfile;
                 structuredStatus.retrievalMode = persistedSyncConfig.retrievalMode;
                 structuredStatus.retrievalSchemaVersion = persistedSyncConfig.retrievalSchemaVersion;
             }
@@ -1601,6 +1668,7 @@ export class ToolHandlers {
                             statusMessage += `\n⚠️ Results may be incomplete because indexing stopped at the configured chunk limit. Raise CODE_CHUNK_LIMIT and run force reindex to include previously skipped chunks.`;
                         }
                         if (persistedSyncConfig?.retrievalMode) {
+                            statusMessage += `\n🔎 Retrieval profile: ${persistedSyncConfig.retrievalProfile || 'inferred'}`;
                             statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
                             if (persistedSyncConfig.retrievalSchemaVersion) {
                                 statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
@@ -1617,6 +1685,7 @@ export class ToolHandlers {
                             statusMessage += `\n📊 Statistics: unavailable in local snapshot`;
                             statusMessage += `\n📅 Status: ${info.indexStatus}`;
                             if (persistedSyncConfig?.retrievalMode) {
+                                statusMessage += `\n🔎 Retrieval profile: ${persistedSyncConfig.retrievalProfile || 'inferred'}`;
                                 statusMessage += `\n🔎 Retrieval mode: ${persistedSyncConfig.retrievalMode}`;
                                 if (persistedSyncConfig.retrievalSchemaVersion) {
                                     statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;

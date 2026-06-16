@@ -5,6 +5,7 @@ export * from './types';
 export * from './config-defaults';
 export * from './context';
 export * from './code-symbol-retrieval';
+export * from './retrieval-profile';
 export * from './indexing-accelerator';
 export * from './sync/synchronizer';
 export * from './sync/preindex-traversal';

@@ -153,6 +153,7 @@ export function createDaemonStatusResult(
     operatorStatus: DaemonOperatorStatus,
     accelerator: IndexingAcceleratorSnapshot | undefined,
     managedBgeM3Workers: ManagedBgeM3WorkerSnapshot | undefined,
+    retrievalConfiguration?: Record<string, unknown>,
 ): DaemonStatusResult {
     const textLines = [
         `Daemon runtimes: ${operatorStatus.runtimes.length}`,
@@ -218,6 +219,14 @@ export function createDaemonStatusResult(
             );
         }
     }
+    if (retrievalConfiguration) {
+        textLines.push(
+            `Retrieval default: profile=${retrievalConfiguration.retrievalProfile ?? 'unset'} ` +
+            `resolvedProfile=${retrievalConfiguration.resolvedRetrievalProfile ?? 'unknown'} ` +
+            `mode=${retrievalConfiguration.retrievalMode ?? 'unknown'} ` +
+            `schema=${retrievalConfiguration.retrievalSchemaVersion ?? 'unknown'}`,
+        );
+    }
 
     return {
         content: [{
@@ -228,6 +237,7 @@ export function createDaemonStatusResult(
             ...operatorStatus,
             accelerator,
             managedBgeM3Workers,
+            retrievalConfiguration,
             workerPlanningPolicy: createWorkerPlanningPolicy(),
         },
     };

@@ -64,6 +64,7 @@ export class CodebaseConfigManager {
                 return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
             }).filter((ext: string) => ext.length > 1))],
             customIgnorePatterns: [...new Set((config.customIgnorePatterns || []).map((pattern: string) => pattern.trim()).filter(Boolean))],
+            ...(config.retrievalProfile && { retrievalProfile: config.retrievalProfile }),
             ...(config.retrievalMode && { retrievalMode: config.retrievalMode }),
             ...(typeof config.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: config.retrievalSchemaVersion }),
             ...(config.oneCIndexScopeProfile && { oneCIndexScopeProfile: config.oneCIndexScopeProfile })
@@ -115,6 +116,7 @@ export class CodebaseConfigManager {
             lastUpdated: new Date().toISOString(),
             customExtensions: normalizedConfig.customExtensions || [],
             customIgnorePatterns: normalizedConfig.customIgnorePatterns || [],
+            ...(normalizedConfig.retrievalProfile && { retrievalProfile: normalizedConfig.retrievalProfile }),
             ...(normalizedConfig.retrievalMode && { retrievalMode: normalizedConfig.retrievalMode }),
             ...(typeof normalizedConfig.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: normalizedConfig.retrievalSchemaVersion }),
             ...(normalizedConfig.oneCIndexScopeProfile && { oneCIndexScopeProfile: normalizedConfig.oneCIndexScopeProfile })

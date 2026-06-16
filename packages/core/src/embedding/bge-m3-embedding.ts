@@ -325,38 +325,46 @@ export class BgeM3Embedding extends Embedding {
     }
 
     async embed(text: string): Promise<EmbeddingVector> {
-        const result = await this.embedMulti(text);
+        const result = await this.embedMultiWithMode(text, 'dense');
         return result.dense;
     }
 
     async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
-        const results = await this.embedMultiBatch(texts);
+        const results = await this.embedMultiBatchWithMode(texts, 'dense');
         return results.map((result) => result.dense);
     }
 
     async embedMulti(text: string): Promise<MultiVectorEmbedding> {
+        return this.embedMultiWithMode(text, this.mode);
+    }
+
+    private async embedMultiWithMode(text: string, mode: BgeM3Mode): Promise<MultiVectorEmbedding> {
         const processedText = this.preprocessText(text);
         const worker = this.getPrimaryWorker();
         worker.inFlight++;
         const response = await this.post(worker, '/embed', {
             input: processedText,
             model: this.model,
-            mode: this.mode,
+            mode,
         });
-        return this.toMultiVector(this.parseResponse(response));
+        return this.toMultiVector(this.parseResponse(response), mode);
     }
 
     async embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]> {
+        return this.embedMultiBatchWithMode(texts, this.mode);
+    }
+
+    private async embedMultiBatchWithMode(texts: string[], mode: BgeM3Mode): Promise<MultiVectorEmbedding[]> {
         const processedTexts = this.preprocessTexts(texts);
         const worker = this.getPrimaryWorker();
         worker.inFlight++;
         const response = await this.post(worker, '/embed_batch', {
                 inputs: processedTexts,
                 model: this.model,
-                mode: this.mode,
+                mode,
             });
 
-        return this.parseMultiVectorBatchResponse(response, processedTexts.length);
+        return this.parseMultiVectorBatchResponse(response, processedTexts.length, mode);
     }
 
     async embedMultiBatchWithWorkerPool(
@@ -374,10 +382,10 @@ export class BgeM3Embedding extends Embedding {
                 retryAttempt: attempt,
             }), onRetry);
 
-        return this.parseMultiVectorBatchResponse(response, processedTexts.length);
+        return this.parseMultiVectorBatchResponse(response, processedTexts.length, this.mode);
     }
 
-    private parseMultiVectorBatchResponse(response: unknown, expectedLength: number): MultiVectorEmbedding[] {
+    private parseMultiVectorBatchResponse(response: unknown, expectedLength: number, mode: BgeM3Mode): MultiVectorEmbedding[] {
         if (!Array.isArray(response)) {
             throw new Error('BGE-M3 sidecar returned invalid batch response');
         }
@@ -388,7 +396,7 @@ export class BgeM3Embedding extends Embedding {
             );
         }
 
-        return response.map((item) => this.toMultiVector(this.parseResponse(item)));
+        return response.map((item) => this.toMultiVector(this.parseResponse(item), mode));
     }
 
     getDimension(): number {
@@ -977,12 +985,12 @@ export class BgeM3Embedding extends Embedding {
         return parsed;
     }
 
-    private toMultiVector(parsed: ParsedBgeM3Response): MultiVectorEmbedding {
+    private toMultiVector(parsed: ParsedBgeM3Response, mode: BgeM3Mode = this.mode): MultiVectorEmbedding {
         if (!parsed.dense) {
             throw new Error('BGE-M3 response is missing dense vector data');
         }
 
-        if (this.mode === 'full' && (!parsed.sparse || !parsed.colbert)) {
+        if (mode === 'full' && (!parsed.sparse || !parsed.colbert)) {
             throw new Error('BGE-M3 full mode requires dense, sparse, and ColBERT vectors');
         }
 

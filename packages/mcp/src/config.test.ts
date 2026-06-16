@@ -7,6 +7,8 @@ const trackedEnv = [
     'BGE_M3_ENDPOINT',
     'BGE_M3_MODE',
     'BGE_M3_STORE_COLBERT',
+    'RETRIEVAL_PROFILE',
+    'HYBRID_MODE',
     'OPENAI_API_KEY',
     'VOYAGEAI_API_KEY',
     'GEMINI_API_KEY',
@@ -54,6 +56,68 @@ test('BGE-M3 full mode rejects disabled ColBERT storage', () => {
         assert.throws(
             () => createMcpConfig(),
             /BGE_M3_STORE_COLBERT=false is incompatible with BGE_M3_MODE=full/,
+        );
+    });
+});
+
+test('retrieval profile parses and resolves BGE-M3 fast without changing unset low-level compatibility', () => {
+    withEnv({
+        EMBEDDING_PROVIDER: 'BGE_M3',
+        BGE_M3_ENDPOINT: 'http://127.0.0.1:8000',
+        RETRIEVAL_PROFILE: 'fast',
+        BGE_M3_MODE: 'dense',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.retrievalProfile, 'fast');
+        assert.equal(config.resolvedRetrievalProfile.retrievalMode, 'bge_m3_dense');
+        assert.equal(config.bgeM3Mode, 'dense');
+        assert.equal(config.bgeM3StoreColbert, false);
+    });
+
+    withEnv({
+        EMBEDDING_PROVIDER: 'BGE_M3',
+        BGE_M3_ENDPOINT: 'http://127.0.0.1:8000',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.retrievalProfile, undefined);
+        assert.equal(config.resolvedRetrievalProfile.explicitProfile, false);
+        assert.equal(config.resolvedRetrievalProfile.retrievalMode, 'bge_m3_full');
+        assert.equal(config.bgeM3Mode, 'full');
+    });
+});
+
+test('retrieval profile rejects invalid values and explicit low-level conflicts', () => {
+    withEnv({
+        RETRIEVAL_PROFILE: 'slow',
+    }, () => {
+        assert.throws(
+            () => createMcpConfig(),
+            /Invalid RETRIEVAL_PROFILE 'slow'/,
+        );
+    });
+
+    withEnv({
+        EMBEDDING_PROVIDER: 'BGE_M3',
+        BGE_M3_ENDPOINT: 'http://127.0.0.1:8000',
+        RETRIEVAL_PROFILE: 'fast',
+        BGE_M3_MODE: 'full',
+    }, () => {
+        assert.throws(
+            () => createMcpConfig(),
+            /RETRIEVAL_PROFILE=fast conflicts with BGE_M3_MODE=full/,
+        );
+    });
+
+    withEnv({
+        EMBEDDING_PROVIDER: 'OpenAI',
+        RETRIEVAL_PROFILE: 'fast',
+        HYBRID_MODE: 'true',
+    }, () => {
+        assert.throws(
+            () => createMcpConfig(),
+            /RETRIEVAL_PROFILE=fast conflicts with HYBRID_MODE=true/,
         );
     });
 });

@@ -32,6 +32,12 @@ Replace the API keys with your actual keys.
    ```
    Index this codebase
    ```
+   For very large repositories, choose a cheaper first index:
+   ```
+   Index this codebase with retrievalProfile fast
+   ```
+   Use `retrievalProfile quality` when you explicitly want the highest-quality
+   available retrieval path and accept extra indexing time and storage.
 3. **Check indexing status**:
    ```
    Check the indexing status

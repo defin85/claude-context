@@ -55,6 +55,24 @@ Changing between profiles changes indexed coverage, so `index_codebase` rejects
 the request without `force=true` when an existing index was built with a
 different 1C scope profile.
 
+## Retrieval Profile Status
+
+`index_codebase` also accepts `retrievalProfile` (`fast`, `balanced`, or
+`quality`) for per-codebase retrieval performance selection. The selected
+profile is persisted with `retrievalMode` and `retrievalSchemaVersion`.
+
+`get_indexing_status` includes:
+
+- `retrievalProfile` - the persisted profile, when known.
+- `retrievalMode` - the concrete collection/search mode such as `dense`,
+  `hybrid_bm25`, `bge_m3_dense`, or `bge_m3_full`.
+- `retrievalSchemaVersion` - the schema version used by the stored collection.
+
+Changing to an incompatible retrieval profile requires `force=true` because it
+changes the indexed storage/search shape. Changing `rankingProfile` on
+`search_code` does not require reindexing because it only affects scoring of
+available candidates.
+
 ## Accelerated Indexing Backpressure
 
 When accelerated indexing is enabled, status may include an `accelerator` object
