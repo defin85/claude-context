@@ -220,6 +220,24 @@ describe('Context retrieval modes', () => {
         expect(vectorDatabase.bgeM3SearchRequests).toHaveLength(0);
     });
 
+    it('infers legacy persisted retrieval mode before applying the current default profile', () => {
+        const context = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase: new TestVectorDatabase(),
+            retrievalProfile: 'fast',
+        });
+
+        const sessionConfig = context.configureCodebaseSession('/tmp/example', {
+            retrievalMode: 'bge_m3_full',
+            retrievalSchemaVersion: 1,
+        });
+
+        expect(sessionConfig.retrievalProfile).toBe('quality');
+        expect(sessionConfig.retrievalMode).toBe('bge_m3_full');
+        expect(sessionConfig.retrievalSchemaVersion).toBe(1);
+        expect(context.getCollectionName('/tmp/example')).toMatch(/^bge_m3_code_chunks_/);
+    });
+
     it('requires force reindex when a BM25 hybrid index already exists for BGE-M3 full mode', async () => {
         process.env.HYBRID_MODE = 'true';
         const vectorDatabase = new TestVectorDatabase();

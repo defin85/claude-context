@@ -60,12 +60,13 @@ test('BGE-M3 full mode rejects disabled ColBERT storage', () => {
     });
 });
 
-test('retrieval profile parses and resolves BGE-M3 fast without changing unset low-level compatibility', () => {
+test('retrieval profile parses BGE-M3 fast with matching low-level settings and preserves unset-profile compatibility', () => {
     withEnv({
         EMBEDDING_PROVIDER: 'BGE_M3',
         BGE_M3_ENDPOINT: 'http://127.0.0.1:8000',
         RETRIEVAL_PROFILE: 'fast',
         BGE_M3_MODE: 'dense',
+        BGE_M3_STORE_COLBERT: 'false',
     }, () => {
         const config = createMcpConfig();
 
@@ -107,6 +108,19 @@ test('retrieval profile rejects invalid values and explicit low-level conflicts'
         assert.throws(
             () => createMcpConfig(),
             /RETRIEVAL_PROFILE=fast conflicts with BGE_M3_MODE=full/,
+        );
+    });
+
+    withEnv({
+        EMBEDDING_PROVIDER: 'BGE_M3',
+        BGE_M3_ENDPOINT: 'http://127.0.0.1:8000',
+        RETRIEVAL_PROFILE: 'fast',
+        BGE_M3_MODE: 'dense',
+        BGE_M3_STORE_COLBERT: 'true',
+    }, () => {
+        assert.throws(
+            () => createMcpConfig(),
+            /RETRIEVAL_PROFILE=fast conflicts with BGE_M3_STORE_COLBERT=true/,
         );
     });
 

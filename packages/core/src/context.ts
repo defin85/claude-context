@@ -577,7 +577,8 @@ export class Context {
         session.customIgnorePatterns = this.normalizeIgnorePatternsList(
             config.customIgnorePatterns || [],
         );
-        session.retrievalProfile = config.retrievalProfile ?? this.defaultRetrievalProfile;
+        const hasPersistedRetrievalShape = Boolean(config.retrievalMode && typeof config.retrievalSchemaVersion === "number");
+        session.retrievalProfile = config.retrievalProfile ?? (hasPersistedRetrievalShape ? undefined : this.defaultRetrievalProfile);
         session.retrievalMode = config.retrievalMode;
         session.retrievalSchemaVersion = config.retrievalSchemaVersion;
         session.oneCIndexScopeProfile = config.oneCIndexScopeProfile;

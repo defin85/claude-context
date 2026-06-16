@@ -142,6 +142,24 @@ describe('retrieval performance profiles', () => {
         })).toThrow(/RETRIEVAL_PROFILE=fast conflicts with BGE_M3_MODE=full/);
 
         expect(() => resolveRetrievalProfile({
+            embeddingProvider: 'BGE_M3',
+            retrievalProfile: 'fast',
+            bgeM3Mode: 'dense',
+            bgeM3StoreColbert: true,
+            explicitBgeM3StoreColbert: true,
+            hybridMode: true,
+        })).toThrow(/RETRIEVAL_PROFILE=fast conflicts with BGE_M3_STORE_COLBERT=true/);
+
+        expect(() => resolveRetrievalProfile({
+            embeddingProvider: 'BGE_M3',
+            retrievalProfile: 'balanced',
+            bgeM3Mode: 'dense',
+            bgeM3StoreColbert: true,
+            explicitBgeM3StoreColbert: true,
+            hybridMode: true,
+        })).toThrow(/RETRIEVAL_PROFILE=balanced conflicts with BGE_M3_STORE_COLBERT=true/);
+
+        expect(() => resolveRetrievalProfile({
             embeddingProvider: 'OpenAI',
             retrievalProfile: 'fast',
             bgeM3Mode: 'full',

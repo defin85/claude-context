@@ -65,3 +65,50 @@ Final rerun results:
 - Core and MCP typechecks passed.
 - Core and MCP builds passed.
 - `openspec validate retrieval-performance-profiles --strict` passed.
+
+## 2026-06-16 Review Closure
+
+Closed the post-review mandatory gaps:
+
+- Legacy persisted configs with `retrievalMode` and `retrievalSchemaVersion` but
+  no `retrievalProfile` now infer the profile from the persisted retrieval mode
+  before applying the daemon default profile.
+- Explicit `BGE_M3_STORE_COLBERT=true` now conflicts with BGE-M3 dense-only
+  retrieval profiles (`fast` and `balanced`) instead of being silently
+  normalized to `false`.
+
+TDD red checks:
+
+```bash
+pnpm --filter @zilliz/claude-context-core test -- retrieval-profile.test.ts context.retrieval-mode.test.ts --runInBand
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/config.test.ts
+```
+
+Expected failures were observed before implementation:
+
+- `context.retrieval-mode.test.ts`: legacy persisted `bge_m3_full` config was
+  resolved as `fast` / `bge_m3_dense`.
+- `retrieval-profile.test.ts` and `config.test.ts`: explicit
+  `BGE_M3_STORE_COLBERT=true` with `RETRIEVAL_PROFILE=fast` did not throw.
+
+Final verification:
+
+```bash
+pnpm --filter @zilliz/claude-context-core test -- retrieval-profile.test.ts context.retrieval-mode.test.ts --runInBand
+pnpm --filter @zilliz/claude-context-core typecheck
+pnpm build:core
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/config.test.ts src/one-c-scope-profile.test.ts
+pnpm --filter @zilliz/claude-context-mcp typecheck
+pnpm --filter @zilliz/claude-context-mcp build
+pnpm exec openspec validate retrieval-performance-profiles --strict
+```
+
+Final verification results:
+
+- Core targeted tests passed: 18 tests across 2 suites.
+- Core typecheck passed.
+- Core build passed.
+- MCP targeted tests passed: 18 tests, 0 failed.
+- MCP typecheck passed.
+- MCP build passed.
+- `openspec validate retrieval-performance-profiles --strict` passed.

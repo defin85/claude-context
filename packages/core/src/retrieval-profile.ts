@@ -120,6 +120,9 @@ export function resolveRetrievalProfile(input: RetrievalProfileInput): ResolvedR
         if (input.explicitBgeM3Mode && input.bgeM3Mode !== 'dense') {
             throw new Error(`RETRIEVAL_PROFILE=${profile} conflicts with BGE_M3_MODE=${input.bgeM3Mode}. Use BGE_M3_MODE=dense or remove the low-level override.`);
         }
+        if (input.explicitBgeM3StoreColbert && input.bgeM3StoreColbert) {
+            throw new Error(`RETRIEVAL_PROFILE=${profile} conflicts with BGE_M3_STORE_COLBERT=true. Dense-only BGE-M3 profiles do not store ColBERT vectors.`);
+        }
         return {
             retrievalProfile: profile,
             explicitProfile: true,
