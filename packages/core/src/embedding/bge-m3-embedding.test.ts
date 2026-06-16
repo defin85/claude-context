@@ -738,6 +738,7 @@ describe('BgeM3Embedding', () => {
             'http://127.0.0.1:8000/embed_batch',
             expect.objectContaining({
                 headers: expect.objectContaining({
+                    'connection': 'close',
                     'x-claude-context-request-id': expect.stringMatching(/^bge-m3-/),
                 }),
             }),
@@ -826,7 +827,12 @@ describe('BgeM3Embedding', () => {
         expect(result.dense.vector).toEqual([0.1, 0.2, 0.3]);
         expect(fetchMock).toHaveBeenCalledWith(
             'http://127.0.0.1:8000/embed_batch',
-            expect.objectContaining({ method: 'POST' }),
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    'connection': 'close',
+                }),
+            }),
         );
         expect(fetchMock).not.toHaveBeenCalledWith(
             'http://127.0.0.1:8001/embed_batch',

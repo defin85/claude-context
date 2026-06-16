@@ -321,6 +321,7 @@ export class QdrantVectorDatabase implements VectorDatabase {
             headers: {
                 ...this.headers,
                 ...(init.headers || {}),
+                'connection': 'close',
             },
         });
         if (!response.ok) {

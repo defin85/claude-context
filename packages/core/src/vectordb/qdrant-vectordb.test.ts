@@ -167,6 +167,9 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(fetchMock.mock.calls.every((call) => String(call[0]).includes('/collections/chunks/points?wait=true'))).toBe(true);
+        expect(fetchMock.mock.calls.every((call) => (
+            (call[1]?.headers as Record<string, string> | undefined)?.connection === 'close'
+        ))).toBe(true);
     });
 });
 

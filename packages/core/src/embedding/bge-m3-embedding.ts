@@ -473,6 +473,7 @@ export class BgeM3Embedding extends Embedding {
             const response = await this.fetchImpl(`${worker.endpoint}${path}`, {
             method: 'POST',
             headers: {
+                'connection': 'close',
                 'content-type': 'application/json',
                 'x-claude-context-request-id': requestId,
             },
@@ -504,7 +505,9 @@ export class BgeM3Embedding extends Embedding {
     private async get(worker: BgeM3Worker, path: string): Promise<unknown> {
         const response = await this.fetchImpl(`${worker.endpoint}${path}`, {
             method: 'GET',
-            headers: {},
+            headers: {
+                'connection': 'close',
+            },
         });
 
         if (!response.ok) {
