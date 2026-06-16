@@ -143,3 +143,50 @@ pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/one-c-scope-profile
 Result:
 
 - MCP handler/codebase-config tests passed: 14 tests, 0 failed.
+
+## 2026-06-16 Risk Closure
+
+Closed the review risks/edge cases found during implementation-vs-plan review:
+
+- Collection descriptions now persist the exact resolved `retrievalProfile`
+  instead of inferring it back from `retrievalMode`, so BGE-M3 `fast` no
+  longer appears as `balanced` in collection metadata.
+- `force=true` collection preparation now drops all known retrieval-shape
+  collections for the codebase before creating the requested profile
+  collection, avoiding stale incompatible storage tails.
+- `search_code` handler coverage now includes a real `Context` with a BGE-M3
+  full-capable embedding provider and persisted `fast` config, proving the MCP
+  path selects the `bge_m3_dense_*` collection instead of the full BGE-M3
+  search path.
+
+Red checks before implementation:
+
+```bash
+pnpm --filter @zilliz/claude-context-core test -- context.retrieval-mode.test.ts --runInBand
+```
+
+Expected failures were observed before implementation:
+
+- BGE-M3 `fast` collection metadata contained `retrievalProfile:balanced`.
+- `force=true` preparation left the old `bge_m3_dense_*` collection in place
+  when switching to `quality`.
+
+Final verification:
+
+```bash
+pnpm --filter @zilliz/claude-context-core test -- retrieval-profile.test.ts context.retrieval-mode.test.ts --runInBand
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/config.test.ts src/one-c-scope-profile.test.ts
+pnpm --filter @zilliz/claude-context-core build
+pnpm --filter @zilliz/claude-context-mcp build
+pnpm --filter @zilliz/claude-context-core typecheck
+pnpm --filter @zilliz/claude-context-mcp typecheck
+pnpm exec openspec validate retrieval-performance-profiles --strict
+```
+
+Final verification results:
+
+- Core targeted tests passed: 20 tests across 2 suites.
+- MCP targeted tests passed: 20 tests, 0 failed.
+- Core and MCP builds passed.
+- Core and MCP typechecks passed.
+- `openspec validate retrieval-performance-profiles --strict` passed.

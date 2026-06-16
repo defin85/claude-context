@@ -987,12 +987,12 @@ export class Context {
             .substring(0, 8);
     }
 
-    private getRetrievalCollectionDescription(codebasePath: string, retrievalMode: RetrievalMode): string {
+    private getRetrievalCollectionDescription(codebasePath: string, retrieval: ResolvedRetrievalProfile): string {
         return [
             `codebasePath:${codebasePath}`,
-            `retrievalProfile:${inferRetrievalProfile(retrievalMode)}`,
-            `retrievalMode:${retrievalMode}`,
-            `retrievalSchemaVersion:${RETRIEVAL_SCHEMA_VERSION}`,
+            `retrievalProfile:${retrieval.retrievalProfile}`,
+            `retrievalMode:${retrieval.retrievalMode}`,
+            `retrievalSchemaVersion:${retrieval.retrievalSchemaVersion}`,
         ].join("\n");
     }
 
@@ -1982,7 +1982,8 @@ export class Context {
         codebasePath: string,
         forceReindex: boolean = false,
     ): Promise<void> {
-        const retrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
+        const resolvedRetrieval = this.getResolvedRetrievalProfile(codebasePath);
+        const retrievalMode = resolvedRetrieval.retrievalMode;
         const isHybrid = retrievalMode === "hybrid_bm25" || retrievalMode === "bge_m3_full";
         const collectionType =
             retrievalMode === "bge_m3_full"
@@ -2026,14 +2027,25 @@ export class Context {
             }
         }
 
-        if (collectionExists && forceReindex) {
-            console.log(
-                `[Context] 🗑️  Dropping existing collection ${collectionName} for force reindex...`,
-            );
-            await this.vectorDatabase.dropCollection(collectionName);
-            console.log(
-                `[Context] ✅ Collection ${collectionName} dropped successfully`,
-            );
+        if (forceReindex) {
+            const forceReindexCollections = [
+                this.getCollectionNameForPrefix(codebasePath, "code_chunks"),
+                this.getCollectionNameForPrefix(codebasePath, "hybrid_code_chunks"),
+                this.getCollectionNameForPrefix(codebasePath, "bge_m3_dense_code_chunks"),
+                this.getCollectionNameForPrefix(codebasePath, "bge_m3_code_chunks"),
+            ];
+
+            for (const collectionToDrop of [...new Set(forceReindexCollections)]) {
+                if (await this.vectorDatabase.hasCollection(collectionToDrop)) {
+                    console.log(
+                        `[Context] 🗑️  Dropping existing collection ${collectionToDrop} for force reindex...`,
+                    );
+                    await this.vectorDatabase.dropCollection(collectionToDrop);
+                    console.log(
+                        `[Context] ✅ Collection ${collectionToDrop} dropped successfully`,
+                    );
+                }
+            }
         }
 
         console.log(
@@ -2049,19 +2061,19 @@ export class Context {
             await this.vectorDatabase.createBgeM3Collection(
                 collectionName,
                 dimension,
-            this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
+                this.getRetrievalCollectionDescription(codebasePath, resolvedRetrieval),
             );
         } else if (isHybrid === true) {
             await this.vectorDatabase.createHybridCollection(
                 collectionName,
                 dimension,
-                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
+                this.getRetrievalCollectionDescription(codebasePath, resolvedRetrieval),
             );
         } else {
             await this.vectorDatabase.createCollection(
                 collectionName,
                 dimension,
-                this.getRetrievalCollectionDescription(codebasePath, retrievalMode),
+                this.getRetrievalCollectionDescription(codebasePath, resolvedRetrieval),
             );
         }
 

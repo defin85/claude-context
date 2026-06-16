@@ -83,12 +83,18 @@ class TestVectorDatabase implements VectorDatabase {
     bgeM3SearchOptions: HybridSearchOptions | undefined;
     bgeM3SearchResults: HybridSearchResult[] = [];
 
-    async createCollection(collectionName: string): Promise<void> {
+    async createCollection(collectionName: string, _dimension?: number, description?: string): Promise<void> {
         this.collections.add(collectionName);
+        if (description) {
+            this.collectionDescriptions.set(collectionName, description);
+        }
     }
 
-    async createHybridCollection(collectionName: string): Promise<void> {
+    async createHybridCollection(collectionName: string, _dimension?: number, description?: string): Promise<void> {
         this.collections.add(collectionName);
+        if (description) {
+            this.collectionDescriptions.set(collectionName, description);
+        }
     }
 
     async createBgeM3Collection(collectionName: string, dimension: number, description?: string): Promise<void> {
@@ -138,6 +144,12 @@ class TestVectorDatabase implements VectorDatabase {
     }
     async checkCollectionLimit(): Promise<boolean> { return true; }
     async getCollectionRowCount(): Promise<number> { return -1; }
+}
+
+class BgeM3DenseEmbedding extends BgeM3FullEmbedding {
+    getMode(): string {
+        return 'dense';
+    }
 }
 
 class SingleChunkSplitter implements Splitter {
@@ -198,6 +210,19 @@ describe('Context retrieval modes', () => {
         expect(sessionConfig.retrievalProfile).toBe('fast');
         expect(sessionConfig.retrievalMode).toBe('bge_m3_dense');
         expect(sessionConfig.retrievalSchemaVersion).toBe(1);
+    });
+
+    it('writes the exact configured retrieval profile to collection metadata', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase,
+            retrievalProfile: 'fast',
+        });
+
+        await context.getPreparedCollection('/tmp/example', true);
+
+        expect(vectorDatabase.collectionDescriptions.get(context.getCollectionName('/tmp/example'))).toContain('retrievalProfile:fast');
     });
 
     it('search uses persisted retrieval profile rather than the current default mode', async () => {
@@ -276,6 +301,29 @@ describe('Context retrieval modes', () => {
 
         expect(vectorDatabase.bgeM3Collections).toHaveLength(1);
         expect(vectorDatabase.bgeM3Collections[0].collectionName).toMatch(/^bge_m3_code_chunks_/);
+    });
+
+    it('drops incompatible retrieval collections during force preparation', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const codebasePath = '/tmp/example';
+        const denseContext = new Context({
+            embedding: new BgeM3DenseEmbedding(),
+            vectorDatabase,
+            retrievalProfile: 'fast',
+        });
+        const oldCollectionName = denseContext.getCollectionName(codebasePath);
+        vectorDatabase.collections.add(oldCollectionName);
+
+        const qualityContext = new Context({
+            embedding: new BgeM3FullEmbedding(),
+            vectorDatabase,
+            retrievalProfile: 'quality',
+        });
+
+        await qualityContext.getPreparedCollection(codebasePath, true);
+
+        expect(vectorDatabase.collections.has(oldCollectionName)).toBe(false);
+        expect(vectorDatabase.collections.has(qualityContext.getCollectionName(codebasePath))).toBe(true);
     });
 
     it('creates and inserts BGE-M3 full documents with model sparse and ColBERT vectors', async () => {

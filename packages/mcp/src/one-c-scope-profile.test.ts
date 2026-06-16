@@ -6,7 +6,109 @@ import test from 'node:test';
 import { ToolHandlers } from './handlers.js';
 import { SnapshotManager } from './snapshot.js';
 import { CodebaseConfigManager } from './codebase-config.js';
-import type { CodebaseSessionConfig, Context, RankingProfile, RetrievalProfile, SemanticSearchResult } from '@zilliz/claude-context-core';
+import {
+    Context as CoreContext,
+    Embedding,
+    type CodebaseSessionConfig,
+    type Context,
+    type EmbeddingVector,
+    type HybridSearchOptions,
+    type HybridSearchRequest,
+    type HybridSearchResult,
+    type MultiVectorEmbedding,
+    type RankingProfile,
+    type RetrievalProfile,
+    type SearchOptions,
+    type SemanticSearchResult,
+    type VectorDatabase,
+    type VectorSearchResult,
+} from '@zilliz/claude-context-core';
+
+class RealBgeM3FullEmbedding extends Embedding {
+    protected maxTokens = 8192;
+
+    async detectDimension(): Promise<number> {
+        return 3;
+    }
+
+    async embed(): Promise<EmbeddingVector> {
+        return { vector: [1, 0, 0], dimension: 3 };
+    }
+
+    async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+        return texts.map(() => ({ vector: [1, 0, 0], dimension: 3 }));
+    }
+
+    getDimension(): number {
+        return 3;
+    }
+
+    getProvider(): string {
+        return 'BGE_M3';
+    }
+
+    getMode(): string {
+        return 'full';
+    }
+
+    async embedMulti(): Promise<MultiVectorEmbedding> {
+        return {
+            dense: { vector: [1, 0, 0], dimension: 3 },
+            sparse: { indices: [1], values: [1] },
+            colbert: { vectors: [[1, 0]], dimension: 2, tokenCount: 1 },
+        };
+    }
+
+    async embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]> {
+        return texts.map(() => ({
+            dense: { vector: [1, 0, 0], dimension: 3 },
+            sparse: { indices: [1], values: [1] },
+            colbert: { vectors: [[1, 0]], dimension: 2, tokenCount: 1 },
+        }));
+    }
+}
+
+class SearchCapturingVectorDatabase implements VectorDatabase {
+    collections = new Set<string>();
+    searchCollectionName: string | undefined;
+    bgeM3SearchCalled = false;
+
+    async createCollection(collectionName: string): Promise<void> { this.collections.add(collectionName); }
+    async createHybridCollection(collectionName: string): Promise<void> { this.collections.add(collectionName); }
+    async createBgeM3Collection(collectionName: string): Promise<void> { this.collections.add(collectionName); }
+    async dropCollection(collectionName: string): Promise<void> { this.collections.delete(collectionName); }
+    async hasCollection(collectionName: string): Promise<boolean> { return this.collections.has(collectionName); }
+    async listCollections(): Promise<string[]> { return [...this.collections]; }
+    async insert(): Promise<void> {}
+    async insertHybrid(): Promise<void> {}
+    async insertBgeM3(): Promise<void> {}
+    async search(collectionName: string, _queryVector: number[], _options?: SearchOptions): Promise<VectorSearchResult[]> {
+        this.searchCollectionName = collectionName;
+        return [{
+            document: {
+                id: 'real-context-result',
+                vector: [1, 0, 0],
+                content: 'export const value = 1;',
+                relativePath: 'src/index.ts',
+                startLine: 1,
+                endLine: 1,
+                fileExtension: '.ts',
+                metadata: { language: 'typescript' },
+            },
+            score: 0.9,
+        }];
+    }
+    async hybridSearch(): Promise<HybridSearchResult[]> { return []; }
+    async bgeM3HybridSearch(_collectionName: string, _searchRequests: HybridSearchRequest[], _options?: HybridSearchOptions): Promise<HybridSearchResult[]> {
+        this.bgeM3SearchCalled = true;
+        return [];
+    }
+    async delete(): Promise<void> {}
+    async query(): Promise<Record<string, any>[]> { return [{ 'count(*)': 1 }]; }
+    async getCollectionDescription(): Promise<string> { return ''; }
+    async checkCollectionLimit(): Promise<boolean> { return true; }
+    async getCollectionRowCount(): Promise<number> { return 1; }
+}
 
 function createFakeContext(
     hasIndex: boolean = true,
@@ -390,6 +492,56 @@ test('search_code applies persisted retrieval profile before searching', async (
     assert.equal(structuredContent.retrievalProfile, 'fast');
     assert.equal(structuredContent.retrievalMode, 'dense');
     assert.equal(structuredContent.retrievalSchemaVersion, 1);
+});
+
+test('search_code applies persisted BGE-M3 fast profile through real Context collection selection', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-real-context-retrieval-'));
+    const rawCodebasePath = path.join(workspacePath, 'cf');
+    await fs.mkdir(rawCodebasePath, { recursive: true });
+    const codebasePath = await fs.realpath(rawCodebasePath);
+    const snapshotManager = new SnapshotManager({
+        workspacePath,
+        saveDebounceMs: 10,
+    });
+    snapshotManager.setCodebaseIndexed(codebasePath, {
+        indexedFiles: 1,
+        totalChunks: 1,
+        status: 'completed',
+    });
+    const codebaseConfigManager = new CodebaseConfigManager({ workspacePath });
+    await codebaseConfigManager.saveConfig(codebasePath, {
+        retrievalProfile: 'fast',
+        retrievalMode: 'bge_m3_dense',
+        retrievalSchemaVersion: 1,
+    });
+    const vectorDatabase = new SearchCapturingVectorDatabase();
+    const context = new CoreContext({
+        embedding: new RealBgeM3FullEmbedding(),
+        vectorDatabase,
+    });
+    context.configureCodebaseSession(codebasePath, {
+        retrievalProfile: 'fast',
+        retrievalMode: 'bge_m3_dense',
+        retrievalSchemaVersion: 1,
+    });
+    vectorDatabase.collections.add(context.getCollectionName(codebasePath));
+    const handlers = new ToolHandlers(
+        context,
+        snapshotManager,
+        codebaseConfigManager,
+    );
+
+    const result = await handlers.handleSearchCode({
+        path: codebasePath,
+        query: 'value',
+    });
+
+    assert.equal((result as { isError?: boolean }).isError, undefined);
+    assert.match(vectorDatabase.searchCollectionName || '', /^bge_m3_dense_code_chunks_/);
+    assert.equal(vectorDatabase.bgeM3SearchCalled, false);
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.retrievalProfile, 'fast');
+    assert.equal(structuredContent.retrievalMode, 'bge_m3_dense');
 });
 
 
