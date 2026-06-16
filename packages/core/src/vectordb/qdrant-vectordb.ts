@@ -255,11 +255,7 @@ export class QdrantVectorDatabase implements VectorDatabase {
             body: JSON.stringify({
                 points: documents.map((document) => ({
                     id: stableUuid(document.id),
-                    vector: {
-                        dense: document.vector,
-                        sparse: document.sparseVector || { indices: [], values: [] },
-                        colbert: document.colbertVectors || [],
-                    },
+                    vector: toQdrantVectorPayload(document),
                     payload: {
                         id: document.id,
                         content: document.content,
@@ -335,6 +331,19 @@ export class QdrantVectorDatabase implements VectorDatabase {
         delete headers['content-type'];
         return headers;
     }
+}
+
+function toQdrantVectorPayload(document: VectorDocument): Record<string, unknown> {
+    const vector: Record<string, unknown> = {
+        dense: document.vector,
+    };
+    if (document.sparseVector) {
+        vector.sparse = document.sparseVector;
+    }
+    if (document.colbertVectors && document.colbertVectors.length > 0) {
+        vector.colbert = document.colbertVectors;
+    }
+    return vector;
 }
 
 function qdrantVectorName(field: string): string {

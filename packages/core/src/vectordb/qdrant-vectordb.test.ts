@@ -128,6 +128,31 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
         }));
     });
 
+    it('omits sparse and ColBERT vectors when inserting dense-only BGE-M3 documents', async () => {
+        const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async () => ({
+            ok: true,
+            json: async () => ({ result: { operation_id: 1, status: 'completed' } }),
+        } as Response));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+
+        await db.insert('bge_m3_dense_code_chunks_test', [{
+            id: 'chunk-1',
+            vector: [0.1, 0.2],
+            content: 'content',
+            relativePath: 'file.bsl',
+            startLine: 1,
+            endLine: 2,
+            fileExtension: '.bsl',
+            metadata: { retrievalMode: 'bge_m3_dense' },
+        }]);
+
+        const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+        expect(body.points[0].vector).toEqual({
+            dense: [0.1, 0.2],
+        });
+    });
+
     it('declares parallel-safe idempotent upsert write capabilities', () => {
         const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
 
