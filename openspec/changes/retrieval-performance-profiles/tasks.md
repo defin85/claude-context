@@ -4,7 +4,8 @@
 - [ ] 1.2 Add a retrieval profile resolver that maps provider, profile, and low-level settings to retrieval mode, schema version, BGE-M3 mode, ColBERT storage, and hybrid behavior.
 - [ ] 1.3 Add resolver tests for BGE-M3 `fast`, `balanced`, and `quality` mappings.
 - [ ] 1.4 Add resolver tests for non-BGE `fast`, `balanced`, and `quality` mappings.
-- [ ] 1.5 Decide and test whether first-version BGE-M3 `balanced` remains dense-only or introduces a sparse-without-ColBERT retrieval shape.
+- [ ] 1.5 Test that first-version BGE-M3 `balanced` maps to dense-only and does not introduce sparse-without-ColBERT storage or search.
+- [ ] 1.6 Test that `fast` changes retrieval/storage shape only and does not modify splitter type, chunk limits, chunk overlap, or batching limits.
 
 ## 2. Configuration Parsing and Validation
 
@@ -13,14 +14,16 @@
 - [ ] 2.3 Preserve current low-level behavior when `RETRIEVAL_PROFILE` is unset.
 - [ ] 2.4 Add config tests for invalid profiles and conflict errors.
 - [ ] 2.5 Update startup logs and help output to show configured and resolved retrieval profile.
+- [ ] 2.6 Document and test that `retrievalProfile` is separate from `rankingProfile`; retrieval profile changes can require reindexing, ranking profile changes cannot.
 
 ## 3. Core Indexing and Search Wiring
 
 - [ ] 3.1 Extend core session/config types with optional `retrievalProfile`.
 - [ ] 3.2 Apply resolved profile when choosing collection prefix, retrieval mode, retrieval schema version, and insert document shape.
 - [ ] 3.3 Ensure BGE-M3 `fast` indexing uses dense-only sidecar responses and does not require sparse or ColBERT fields.
-- [ ] 3.4 Ensure BGE-M3 `quality` indexing requires dense, sparse, and ColBERT data and stores document ColBERT vectors for reranking.
-- [ ] 3.5 Ensure search uses persisted retrieval mode/schema for the target codebase rather than the current default profile.
+- [ ] 3.4 Ensure BGE-M3 `balanced` indexing uses the same dense-only storage/search shape as BGE-M3 `fast` in the first version.
+- [ ] 3.5 Ensure BGE-M3 `quality` indexing requires dense, sparse, and ColBERT data and stores document ColBERT vectors for reranking.
+- [ ] 3.6 Ensure search uses persisted retrieval profile/mode/schema for the target codebase rather than the current default profile, including collection prefix selection.
 
 ## 4. Persistence and Compatibility Guard
 
@@ -32,7 +35,7 @@
 
 ## 5. MCP API and Status Exposure
 
-- [ ] 5.1 Add optional `retrievalProfile` input to `index_codebase` if per-call profile override is implemented.
+- [ ] 5.1 Add optional `retrievalProfile` input to `index_codebase` for per-call indexing profile override.
 - [ ] 5.2 Expose persisted codebase profile in `get_indexing_status` structured content and text output.
 - [ ] 5.3 Expose daemon default profile and resolved retrieval configuration in `get_daemon_status` structured content without secrets.
 - [ ] 5.4 Add MCP handler tests for per-call override, status exposure, and persisted search behavior.

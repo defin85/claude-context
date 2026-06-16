@@ -11,6 +11,10 @@ The system SHALL support explicit retrieval performance profiles named `fast`, `
 - **WHEN** retrieval profile is configured as `balanced`
 - **THEN** the system SHALL use a retrieval configuration that keeps lexical or sparse retrieval help where available without requiring stored ColBERT token vectors
 
+#### Scenario: Fast profile does not change chunking or batching controls
+- **WHEN** retrieval profile is configured as `fast`
+- **THEN** the system SHALL NOT change splitter type, chunk size, chunk overlap, `CODE_CHUNK_LIMIT`, or embedding and insert batch limits solely because of the profile
+
 #### Scenario: Quality profile is selected
 - **WHEN** retrieval profile is configured as `quality`
 - **THEN** the system SHALL use full BGE-M3 dense+sparse+ColBERT retrieval when the BGE-M3 provider is active and full mode is available
@@ -26,6 +30,12 @@ The system SHALL map each retrieval profile to a deterministic retrieval mode, s
 - **WHEN** `EMBEDDING_PROVIDER=BGE_M3` and retrieval profile is `fast`
 - **THEN** the system SHALL use BGE-M3 dense-only retrieval and SHALL NOT require sparse weights or ColBERT vectors from the sidecar
 
+#### Scenario: BGE-M3 balanced profile mapping
+- **WHEN** `EMBEDDING_PROVIDER=BGE_M3` and retrieval profile is `balanced`
+- **THEN** the system SHALL use BGE-M3 dense-only retrieval in the first version
+- **AND** it SHALL NOT store sparse weights or ColBERT vectors
+- **AND** it SHALL NOT use a sparse-without-ColBERT BGE-M3 collection or search path
+
 #### Scenario: BGE-M3 quality profile mapping
 - **WHEN** `EMBEDDING_PROVIDER=BGE_M3` and retrieval profile is `quality`
 - **THEN** the system SHALL require full BGE-M3 dense, sparse, and ColBERT vectors and SHALL require stored document ColBERT token vectors for reranking
@@ -36,7 +46,14 @@ The system SHALL map each retrieval profile to a deterministic retrieval mode, s
 
 #### Scenario: Low-level override conflicts with profile
 - **WHEN** low-level environment settings conflict with the selected retrieval profile
-- **THEN** the system SHALL either reject the configuration or normalize it according to documented profile precedence
+- **THEN** the system SHALL reject configuration validation with a clear conflict error
+- **AND** it SHALL NOT silently normalize, downgrade, or ignore the conflicting low-level setting
+
+#### Scenario: Retrieval profile is distinct from ranking profile
+- **WHEN** a retrieval profile and a ranking profile are both configured
+- **THEN** retrieval profile SHALL control storage and search shape
+- **AND** ranking profile SHALL control result scoring behavior only
+- **AND** changing ranking profile SHALL NOT require reindexing by itself
 
 ### Requirement: Profile Persistence
 The system SHALL persist the selected retrieval profile for each indexed codebase together with retrieval mode and retrieval schema version.
@@ -70,7 +87,7 @@ The system SHALL prevent accidental use of an existing codebase index with an in
 
 #### Scenario: Search uses persisted retrieval shape
 - **WHEN** a codebase has persisted retrieval mode and schema
-- **THEN** search SHALL use the persisted retrieval shape rather than a different current default profile
+- **THEN** search SHALL use the persisted retrieval profile, mode, schema, and collection prefix rather than a different current default profile
 
 ### Requirement: Profile Override Scope
 The system SHALL define clear precedence between global defaults and per-indexing profile overrides.

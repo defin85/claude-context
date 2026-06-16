@@ -53,26 +53,38 @@ Initial mapping:
 | Profile | BGE-M3 provider | Non-BGE provider |
 | --- | --- | --- |
 | `fast` | BGE-M3 dense-only, no sparse/ColBERT storage | dense-only search, `HYBRID_MODE=false` equivalent |
-| `balanced` | BGE-M3 dense-only initially, with optional future sparse-without-ColBERT only if supported by current schema | existing dense+BM25 sparse hybrid when hybrid mode is enabled |
+| `balanced` | BGE-M3 dense-only in the first version; sparse-without-ColBERT is out of scope for this change | existing dense+BM25 sparse hybrid when hybrid mode is enabled |
 | `quality` | full BGE-M3 dense+sparse+ColBERT with ColBERT reranking | best available existing non-BGE behavior, normally hybrid dense+BM25 sparse |
 
 Rationale: The expensive part of the current BGE-M3 path is storing and inserting ColBERT token vectors. Until there is a dedicated BGE-M3 sparse-without-ColBERT collection/search path, `balanced` should not pretend to be full BGE-M3 minus rerank. It can be implemented conservatively and extended later.
 
-Alternative considered: make `balanced` BGE-M3 dense+sparse without ColBERT immediately. This may be attractive, but it is a distinct retrieval shape and should only be used if the collection schema and search code explicitly support model-generated sparse weights without stored ColBERT.
+Alternative considered: make `balanced` BGE-M3 dense+sparse without ColBERT immediately. This may be attractive, but it is a distinct retrieval shape and should only be introduced by a separate change that defines a new collection schema and search path for model-generated sparse weights without stored ColBERT.
 
 ### Decision: Profile has precedence, low-level settings are validated
 
-When `RETRIEVAL_PROFILE` is set, it becomes the operator intent. Low-level settings such as `BGE_M3_MODE`, `BGE_M3_STORE_COLBERT`, and `HYBRID_MODE` must either match the resolved profile or be rejected with a clear error.
+When `RETRIEVAL_PROFILE` is set, it becomes the operator intent. Low-level settings such as `BGE_M3_MODE`, `BGE_M3_STORE_COLBERT`, and `HYBRID_MODE` must match the resolved profile or be rejected with a clear error.
 
 Examples:
 
 - `RETRIEVAL_PROFILE=quality`, `EMBEDDING_PROVIDER=BGE_M3`, `BGE_M3_STORE_COLBERT=false` is invalid.
-- `RETRIEVAL_PROFILE=fast`, `EMBEDDING_PROVIDER=BGE_M3`, `BGE_M3_MODE=full` is invalid unless explicitly documented as ignored.
+- `RETRIEVAL_PROFILE=fast`, `EMBEDDING_PROVIDER=BGE_M3`, `BGE_M3_MODE=full` is invalid.
 - No profile set preserves current low-level behavior for compatibility, but status should report the inferred profile when possible.
 
 Rationale: Silent normalization is dangerous because it can make users think they indexed quality/full data when the collection is actually dense-only.
 
 Alternative considered: always let low-level settings override the profile. That keeps backward flexibility but weakens the purpose of a high-level profile and makes status harder to trust.
+
+### Decision: Keep retrieval profiles separate from ranking profiles
+
+`retrievalProfile` controls storage and search shape: dense-only, hybrid, or full BGE-M3 multivector retrieval. Existing `rankingProfile` controls result scoring and ranking behavior after candidates are available.
+
+Rationale:
+
+- `search_code` already exposes `rankingProfile` for `auto`, `generic`, and `one-c`.
+- Reusing or blurring that name for storage and retrieval shape would make MCP API behavior ambiguous.
+- Operators need to understand that changing `retrievalProfile` may require reindexing, while changing `rankingProfile` must not.
+
+Implementation implication: documentation, tool schemas, status fields, and tests should use `retrievalProfile` only for indexing/storage/search-shape decisions and `rankingProfile` only for ranking decisions.
 
 ### Decision: Persist `retrievalProfile` next to retrieval mode/schema
 
@@ -82,11 +94,33 @@ Extend `CodebaseSessionConfig` and persisted codebase config with:
 - `retrievalMode`
 - `retrievalSchemaVersion`
 
-Search should prefer persisted retrieval mode/schema for a codebase. The configured current default profile should not reinterpret an existing collection.
+Search should prefer persisted retrieval profile/mode/schema for a codebase. The configured current default profile should not reinterpret an existing collection or choose a different collection prefix for that codebase.
 
 Rationale: Profile defaults will evolve. Persisting the effective profile protects old indexes from being searched with the wrong assumptions.
 
 Alternative considered: only persist retrieval mode/schema and infer profile. That is mechanically possible, but less transparent for operators and dashboards.
+
+### Decision: Add a per-call `index_codebase.retrievalProfile` override
+
+`index_codebase` SHALL accept an optional `retrievalProfile` argument. When provided, it overrides the daemon global default for that indexing operation after access-policy and compatibility validation. On successful indexing, the override becomes the persisted profile for the codebase.
+
+Rationale:
+
+- Different repositories can have different cost and quality needs even when served by the same daemon.
+- A daemon-global profile alone would force operators to restart or reconfigure the daemon to index one large repository in `fast` and another in `quality`.
+- The compatibility guard still prevents accidental schema changes without `force=true`.
+
+Alternative considered: daemon/global profile only. That is simpler, but it makes profile selection operationally coarse and conflicts with the spec requirement to define global/default versus per-indexing override precedence.
+
+### Decision: `fast` controls retrieval shape only
+
+The first version of `fast` SHALL NOT change splitter type, chunk size, chunk overlap, `CODE_CHUNK_LIMIT`, or payload batch limits. It only resolves to a cheaper retrieval/storage shape.
+
+Rationale:
+
+- Chunking and batching tune indexing throughput and result granularity independently from retrieval storage shape.
+- Coupling them to `fast` would make profile effects harder to reason about and harder to roll back.
+- Existing indexing performance controls already cover chunk limits and batch sizing.
 
 ### Decision: Require explicit force reindex for incompatible profile changes
 
@@ -115,7 +149,7 @@ Rationale: Users tuning performance need to know whether they are paying dense-o
 ## Risks / Trade-offs
 
 - [Risk] `balanced` means different things for BGE-M3 and non-BGE providers -> Mitigation: document exact mapping and expose resolved retrieval mode/schema in status.
-- [Risk] Users expect `balanced` BGE-M3 to include model sparse weights -> Mitigation: keep first version conservative unless sparse-without-ColBERT schema/search support is implemented and tested.
+- [Risk] Users expect `balanced` BGE-M3 to include model sparse weights -> Mitigation: explicitly document first-version BGE-M3 `balanced` as dense-only and defer sparse-without-ColBERT to a separate schema/search change.
 - [Risk] Existing env combinations break when profile is added -> Mitigation: preserve current behavior when `RETRIEVAL_PROFILE` is unset; validate only explicit profile conflicts.
 - [Risk] Search uses current default profile instead of persisted collection shape -> Mitigation: add regression tests around persisted config and profile changes.
 - [Risk] More config fields increase confusion -> Mitigation: docs should recommend profile-first configuration and mark low-level variables as advanced overrides.
@@ -130,9 +164,3 @@ Rationale: Users tuning performance need to know whether they are paying dense-o
 5. Update docs to recommend profile-first setup.
 
 Rollback is to unset `RETRIEVAL_PROFILE` and continue using existing low-level settings. Existing collections remain compatible because profile metadata is additive and search still uses persisted retrieval mode/schema.
-
-## Open Questions
-
-- Should `balanced` for BGE-M3 remain dense-only in the first version, or should this change include a new sparse-without-ColBERT BGE-M3 collection/search shape?
-- Should `index_codebase` accept `retrievalProfile` as a per-call argument in the first version, or should profile selection be daemon/global only?
-- Should `fast` also adjust splitter/chunk limits, or should it only control retrieval shape in this change?
