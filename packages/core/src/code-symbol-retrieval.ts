@@ -315,7 +315,9 @@ export function fuseCodeSearchResults(
             _pathBoost: Math.max(existing?._pathBoost ?? 0, pathBoost),
             _oneCObjectKindBoost: Math.max(existing?._oneCObjectKindBoost ?? 0, oneCSignals.objectKindBoost),
             _oneCObjectNameBoost: Math.max(existing?._oneCObjectNameBoost ?? 0, oneCSignals.objectNameBoost),
-            _oneCIntentBoost: Math.max(existing?._oneCIntentBoost ?? 0, oneCSignals.intentBoost),
+            _oneCIntentBoost: existing
+                ? Math.max(existing._oneCIntentBoost, oneCSignals.intentBoost)
+                : oneCSignals.intentBoost,
             _providerRank: Math.min(existing?._providerRank ?? Number.MAX_SAFE_INTEGER, providerRank),
         });
     };
@@ -938,6 +940,7 @@ function scoreOneCFormAndCommandIntent(normalizedQuery: string, normalizedConten
     const hasProductCardIntent =
         (normalizedQuery.includes('карточк') && normalizedQuery.includes('товар')) ||
         (normalizedQuery.includes('товар') && PRODUCT_CARD_TERMS.some((term) => normalizedQuery.includes(term)));
+    const hasProductCardAttributeIntent = hasProductCardIntent && !hasPrintIntent;
 
     if (hasStockReportIntent) {
         if (pathInfo.objectKind === 'report') {
@@ -961,9 +964,12 @@ function scoreOneCFormAndCommandIntent(normalizedQuery: string, normalizedConten
         } else if (pathInfo.moduleKind === 'objectModule') {
             score += 0.7;
         } else if (pathInfo.area === 'Commands') {
-            score += 0.15;
+            score += hasProductCardAttributeIntent ? -0.9 : 0.15;
         }
-        if (PRODUCT_CARD_TERMS.some((term) => normalizedContent.includes(term))) {
+        if (
+            PRODUCT_CARD_TERMS.some((term) => normalizedContent.includes(term)) &&
+            !(hasProductCardAttributeIntent && pathInfo.area === 'Commands')
+        ) {
             score += 0.3;
         }
     }

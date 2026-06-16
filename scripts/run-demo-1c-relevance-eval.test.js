@@ -219,6 +219,80 @@ test('supports non-regression baseline mode without requiring strict improvement
   );
 });
 
+test('enforces required residual assertions even when aggregate acceptance passes', () => {
+  const summary = {
+    metrics: {
+      hitAt10Count: 27,
+      queryCount: 30,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+    },
+    residualQueries: [
+      {
+        id: 'r06',
+        firstRelevantRank: 2,
+        topResultPaths: [
+          'Catalogs/Товары/Commands/ПечатьШтрихкода/Ext/CommandModule.bsl',
+          'Catalogs/Товары/Ext/ObjectModule.bsl',
+        ],
+      },
+    ],
+  };
+
+  assert.throws(
+    () => enforceAcceptance(summary, {
+      acceptanceThreshold: 27,
+      requiredResidualAssertions: [{
+        id: 'r06',
+        mustHitAt10: true,
+        rankBefore: {
+          preferredPrefix: 'Catalogs/Товары/Ext/ObjectModule.bsl',
+          disfavoredPrefix: 'Catalogs/Товары/Commands/ПечатьШтрихкода',
+        },
+      }],
+    }),
+    /Residual assertion r06 failed: expected Catalogs\/Товары\/Ext\/ObjectModule\.bsl before Catalogs\/Товары\/Commands\/ПечатьШтрихкода/,
+  );
+});
+
+test('requires baseline comparison when residual no-regression assertions are configured', () => {
+  const summary = {
+    metrics: {
+      hitAt10Count: 27,
+      queryCount: 30,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+    },
+    residualQueries: [
+      {
+        id: 'r01',
+        firstRelevantRank: 1,
+        topResultPaths: ['Reports/ОстаткиТоваровНаСкладах/Ext/ObjectModule.bsl'],
+      },
+    ],
+  };
+
+  assert.throws(
+    () => enforceAcceptance(summary, {
+      acceptanceThreshold: 27,
+      requiredResidualAssertions: [{
+        id: 'r01',
+        mustHitAt10: true,
+        noRegression: true,
+      }],
+    }),
+    /Residual assertion r01 failed: missing comparison for no-regression assertion/,
+  );
+});
+
 test('reports residual queries from caller-provided ids only', () => {
   const dataset = {
     dataset: 'unit',
@@ -264,6 +338,17 @@ test('keeps residual evaluation labels out of production ranking code', () => {
   }
 });
 
+test('records r05 print audit decision by accepting the document object print context', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'demo-1c-relevance.json'));
+  const r05 = dataset.queries.find((query) => query.id === 'r05');
+
+  assert.ok(r05);
+  assert.equal(
+    r05.expectedPathPrefixes.includes('Documents/РасходТовара/Ext/ObjectModule.bsl'),
+    true,
+  );
+});
+
 test('writes residual query outcomes to markdown reports', () => {
   const outPath = path.join(repoRoot, '.artifacts', 'test', 'residual-report.md');
   const summary = {
@@ -307,6 +392,24 @@ test('writes residual query outcomes to markdown reports', () => {
         topResultPaths: ['Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl'],
       },
     ],
+    residualAssertions: [
+      {
+        id: 'r01',
+        passed: false,
+        failures: ['expected hit within top 10'],
+        firstRelevantRank: null,
+        comparisonStatus: 'unchanged',
+        topResultPaths: ['Documents/РасходТовара/Ext/ObjectModule.bsl'],
+      },
+      {
+        id: 'r06',
+        passed: true,
+        failures: [],
+        firstRelevantRank: 2,
+        comparisonStatus: 'improved',
+        topResultPaths: ['Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl'],
+      },
+    ],
   };
   const comparison = {
     baseline: {
@@ -327,4 +430,7 @@ test('writes residual query outcomes to markdown reports', () => {
   assert.match(markdown, /## Residual queries/);
   assert.match(markdown, /\| r01 \| unchanged \|/);
   assert.match(markdown, /\| r06 \| improved \| 2 \|/);
+  assert.match(markdown, /## Residual assertions/);
+  assert.match(markdown, /\| r01 \| no \|  \| unchanged \| expected hit within top 10 \|/);
+  assert.match(markdown, /\| r06 \| yes \| 2 \| improved \|  \|/);
 });

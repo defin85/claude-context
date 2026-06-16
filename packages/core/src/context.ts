@@ -753,13 +753,13 @@ export class Context {
     private getBgeM3RerankLimit(topK: number): number {
         const rawLimit = envManager.get("BGE_M3_RERANK_LIMIT");
         if (!rawLimit) {
-            return topK;
+            return Math.max(100, topK);
         }
 
         const parsedLimit = Number.parseInt(rawLimit, 10);
         return Number.isInteger(parsedLimit) && parsedLimit > 0
             ? parsedLimit
-            : topK;
+            : Math.max(100, topK);
     }
 
     private createCodeSymbolProvidersFromEnv(): CodeSymbolProvider[] {

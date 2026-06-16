@@ -6,11 +6,13 @@ const path = require('path');
 const {
   enforceAcceptance,
   parseCsvList,
+  parseJsonOption,
   normalizeResults,
   score,
   validateLabels,
   buildComparison,
   writeMarkdownReport,
+  evaluateResidualAssertions,
 } = require('./run-demo-1c-relevance-eval.js');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -204,6 +206,7 @@ async function main() {
     indexFirst: Boolean(args.indexFirst),
     forceIndex: Boolean(args.forceIndex),
   };
+  const requiredResidualAssertions = parseJsonOption(args.requiredResidualAssertionsJson, 'required-residual-assertions-json');
 
   const startedAt = new Date().toISOString();
   const indexStatus = await ensureIndexed(clientConfig, options);
@@ -240,6 +243,7 @@ async function main() {
     resultsPath: rawPath,
     acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
     residualQueryIds: parseCsvList(args.residualQueryIds),
+    requiredResidualAssertions,
     baselineMode: args.baselineMode || undefined,
     startedAt,
     finishedAt,
@@ -256,6 +260,9 @@ async function main() {
   const comparison = args.baseline ? buildComparison(readJson(args.baseline), summary) : undefined;
   if (comparison) {
     summary.comparison = comparison;
+  }
+  if (Array.isArray(requiredResidualAssertions) && requiredResidualAssertions.length > 0) {
+    summary.residualAssertions = evaluateResidualAssertions(summary, requiredResidualAssertions);
   }
   writeJson(summaryPath, summary);
   writeJson(labelValidationPath, labelValidation);
@@ -277,6 +284,7 @@ async function main() {
     allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
     allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
     baselineMode: args.baselineMode,
+    requiredResidualAssertions,
   });
   console.log(JSON.stringify({
     rawPath,

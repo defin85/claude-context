@@ -37,6 +37,17 @@ function parseCsvList(value) {
     .filter(Boolean);
 }
 
+function parseJsonOption(value, fieldName) {
+  if (!value || value === true) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(String(value));
+  } catch (error) {
+    throw new Error(`Invalid JSON for --${fieldName}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function normalizeText(value) {
   return String(value || '')
     .trim()
@@ -314,7 +325,7 @@ function score(dataset, resultsById, runMetadata = {}) {
   }
 
   const residualQueryIds = new Set(runMetadata.residualQueryIds || []);
-  return {
+  const summary = {
     dataset: dataset.dataset,
     version: dataset.version,
     fixture: dataset.fixture,
@@ -326,6 +337,10 @@ function score(dataset, resultsById, runMetadata = {}) {
       ? { residualQueries: perQuery.filter((row) => residualQueryIds.has(row.id)) }
       : {}),
   };
+  if (Array.isArray(runMetadata.requiredResidualAssertions) && runMetadata.requiredResidualAssertions.length > 0) {
+    summary.residualAssertions = evaluateResidualAssertions(summary, runMetadata.requiredResidualAssertions);
+  }
+  return summary;
 }
 
 function validateLabels(dataset, codebasePath) {
@@ -442,6 +457,58 @@ function buildComparison(baseline, tuned) {
   };
 }
 
+function findPrefixRank(paths, prefix) {
+  const normalizedPrefix = normalizePath(prefix);
+  const index = paths.findIndex((item) => normalizePath(item).startsWith(normalizedPrefix));
+  return index >= 0 ? index + 1 : null;
+}
+
+function evaluateResidualAssertions(summary, assertions) {
+  const perQueryById = new Map((summary.perQuery || []).map((row) => [row.id, row]));
+  const residualById = new Map((summary.residualQueries || []).map((row) => [row.id, row]));
+  const comparisonById = new Map((summary.comparison?.perQuery || []).map((row) => [row.id, row]));
+
+  return assertions.map((assertion) => {
+    const row = residualById.get(assertion.id) || perQueryById.get(assertion.id);
+    const comparison = comparisonById.get(assertion.id);
+    const topPaths = row?.topResultPaths || [];
+    const failures = [];
+
+    if (!row) {
+      failures.push('missing residual query result');
+    }
+    if (assertion.mustHitAt10 && !row?.firstRelevantRank) {
+      failures.push('expected hit within top 10');
+    }
+    if (assertion.noRegression) {
+      if (!comparison) {
+        failures.push('missing comparison for no-regression assertion');
+      } else if (comparison.status === 'regressed') {
+        failures.push(`expected no regression, got ${comparison.status}`);
+      }
+    }
+    if (assertion.rankBefore) {
+      const preferredRank = findPrefixRank(topPaths, assertion.rankBefore.preferredPrefix);
+      const disfavoredRank = findPrefixRank(topPaths, assertion.rankBefore.disfavoredPrefix);
+      if (preferredRank === null || disfavoredRank === null || preferredRank >= disfavoredRank) {
+        failures.push(
+          `expected ${assertion.rankBefore.preferredPrefix} before ${assertion.rankBefore.disfavoredPrefix}`,
+        );
+      }
+    }
+
+    return {
+      id: assertion.id,
+      passed: failures.length === 0,
+      failures,
+      firstRelevantRank: row?.firstRelevantRank ?? null,
+      comparisonStatus: comparison?.status || null,
+      topResultPaths: topPaths,
+      assertion,
+    };
+  });
+}
+
 function enforceAcceptance(summary, options = {}) {
   const acceptanceThreshold = Number(options.acceptanceThreshold ?? summary.run?.acceptanceThreshold);
   const rawSummary = summary.run?.rawSummary || {};
@@ -474,6 +541,13 @@ function enforceAcceptance(summary, options = {}) {
       throw new Error(
         `Hit@10 count ${summary.metrics.hitAt10Count} does not improve over baseline ${baselineHitAt10Count}.`,
       );
+    }
+  }
+  const requiredResidualAssertions = options.requiredResidualAssertions || summary.run?.requiredResidualAssertions || [];
+  const residualAssertions = summary.residualAssertions || evaluateResidualAssertions(summary, requiredResidualAssertions);
+  for (const assertion of residualAssertions) {
+    if (!assertion.passed) {
+      throw new Error(`Residual assertion ${assertion.id} failed: ${assertion.failures.join('; ')}`);
     }
   }
 }
@@ -538,6 +612,15 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
       lines.push(`| ${row.id} | ${status} | ${row.firstRelevantRank ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
     }
   }
+  if (summary.residualAssertions?.length) {
+    lines.push('');
+    lines.push('## Residual assertions');
+    lines.push('| id | passed | first relevant rank | comparison status | failures | top paths |');
+    lines.push('| --- | --- | ---: | --- | --- | --- |');
+    for (const row of summary.residualAssertions) {
+      lines.push(`| ${row.id} | ${row.passed ? 'yes' : 'no'} | ${row.firstRelevantRank ?? ''} | ${row.comparisonStatus || ''} | ${row.failures.join('<br>')} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
+  }
   if (comparison?.regressions.length) {
     lines.push('');
     lines.push('## Regressions');
@@ -559,6 +642,7 @@ function main() {
   const rawResults = readJson(args.results);
   const dataset = args.useReportLabels ? datasetFromReport(rawResults) : readJson(datasetPath);
   const resultsById = normalizeResults(rawResults.results || rawResults, dataset, args.backend);
+  const requiredResidualAssertions = parseJsonOption(args.requiredResidualAssertionsJson, 'required-residual-assertions-json');
   const labelValidation = args.validateLabelsAgainst
     ? validateLabels(dataset, args.validateLabelsAgainst)
     : undefined;
@@ -574,6 +658,7 @@ function main() {
     finishedAt: rawResults.finishedAt,
     rawSummary: rawResults.summary,
     residualQueryIds: parseCsvList(args.residualQueryIds),
+    requiredResidualAssertions,
     baselineMode: args.baselineMode || undefined,
     labelValidation: labelValidation ? {
       codebasePath: labelValidation.codebasePath,
@@ -589,6 +674,9 @@ function main() {
     : undefined;
   if (comparison) {
     summary.comparison = comparison;
+  }
+  if (Array.isArray(requiredResidualAssertions) && requiredResidualAssertions.length > 0) {
+    summary.residualAssertions = evaluateResidualAssertions(summary, requiredResidualAssertions);
   }
   const output = JSON.stringify(summary, null, 2);
   if (args.out) {
@@ -623,6 +711,7 @@ function main() {
       allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
       allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
       baselineMode: args.baselineMode,
+      requiredResidualAssertions,
     });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -637,9 +726,11 @@ if (require.main === module) {
 module.exports = {
   enforceAcceptance,
   parseCsvList,
+  parseJsonOption,
   normalizeResults,
   score,
   validateLabels,
   buildComparison,
   writeMarkdownReport,
+  evaluateResidualAssertions,
 };

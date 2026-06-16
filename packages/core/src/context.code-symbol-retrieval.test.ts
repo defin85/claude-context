@@ -474,6 +474,42 @@ describe('Context code-symbol retrieval', () => {
         expect(results[0].metadata?.oneCIntentBoost).toBeGreaterThan(0);
     });
 
+    it('keeps a wider BGE-M3 rerank pool than requested topK so 1C path signals can rescue stock report candidates', async () => {
+        const broadDocuments = Array.from({ length: 60 }, (_, index) => ({
+            ...doc({
+                id: `broad-rerank-${index}`,
+                content: 'Расход товара склад остатки товар документ движение склад',
+                relativePath: index % 2 === 0
+                    ? 'src/cf/Documents/РасходТовара/Ext/ObjectModule.bsl'
+                    : 'src/cf/CommonModules/ОбменМобильныеПереопределяемый/Ext/Module.bsl',
+                startLine: index * 10 + 1,
+                endLine: index * 10 + 3,
+            }),
+            colbertVectors: [[1, 0]],
+        }));
+        const report = {
+            ...doc({
+                id: 'late-stock-report',
+                content: 'Отчет ОстаткиТоваровНаСкладах Склад Товар КоличествоОстаток Сформировать',
+                relativePath: 'src/cf/Reports/ОстаткиТоваровНаСкладахМобильный/Forms/ФормаОтчета/Ext/Form/Module.bsl',
+                startLine: 1,
+                endLine: 3,
+            }),
+            colbertVectors: [[0.5, 0]],
+        };
+        const vectorDatabase = createDb([...broadDocuments, report]);
+        vectorDatabase.bgeM3SearchResults = [
+            ...broadDocuments.map((document, index) => ({ document, score: 1 - index * 0.01 })),
+            { document: report, score: 0.5 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'остатки товаров на складах отчет по складу', 10);
+
+        expect(results.map((result) => result.relativePath)).toContain(report.relativePath);
+        expect(results[0].relativePath).toBe(report.relativePath);
+    });
+
     it('surfaces product card contexts above scanner and barcode commands for product-card intent', async () => {
         const productCard = doc({
             id: 'product-card',
@@ -508,6 +544,63 @@ describe('Context code-symbol retrieval', () => {
 
         expect(results[0].relativePath).toBe(productCard.relativePath);
         expect(results[0].metadata?.oneCIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces product object modules above barcode commands for attribute-card intent', async () => {
+        const productObject = doc({
+            id: 'product-object',
+            content: 'Справочник Товары объект карточка товара реквизиты артикул штрихкод цена',
+            relativePath: 'src/cf/Catalogs/Товары/Ext/ObjectModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const barcodeCommand = doc({
+            id: 'barcode-command-object',
+            content: 'Печать штрихкода товара команда штрихкод этикетка',
+            relativePath: 'src/cf/Catalogs/Товары/Commands/ПечатьШтрихкода/Ext/CommandModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([productObject, barcodeCommand]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: barcodeCommand, score: 0.65 },
+            { document: productObject, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'карточка товара реквизиты цена артикул штрихкод', 2);
+
+        expect(results[0].relativePath).toBe(productObject.relativePath);
+        expect(results[1].relativePath).toBe(barcodeCommand.relativePath);
+    });
+
+    it('keeps barcode print commands supported for explicit barcode print intent', async () => {
+        const productCard = doc({
+            id: 'product-card-print-counter',
+            content: 'Форма карточки товара Реквизиты Артикул ШтрихКод Цена Поставщик',
+            relativePath: 'src/cf/Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const barcodeCommand = doc({
+            id: 'barcode-command-print-counter',
+            content: 'Печать штрихкода товара команда штрихкод этикетка',
+            relativePath: 'src/cf/Catalogs/Товары/Commands/ПечатьШтрихкода/Ext/CommandModule.bsl',
+            startLine: 1,
+            endLine: 3,
+        });
+        const vectorDatabase = createDb([productCard, barcodeCommand]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: productCard, score: 0.55 },
+            { document: barcodeCommand, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'печать штрихкода товара этикетка', 2);
+
+        expect(results[0].relativePath).toBe(barcodeCommand.relativePath);
+        expect(results[0].metadata?.oneCIntentBoost).toBeGreaterThan(0);
+        expect(results[0].metadata?.exactSymbolBoost).toBeGreaterThanOrEqual(0);
     });
 
     it('surfaces common forms whose path name nearly matches the query', async () => {

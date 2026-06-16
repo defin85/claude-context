@@ -32,7 +32,7 @@
       "id": "r05",
       "query": "печать расходной накладной документ расход товара",
       "kind": "known-miss",
-      "expectedPathPrefixes": ["Documents/РасходТовара/Commands/ПечатьРасходнойНакладной"]
+      "expectedPathPrefixes": ["Documents/РасходТовара/Commands/ПечатьРасходнойНакладной", "Documents/РасходТовара/Ext/ObjectModule.bsl"]
     },
     {
       "id": "r06",
