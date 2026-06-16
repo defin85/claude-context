@@ -3,31 +3,12 @@
 
 import { ChromeMilvusAdapter, CodeChunk } from './milvus/chromeMilvusAdapter';
 import { MilvusConfigManager } from './config/milvusConfig';
-import { IndexedRepoManager, IndexedRepository } from './storage/indexedRepoManager';
+import { IndexedRepoManager } from './storage/indexedRepoManager';
 
 export { };
 
 const EMBEDDING_DIM = 1536;
 const EMBEDDING_BATCH_SIZE = 100;
-const MAX_TOKENS_PER_BATCH = 250000;
-const MAX_CHUNKS_PER_BATCH = 100;
-
-// Cosine similarity function
-function cosSim(a: number[], b: number[]): number {
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-    if (normA === 0 || normB === 0) {
-        return 0;
-    }
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
 
 class EmbeddingModel {
     private static config: { apiKey: string; model: string } | null = null;
@@ -161,7 +142,7 @@ class MilvusVectorDB {
 }
 
 // Code splitting functionality - using same parameters as VSCode extension
-function splitCode(content: string, language: string = '', chunkSize: number = 1000, chunkOverlap: number = 200): { content: string; startLine: number; endLine: number }[] {
+function splitCode(content: string, _language: string = '', chunkSize: number = 1000, chunkOverlap: number = 200): { content: string; startLine: number; endLine: number }[] {
     const lines = content.split('\n');
     const chunks: { content: string; startLine: number; endLine: number }[] = [];
 
@@ -405,7 +386,7 @@ async function handleTestMilvusConnection(sendResponse: Function) {
         console.log('Testing Milvus connection...');
 
         const adapter = new ChromeMilvusAdapter('test_connection');
-        const connected = await adapter.testConnection();
+        await adapter.testConnection();
 
         console.log('Milvus connection test completed successfully');
         sendResponse({ success: true, connected: true });
@@ -687,7 +668,7 @@ async function handleCheckIndexStatus(request: any, sendResponse: Function) {
                     indexInfo: indexedRepo,
                     stats
                 });
-            } catch (milvusError) {
+            } catch {
                 await IndexedRepoManager.removeIndexedRepo(repoId);
                 sendResponse({
                     success: true,

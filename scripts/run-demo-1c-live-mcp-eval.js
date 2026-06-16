@@ -164,6 +164,9 @@ async function collectResults(clientConfig, dataset, options) {
       query: query.query,
       kind: query.kind,
       expectedPrefixes: query.expectedPathPrefixes,
+      acceptablePrefixes: query.acceptablePathPrefixes || [],
+      failureClass: query.failureClass,
+      note: query.note,
       rankingProfile: structured.rankingProfile || options.rankingProfile,
       elapsedMs,
       error,
@@ -242,6 +245,8 @@ async function main() {
     datasetPath,
     resultsPath: rawPath,
     acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
+    strictHitAt1Threshold: args.strictHitAt1Threshold ? Number(args.strictHitAt1Threshold) : undefined,
+    strictHitAt5Threshold: args.strictHitAt5Threshold ? Number(args.strictHitAt5Threshold) : undefined,
     residualQueryIds: parseCsvList(args.residualQueryIds),
     requiredResidualAssertions,
     baselineMode: args.baselineMode || undefined,
@@ -279,6 +284,8 @@ async function main() {
   }
   enforceAcceptance(summary, {
     acceptanceThreshold: args.acceptanceThreshold,
+    strictHitAt1Threshold: args.strictHitAt1Threshold,
+    strictHitAt5Threshold: args.strictHitAt5Threshold,
     allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
     allowToolErrors: Boolean(args.allowToolErrors),
     allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),

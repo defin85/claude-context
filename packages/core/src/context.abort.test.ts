@@ -3,7 +3,6 @@ import { Embedding, EmbeddingVector } from './embedding';
 import { Splitter, CodeChunk } from './splitter';
 import {
     VectorDatabase,
-    VectorDocument,
     VectorSearchResult,
     HybridSearchRequest,
     HybridSearchOptions,

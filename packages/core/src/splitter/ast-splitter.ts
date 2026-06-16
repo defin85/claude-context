@@ -142,7 +142,7 @@ export class AstCodeSplitter implements Splitter {
             );
 
             // If chunks are too large, split them further
-            const refinedChunks = await this.refineChunks(chunks, code);
+            const refinedChunks = await this.refineChunks(chunks);
 
             return refinedChunks;
         } catch (error) {
@@ -260,10 +260,7 @@ export class AstCodeSplitter implements Splitter {
         return chunks;
     }
 
-    private async refineChunks(
-        chunks: CodeChunk[],
-        originalCode: string,
-    ): Promise<CodeChunk[]> {
+    private async refineChunks(chunks: CodeChunk[]): Promise<CodeChunk[]> {
         const refinedChunks: CodeChunk[] = [];
 
         for (const chunk of chunks) {
@@ -271,7 +268,7 @@ export class AstCodeSplitter implements Splitter {
                 refinedChunks.push(chunk);
             } else {
                 // Split large chunks using character-based splitting
-                const subChunks = this.splitLargeChunk(chunk, originalCode);
+                const subChunks = this.splitLargeChunk(chunk);
                 refinedChunks.push(...subChunks);
             }
         }
@@ -279,10 +276,7 @@ export class AstCodeSplitter implements Splitter {
         return this.addOverlap(refinedChunks);
     }
 
-    private splitLargeChunk(
-        chunk: CodeChunk,
-        originalCode: string,
-    ): CodeChunk[] {
+    private splitLargeChunk(chunk: CodeChunk): CodeChunk[] {
         const lines = chunk.content.split("\n");
         const subChunks: CodeChunk[] = [];
         let currentChunk = "";

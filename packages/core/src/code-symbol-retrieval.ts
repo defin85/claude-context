@@ -275,6 +275,8 @@ export function fuseCodeSearchResults(
         _oneCObjectKindBoost: number;
         _oneCObjectNameBoost: number;
         _oneCIntentBoost: number;
+        _oneCScenarioIntentBoost: number;
+        _oneCGenericTermPenalty: number;
         _providerRank: number;
     }>();
 
@@ -318,6 +320,15 @@ export function fuseCodeSearchResults(
             _oneCIntentBoost: existing
                 ? Math.max(existing._oneCIntentBoost, oneCSignals.intentBoost)
                 : oneCSignals.intentBoost,
+            _oneCScenarioIntentBoost: existing
+                ? Math.max(existing._oneCScenarioIntentBoost, oneCSignals.scenarioIntentBoost)
+                : oneCSignals.scenarioIntentBoost,
+            _oneCGenericTermPenalty: existing
+                ? Math.max(
+                    existing._oneCGenericTermPenalty,
+                    scoreOneCGenericTermPenalty(tokens, result.relativePath, result.content, oneCSignals.scenarioIntentBoost, exactSymbolBoost, rankingProfile),
+                )
+                : scoreOneCGenericTermPenalty(tokens, result.relativePath, result.content, oneCSignals.scenarioIntentBoost, exactSymbolBoost, rankingProfile),
             _providerRank: Math.min(existing?._providerRank ?? Number.MAX_SAFE_INTEGER, providerRank),
         });
     };
@@ -349,6 +360,9 @@ export function fuseCodeSearchResults(
         const providerRankBoost = result._providerRank < Number.MAX_SAFE_INTEGER
             ? Math.max(0, 1.5 - result._providerRank * 0.05)
             : 0;
+        const protectedGenericPenalty = providerRankBoost > 0 || hasProtectedExactSymbol(tokens, result.content)
+            ? 0
+            : result._oneCGenericTermPenalty;
         const baseFusionScore =
             result._semanticScore +
             result._lexicalScore +
@@ -357,7 +371,9 @@ export function fuseCodeSearchResults(
             result._oneCObjectKindBoost +
             result._oneCObjectNameBoost +
             result._oneCIntentBoost +
-            providerRankBoost;
+            result._oneCScenarioIntentBoost +
+            providerRankBoost -
+            protectedGenericPenalty;
 
         return {
             content: result.content,
@@ -375,6 +391,8 @@ export function fuseCodeSearchResults(
                 oneCObjectKindBoost: result._oneCObjectKindBoost,
                 oneCObjectNameBoost: result._oneCObjectNameBoost,
                 oneCIntentBoost: result._oneCIntentBoost,
+                oneCScenarioIntentBoost: result._oneCScenarioIntentBoost,
+                oneCGenericTermPenalty: protectedGenericPenalty,
                 rankingProfile,
                 providerRankBoost,
                 duplicatePenalty: 0,
@@ -772,6 +790,7 @@ interface OneCSignalScores {
     objectKindBoost: number;
     objectNameBoost: number;
     intentBoost: number;
+    scenarioIntentBoost: number;
 }
 
 const ONE_C_OBJECT_KIND_BY_SEGMENT: Record<string, string> = {
@@ -783,6 +802,8 @@ const ONE_C_OBJECT_KIND_BY_SEGMENT: Record<string, string> = {
     CalculationRegisters: 'register',
     Reports: 'report',
     DataProcessors: 'dataProcessor',
+    DocumentJournals: 'documentJournal',
+    Constants: 'constant',
     CommonCommands: 'command',
     CommonForms: 'form',
     CommonModules: 'commonModule',
@@ -793,6 +814,8 @@ const ONE_C_KIND_TERMS: Record<string, string[]> = {
     document: ['документ', 'документы', 'накладная', 'заказ'],
     register: ['регистр', 'регистры', 'остатки', 'взаиморасчеты'],
     report: ['отчет', 'отчеты', 'ведомость'],
+    documentJournal: ['журнал', 'журнала'],
+    constant: ['константа', 'константы', 'constant'],
     command: ['команда', 'команды'],
     form: ['форма', 'форму', 'формы'],
     commonModule: ['общий модуль', 'общем модуле', 'common module'],
@@ -802,6 +825,21 @@ const ONE_C_KIND_TERMS: Record<string, string[]> = {
 const PRINT_TERMS = ['печать', 'печатная', 'печатный', 'прайс', 'макет', 'табличный документ', 'накладная'];
 const STOCK_REPORT_TERMS = ['остат', 'склад', 'отчет'];
 const PRODUCT_CARD_TERMS = ['карточк', 'реквизит', 'цена', 'артикул', 'штрихкод'];
+const ONE_C_GENERIC_HIGH_COLLISION_TERMS = ['обработка', 'состояние', 'проверка', 'подпись', 'настройка', 'форма', 'документ', 'письмо'];
+const ONE_C_SPECIFIC_SCENARIO_TERMS = [
+    'ndsresponse',
+    'фнс',
+    'инн',
+    'кпп',
+    'мчд',
+    'эдо',
+    'входящий',
+    'исходящий',
+    'sms',
+    'архив',
+    'передача дел',
+    'помощник отправить',
+];
 
 function scoreOneCPathSignals(
     tokens: CodeSymbolQueryTokens,
@@ -811,12 +849,12 @@ function scoreOneCPathSignals(
     rankingProfile: RankingProfile = 'auto',
 ): OneCSignalScores {
     if (rankingProfile === 'generic') {
-        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0 };
+        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0, scenarioIntentBoost: 0 };
     }
 
     const pathInfo = parseOneCPath(relativePath);
     if (!pathInfo.recognized) {
-        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0 };
+        return { objectKindBoost: 0, objectNameBoost: 0, intentBoost: 0, scenarioIntentBoost: 0 };
     }
 
     const normalizedQuery = tokens.normalizedQuery;
@@ -826,11 +864,13 @@ function scoreOneCPathSignals(
     const objectKindBoost = Math.min(1.2, scoreOneCObjectKindIntent(normalizedQuery, pathInfo));
     const objectNameBoost = Math.min(1.3, scoreOneCObjectName(tokens, pathInfo, metadataText));
     const intentBoost = Math.min(1.1, scoreOneCFormAndCommandIntent(normalizedQuery, normalizedContent, pathInfo));
+    const scenarioIntentBoost = Math.min(1.4, scoreOneCScenarioIntent(normalizedQuery, normalizedContent, pathInfo));
 
     return {
         objectKindBoost,
         objectNameBoost,
         intentBoost,
+        scenarioIntentBoost,
     };
 }
 
@@ -890,6 +930,14 @@ function scoreOneCObjectKindIntent(normalizedQuery: string, pathInfo: OneCPathIn
         score += 0.9;
     }
     if (normalizedQuery.includes('команд') && pathInfo.area === 'Commands') {
+        score += 0.7;
+    }
+    if ((normalizedQuery.includes('менеджер') || normalizedQuery.includes('модуль менеджера')) &&
+        pathInfo.moduleKind === 'managerModule') {
+        score += 0.7;
+    }
+    if ((normalizedQuery.includes('объект') || normalizedQuery.includes('объектный')) &&
+        pathInfo.moduleKind === 'objectModule') {
         score += 0.7;
     }
 
@@ -1003,6 +1051,163 @@ function scoreOneCFormAndCommandIntent(normalizedQuery: string, normalizedConten
     }
 
     return score;
+}
+
+function scoreOneCScenarioIntent(normalizedQuery: string, normalizedContent: string, pathInfo: OneCPathInfo): number {
+    let score = 0;
+    const objectName = normalizeText(pathInfo.objectName || '');
+    const areaName = normalizeText(pathInfo.areaName || '');
+    const candidateText = `${objectName} ${areaName} ${normalizedContent}`;
+    const hasTerm = (terms: string[]) => terms.some((term) => normalizedQuery.includes(normalizeText(term)));
+    const candidateHas = (terms: string[]) => terms.some((term) => candidateText.includes(normalizeText(term)));
+
+    if (hasTerm(['фнс', 'ndsresponse']) && candidateHas(['фнс', 'ndsresponse', 'проверкаконтрагентов'])) {
+        score += 1.1;
+    }
+
+    if (hasTerm(['сохраненное состояние', 'сохраненное', 'состояние']) &&
+        hasTerm(['инн', 'кпп']) &&
+        candidateHas(['проверкаконтрагентов', 'состояние', 'инн', 'кпп'])) {
+        score += objectName.includes('проверкаконтрагентов') ? 1.25 : 0.6;
+    }
+
+    if (hasTerm(['мчд', 'доверенност']) && pathInfo.objectKind === 'constant') {
+        score += 0.9;
+        if (pathInfo.moduleKind === 'managerModule') {
+            score += 0.35;
+        }
+        if (hasTerm(['адрес', 'реестр']) && candidateHas(['адрес', 'реестр'])) {
+            score += 0.25;
+        }
+        if (hasTerm(['тип', 'подписи']) && candidateHas(['тип', 'подписи'])) {
+            score += 0.25;
+        }
+    }
+
+    const asksInbound = hasTerm(['входящий', 'входящее', 'incoming', 'inbound']);
+    const asksOutbound = hasTerm(['исходящий', 'исходящее', 'outgoing', 'outbound']);
+    const asksEdiViewingForm = hasTerm(['эдо', 'edi']) && hasTerm(['просмотр', 'форма', 'карточка']);
+    if (asksEdiViewingForm &&
+        pathInfo.objectKind === 'document' &&
+        pathInfo.area === 'Forms' &&
+        (areaName.includes('формопросмотра') || areaName.includes('формапросмотра'))) {
+        if (asksInbound && objectName.includes('входящий')) {
+            score += 1.25;
+        }
+        if (asksOutbound && objectName.includes('исходящий')) {
+            score += 1.25;
+        }
+    }
+
+    if (hasTerm(['помощник']) && hasTerm(['отправить', 'отправка']) && objectName.includes('помощникотправить')) {
+        if (pathInfo.objectKind === 'form' && pathInfo.area === 'Ext' && hasTerm(['форма', 'дерево', 'вариант'])) {
+            score += 1.25;
+        } else if (pathInfo.objectKind === 'commonModule' && hasTerm(['клиент', 'модуль'])) {
+            score += 0.9;
+        }
+    }
+
+    if (hasTerm(['письмо', 'письма', 'почта', 'почты', 'email', 'электронная почта']) &&
+        pathInfo.objectKind === 'documentJournal' &&
+        objectName.includes('электроннаяпочта')) {
+        if (hasTerm(['печать', 'печат']) && areaName.includes('печатьписьма')) {
+            score += 1.3;
+        } else if (hasTerm(['сохранение', 'сохранить']) && areaName.includes('сохранениеписьма')) {
+            score += 1.3;
+        } else if (hasTerm(['просмотр', 'вложенн']) && areaName.includes('просмотрвложенногописьма')) {
+            score += 1.2;
+        } else if (hasTerm(['журнал', 'форма'])) {
+            score += 0.8;
+        }
+    }
+
+    if (hasTerm(['sms', 'смс'])) {
+        if (hasTerm(['провайдер', 'сервис', 'отправка', 'отправить']) &&
+            pathInfo.objectKind === 'commonModule' &&
+            objectName.includes('отправкаsms')) {
+            score += 1.2;
+        }
+        if (hasTerm(['документ', 'уведомление', 'статус', 'лимит', 'форма']) &&
+            pathInfo.objectKind === 'document' &&
+            objectName.includes('уведомлениепоsms')) {
+            score += 1.25;
+        }
+        if (hasTerm(['настройка', 'форма']) &&
+            pathInfo.objectKind === 'form' &&
+            objectName.includes('настройкаотправкиsms')) {
+            score += 1.15;
+        }
+    }
+
+    if (hasTerm(['передача дел', 'архив']) &&
+        pathInfo.objectKind === 'document' &&
+        objectName.includes('передачаделвархив')) {
+        if (hasTerm(['менеджер', 'опись', 'печат']) && pathInfo.moduleKind === 'managerModule') {
+            score += 1.25;
+        } else if (hasTerm(['объект', 'подпис', 'проверка']) && pathInfo.moduleKind === 'objectModule') {
+            score += 1.25;
+        } else {
+            score += 0.7;
+        }
+    }
+
+    if (hasTerm(['транспортный контейнер', 'контейнер эдо']) &&
+        pathInfo.objectKind === 'document' &&
+        objectName.includes('транспортныйконтейнерэдо')) {
+        if (hasTerm(['команда', 'сохранить', 'диск']) && pathInfo.area === 'Commands') {
+            score += 1.2;
+        } else {
+            score += 0.8;
+        }
+    }
+
+    return score;
+}
+
+function scoreOneCGenericTermPenalty(
+    tokens: CodeSymbolQueryTokens,
+    relativePath: string,
+    content: string,
+    scenarioIntentBoost: number,
+    exactSymbolBoost: number,
+    rankingProfile: RankingProfile,
+): number {
+    if (rankingProfile === 'generic' || scenarioIntentBoost > 0 || (exactSymbolBoost > 0 && hasProtectedExactSymbol(tokens, content))) {
+        return 0;
+    }
+    const normalizedQuery = tokens.normalizedQuery;
+    const queryHasGenericTerm = ONE_C_GENERIC_HIGH_COLLISION_TERMS
+        .some((term) => normalizedQuery.includes(normalizeText(term)));
+    const queryHasSpecificTerm = ONE_C_SPECIFIC_SCENARIO_TERMS
+        .some((term) => normalizedQuery.includes(normalizeText(term)));
+    if (!queryHasGenericTerm || !queryHasSpecificTerm) {
+        return 0;
+    }
+
+    const candidateText = normalizeText(`${relativePath} ${content}`);
+    const genericCandidateTermCount = ONE_C_GENERIC_HIGH_COLLISION_TERMS
+        .filter((term) => candidateText.includes(normalizeText(term))).length;
+    const specificCandidateTermCount = ONE_C_SPECIFIC_SCENARIO_TERMS
+        .filter((term) => candidateText.includes(normalizeText(term))).length;
+    if (genericCandidateTermCount < 2 || specificCandidateTermCount > 0) {
+        return 0;
+    }
+
+    return Math.min(0.9, 0.3 + genericCandidateTermCount * 0.15);
+}
+
+function hasProtectedExactSymbol(tokens: CodeSymbolQueryTokens, content: string): boolean {
+    if (!tokens.hasCodeLikeTerm) {
+        return false;
+    }
+    const normalizedContent = normalizeText(content);
+    return tokens.exactTerms.some((term) => {
+        const normalized = normalizeText(term);
+        if (!normalized || ONE_C_GENERIC_HIGH_COLLISION_TERMS.includes(normalized)) {
+            return false;
+        }
+        return normalizedContent.includes(normalized);
+    });
 }
 
 function splitOneCNameTerms(value: string): string[] {

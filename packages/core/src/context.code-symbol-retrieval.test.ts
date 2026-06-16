@@ -734,6 +734,331 @@ describe('Context code-symbol retrieval', () => {
         expect(results.some((result) => result.metadata?.duplicatePenalty >= 1.2)).toBe(true);
     });
 
+    it('surfaces FNS counterparty response handling above generic queue-processing modules', async () => {
+        const fnsModule = doc({
+            id: 'fns-counterparty',
+            content: 'NdsResponse ОтветФНС ПроверкаКонтрагентов СостояниеКонтрагента ИНН КПП',
+            relativePath: 'src/cf/CommonModules/ПроверкаКонтрагентовФНС/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const queueModule = doc({
+            id: 'generic-queue-processing',
+            content: 'Обработка очереди состояние контрагентов проверка обмена',
+            relativePath: 'src/cf/CommonModules/ОбработкаОчередиЗаданий/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([fnsModule, queueModule]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: queueModule, score: 0.85 },
+            { document: fnsModule, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'NdsResponse ответ ФНС состояние проверки контрагента', 2);
+
+        expect(results[0].relativePath).toBe(fnsModule.relativePath);
+        expect(results[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces saved counterparty state server-call modules above broad exchange modules', async () => {
+        const stateModule = doc({
+            id: 'counterparty-state',
+            content: 'Сохраненное состояние контрагента ИНН КПП загрузить состояние проверки',
+            relativePath: 'src/cf/CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const exchangeModule = doc({
+            id: 'counterparty-exchange',
+            content: 'Обмен с контрагентами загрузка реквизитов организация контрагент',
+            relativePath: 'src/cf/CommonModules/ОбменСКонтрагентамиВызовСервера/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([stateModule, exchangeModule]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: exchangeModule, score: 0.8 },
+            { document: stateModule, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'где хранится сохраненное состояние контрагента по ИНН КПП', 2);
+
+        expect(results[0].relativePath).toBe(stateModule.relativePath);
+        expect(results[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces MCHD constant manager modules above generic signature-check forms', async () => {
+        const constantManager = doc({
+            id: 'mchd-registry-constant',
+            content: 'АдресРеестраМЧД ФНС адрес реестра машиночитаемых доверенностей',
+            relativePath: 'src/cf/Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const signatureForm = doc({
+            id: 'generic-signature-form',
+            content: 'Результаты проверки подписи полномочия доверенности МЧД ФНС',
+            relativePath: 'src/cf/DataProcessors/РезультатыПроверкиПодписи/Forms/ПроверкаПолномочийДоверенности/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([constantManager, signatureForm]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: signatureForm, score: 0.8 },
+            { document: constantManager, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'адрес реестра МЧД ФНС константа менеджер', 2);
+
+        expect(results[0].relativePath).toBe(constantManager.relativePath);
+        expect(results[0].metadata?.oneCObjectKindBoost).toBeGreaterThan(0);
+        expect(results[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces inbound and outbound EDI viewing forms above broad MCHD modules', async () => {
+        const inboundForm = doc({
+            id: 'inbound-edi-form',
+            content: 'Входящий ЭДО форма просмотра ручная проверка подписи МЧД',
+            relativePath: 'src/cf/Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const outboundForm = doc({
+            id: 'outbound-edi-form',
+            content: 'Исходящий ЭДО форма просмотра ручная проверка подписи МЧД',
+            relativePath: 'src/cf/Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const broadMchd = doc({
+            id: 'broad-mchd',
+            content: 'МЧД доверенности подписи ЭДО проверка полномочий общий модуль',
+            relativePath: 'src/cf/CommonModules/МашиночитаемыеДоверенностиИнтеграцияЦентраЭДО/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([inboundForm, outboundForm, broadMchd]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: broadMchd, score: 0.85 },
+            { document: outboundForm, score: 0.55 },
+            { document: inboundForm, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const inboundResults = await context.semanticSearch('/tmp/example', 'входящий ЭДО форма просмотра проверка МЧД подписи', 3);
+        const outboundResults = await context.semanticSearch('/tmp/example', 'исходящий ЭДО форма просмотра проверка МЧД подписи', 3);
+
+        expect(inboundResults[0].relativePath).toBe(inboundForm.relativePath);
+        expect(outboundResults[0].relativePath).toBe(outboundForm.relativePath);
+        expect(inboundResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+        expect(outboundResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces send-assistant form intent above common helper modules', async () => {
+        const sendAssistantForm = doc({
+            id: 'send-assistant-form',
+            content: 'Помощник отправить форма дерево вариантов проверка возможности отправки',
+            relativePath: 'src/cf/CommonForms/ПомощникОтправить/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const helperModule = doc({
+            id: 'send-assistant-helper',
+            content: 'Помощник отправить клиент общий модуль варианты отправки',
+            relativePath: 'src/cf/CommonModules/ПомощникОтправитьКлиент/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([sendAssistantForm, helperModule]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: helperModule, score: 0.8 },
+            { document: sendAssistantForm, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'помощник отправить форма дерево вариантов проверка отправки', 2);
+
+        expect(results[0].relativePath).toBe(sendAssistantForm.relativePath);
+        expect(results[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('surfaces email print and save journal forms above account setup forms', async () => {
+        const printForm = doc({
+            id: 'email-print-form',
+            content: 'Печать письма журнал электронная почта форма печати',
+            relativePath: 'src/cf/DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const saveForm = doc({
+            id: 'email-save-form',
+            content: 'Сохранение письма журнал электронная почта вложения',
+            relativePath: 'src/cf/DocumentJournals/ЭлектроннаяПочта/Forms/СохранениеПисьма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const accountSetup = doc({
+            id: 'email-account-setup',
+            content: 'Настройка почты smtp учетная запись электронная почта',
+            relativePath: 'src/cf/DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([printForm, saveForm, accountSetup]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: accountSetup, score: 0.8 },
+            { document: printForm, score: 0.45 },
+            { document: saveForm, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const printResults = await context.semanticSearch('/tmp/example', 'печать письма журнал электронной почты форма', 3);
+        const saveResults = await context.semanticSearch('/tmp/example', 'сохранение письма электронная почта форма журнала', 3);
+
+        expect(printResults[0].relativePath).toBe(printForm.relativePath);
+        expect(saveResults[0].relativePath).toBe(saveForm.relativePath);
+        expect(printResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+        expect(saveResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('supports SMS service-module acceptability and SMS notification document intent', async () => {
+        const smsService = doc({
+            id: 'sms-service',
+            content: 'Отправка SMS клиент провайдер сервис доставка сообщения',
+            relativePath: 'src/cf/CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const smsDocument = doc({
+            id: 'sms-document',
+            content: 'Документ уведомление по SMS статус лимиты жизненный цикл',
+            relativePath: 'src/cf/Documents/УведомлениеПоSMS/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const genericNotification = doc({
+            id: 'generic-notification',
+            content: 'Уведомления пользователи сообщение состояние отправка',
+            relativePath: 'src/cf/CommonForms/НастройкаУведомлений/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([smsService, smsDocument, genericNotification]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: genericNotification, score: 0.85 },
+            { document: smsService, score: 0.5 },
+            { document: smsDocument, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const serviceResults = await context.semanticSearch('/tmp/example', 'отправка SMS через провайдера сервисный модуль', 3);
+        const documentResults = await context.semanticSearch('/tmp/example', 'документ уведомление по SMS статус лимиты форма', 3);
+
+        expect(serviceResults[0].relativePath).toBe(smsService.relativePath);
+        expect(documentResults[0].relativePath).toBe(smsDocument.relativePath);
+        expect(serviceResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+        expect(documentResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('separates archive-transfer manager and object contexts from generic archive forms', async () => {
+        const archiveManager = doc({
+            id: 'archive-manager',
+            content: 'Передача дел в архив менеджер печатная опись реестр',
+            relativePath: 'src/cf/Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const archiveObject = doc({
+            id: 'archive-object',
+            content: 'Передача дел в архив объект проверка подписей интеграция',
+            relativePath: 'src/cf/Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const genericArchive = doc({
+            id: 'generic-archive-settings',
+            content: 'Архив сертификаты хранилище настройка подписи',
+            relativePath: 'src/cf/DataProcessors/НастройкаИнтеграцииСАрхивом/Forms/НастройкаИнтеграцииСАрхивом/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([archiveManager, archiveObject, genericArchive]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: genericArchive, score: 0.85 },
+            { document: archiveObject, score: 0.5 },
+            { document: archiveManager, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const managerResults = await context.semanticSearch('/tmp/example', 'передача дел в архив менеджер печатная опись', 3);
+        const objectResults = await context.semanticSearch('/tmp/example', 'передача дел в архив объект проверка подписей', 3);
+
+        expect(managerResults[0].relativePath).toBe(archiveManager.relativePath);
+        expect(objectResults[0].relativePath).toBe(archiveObject.relativePath);
+        expect(managerResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+        expect(objectResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+    });
+
+    it('dampens generic term dominance only when specific scenario evidence exists', async () => {
+        const fnsModule = doc({
+            id: 'fns-specific-dampening',
+            content: 'NdsResponse ФНС проверка контрагента ИНН КПП',
+            relativePath: 'src/cf/CommonModules/ПроверкаКонтрагентовФНС/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const genericProcessing = doc({
+            id: 'generic-processing-dampening',
+            content: 'Обработка состояние проверка подпись настройка документ форма письмо',
+            relativePath: 'src/cf/CommonModules/ОбщаяОбработкаСостояний/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([fnsModule, genericProcessing]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: genericProcessing, score: 1.1 },
+            { document: fnsModule, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'NdsResponse ФНС обработка состояние проверка контрагента', 2);
+
+        expect(results[0].relativePath).toBe(fnsModule.relativePath);
+        expect(results.find((result) => result.relativePath === genericProcessing.relativePath)?.metadata?.oneCGenericTermPenalty).toBeGreaterThan(0);
+    });
+
+    it('keeps broad common modules neutral for broad 1C subsystem queries', async () => {
+        const broadMchd = doc({
+            id: 'broad-mchd-neutral',
+            content: 'МЧД доверенности ЭДО подписи полномочия интеграция',
+            relativePath: 'src/cf/CommonModules/МашиночитаемыеДоверенностиИнтеграцияЦентраЭДО/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const exactConstant = doc({
+            id: 'constant-neutral',
+            content: 'Адрес реестра МЧД',
+            relativePath: 'src/cf/Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([broadMchd, exactConstant]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: broadMchd, score: 0.8 },
+            { document: exactConstant, score: 0.55 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'МЧД доверенности ЭДО интеграция', 2);
+
+        expect(results[0].relativePath).toBe(broadMchd.relativePath);
+        expect(results[0].metadata?.oneCGenericTermPenalty).toBe(0);
+    });
+
     it('maps fake rlm-tools-bsl provider results to indexed chunks with diagnostics', async () => {
         const provider = new FakeProvider();
         provider.candidates = [{

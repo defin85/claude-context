@@ -1,0 +1,278 @@
+{
+  "dataset": "demo-do30-1c-scenarios",
+  "version": 1,
+  "fixture": "examples/demo-do30-1c",
+  "labelsAreProductionRules": false,
+  "queries": [
+    {
+      "id": "s01",
+      "query": "NdsResponse ответ ФНС состояние проверки контрагента",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonModules/ПроверкаКонтрагентовФНС/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonModules/ПроверкаКонтрагентовФНСПовтИсп/Ext/Module.bsl", "Constants/ИспользоватьПроверкуКонтрагентов"],
+      "failureClass": "fns-counterparty-state",
+      "note": "Строгая цель - модуль ФНС, допустим соседний повторно используемый модуль или настройка проверки."
+    },
+    {
+      "id": "s02",
+      "query": "где хранится сохраненное состояние контрагента по ИНН КПП",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonModules/ПроверкаКонтрагентовВызовСервераПовтИсп", "CommonForms/НастройкиПроверкиКонтрагентов"],
+      "failureClass": "saved-counterparty-state",
+      "note": "Запрос про сохраненное состояние контрагента должен вести к серверному коду проверки, не к общему обмену."
+    },
+    {
+      "id": "s03",
+      "query": "адрес реестра МЧД ФНС константа менеджер",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["CommonForms/АдресРеестраМЧД", "Constants/ИспользоватьРеестрДоверенностейФНСЭДО/Ext/ManagerModule.bsl"],
+      "failureClass": "mchd-constant-manager",
+      "note": "Строгая цель - менеджер константы адреса реестра МЧД."
+    },
+    {
+      "id": "s04",
+      "query": "тип подписи МЧД константа менеджер настройки",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Constants/ТипПодписиМЧД/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["Constants/ТипПодписиМЧД/Ext/ValueManagerModule.bsl", "CommonForms/МашиночитаемыеДоверенности"],
+      "failureClass": "mchd-constant-manager",
+      "note": "Строгая цель - модуль менеджера константы типа подписи МЧД."
+    },
+    {
+      "id": "s05",
+      "query": "отключить подбор МЧД по КПП при подписании и проверке",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ValueManagerModule.bsl", "DataProcessors/РезультатыПроверкиПодписи/Forms/ПроверкаПолномочийДоверенности"],
+      "failureClass": "mchd-constant-manager",
+      "note": "Конкретная константа не должна теряться за общими формами проверки подписи."
+    },
+    {
+      "id": "s06",
+      "query": "входящий ЭДО форма просмотра проверка МЧД подписи",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра"],
+      "acceptablePathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Ext/ManagerModule.bsl", "Documents/ЭлектронныйДокументВходящийЭДО/Commands/КарточкаЭлектронногоДокумента"],
+      "failureClass": "edi-directional-form",
+      "note": "Входящее направление должно поддержать форму просмотра входящего электронного документа."
+    },
+    {
+      "id": "s07",
+      "query": "исходящий ЭДО форма просмотра ручная проверка подписи",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра"],
+      "acceptablePathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Ext/ManagerModule.bsl", "Documents/ЭлектронныйДокументИсходящийЭДО/Commands/КарточкаЭлектронногоДокумента"],
+      "failureClass": "edi-directional-form",
+      "note": "Исходящее направление должно поддержать форму просмотра исходящего электронного документа."
+    },
+    {
+      "id": "s08",
+      "query": "легкий интерфейс входящего ЭДО просмотр документа",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"],
+      "acceptablePathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО", "CommonModules/ЛегкийИнтерфейсДокументовЭДО"],
+      "failureClass": "edi-directional-form",
+      "note": "Легкий интерфейс входящего ЭДО является конкретной формой, не общим МЧД модулем."
+    },
+    {
+      "id": "s09",
+      "query": "легкий интерфейс исходящего ЭДО просмотр документа",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"],
+      "acceptablePathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО", "CommonModules/ЛегкийИнтерфейсДокументовЭДО"],
+      "failureClass": "edi-directional-form",
+      "note": "Исходящий легкий просмотр должен отделяться от входящего и общих подсистем."
+    },
+    {
+      "id": "s10",
+      "query": "помощник отправить форма дерево вариантов проверка отправки",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonForms/ПомощникОтправить/Ext/Form/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonModules/ПомощникОтправитьКлиент", "CommonModules/ПомощникОтправитьПереопределяемый"],
+      "failureClass": "send-assistant-form",
+      "note": "Форменный запрос должен поднимать форму помощника отправки выше общих helper-модулей."
+    },
+    {
+      "id": "s11",
+      "query": "помощник отправить клиентский модуль варианты отправки",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonModules/ПомощникОтправитьКлиент", "CommonModules/ПомощникОтправить/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonForms/ПомощникОтправить/Ext/Form/Module.bsl", "CommonModules/ПомощникОтправитьПереопределяемый"],
+      "failureClass": "send-assistant-helper",
+      "note": "Клиентский запрос допускает helper-модуль как строгую цель."
+    },
+    {
+      "id": "s12",
+      "query": "печать письма журнал электронной почты форма",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl"],
+      "acceptablePathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Commands/ПечатьПисьма/Ext/CommandModule.bsl", "DocumentJournals/ЭлектроннаяПочта/Forms/ФормаСписка"],
+      "failureClass": "email-journal-form",
+      "note": "Печать из журнала писем должна вести к форме или команде журнала, не к настройкам учетной записи."
+    },
+    {
+      "id": "s13",
+      "query": "сохранение письма электронная почта форма журнала",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/СохранениеПисьма/Ext/Form/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonForms/СохранениеВместеСЭлектроннойПодписью", "DocumentJournals/ЭлектроннаяПочта/Forms/ФормаСписка"],
+      "failureClass": "email-journal-form",
+      "note": "Сохранение письма - конкретная форма журнала электронной почты."
+    },
+    {
+      "id": "s14",
+      "query": "просмотр вложенного письма электронная почта форма",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form/Module.bsl"],
+      "acceptablePathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/РеквизитыПисьма", "CommonForms/ПодготовкаНовогоПисьма"],
+      "failureClass": "email-journal-form",
+      "note": "Просмотр вложенного письма должен отличаться от настройки почты."
+    },
+    {
+      "id": "s15",
+      "query": "настройка встроенной почты smtp отправка почта",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты"],
+      "acceptablePathPrefixes": ["DataProcessors/НастройкаПочты/Forms/ОтправкаПочта", "CommonModules/Почта/Ext/Module.bsl"],
+      "failureClass": "email-settings-form",
+      "note": "Настроечный запрос допускает форму настройки почты, а не журнал письма."
+    },
+    {
+      "id": "s16",
+      "query": "отправка SMS через провайдера сервисный модуль",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl", "CommonModules/ОтправкаSMSЧерезСМСУслуги/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonModules/ОтправкаSMSПереопределяемый/Ext/Module.bsl", "CommonModules/ОтправкаSMSЧерезSMSЦЕНТР/Ext/Module.bsl"],
+      "failureClass": "sms-service-module",
+      "note": "Провайдерский запрос по SMS допускает сервисные модули как цель."
+    },
+    {
+      "id": "s17",
+      "query": "документ уведомление по SMS статус лимиты форма",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/УведомлениеПоSMS/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["Documents/УведомлениеПоSMS/Forms/ФормаЭлемента", "Constants/ОграничениеКоличестваВДеньSMS"],
+      "failureClass": "sms-document-workflow",
+      "note": "Документный запрос по SMS должен получать поддержку документа уведомления."
+    },
+    {
+      "id": "s18",
+      "query": "настройка отправки SMS форма провайдер ограничения",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"],
+      "acceptablePathPrefixes": ["Constants/ПровайдерSMS.xml", "Constants/РазмерSMS.xml"],
+      "failureClass": "sms-settings-form",
+      "note": "Форма настройки SMS отличается от документа уведомления и сервисного модуля."
+    },
+    {
+      "id": "s19",
+      "query": "передача дел в архив менеджер печатная опись",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["Documents/ПередачаДелВАрхив/Templates/ПФ_MXL_Опись", "Documents/ПередачаДелВАрхив/Commands/СоздатьНаОснованииДела"],
+      "failureClass": "archive-transfer-manager",
+      "note": "Печатная опись передачи дел должна вести к документу передачи дел в архив."
+    },
+    {
+      "id": "s20",
+      "query": "передача дел в архив объект проверка подписей",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl"],
+      "acceptablePathPrefixes": ["Documents/ПередачаДелВАрхив/Forms/ФормаРезультатаПроверки", "CommonModules/ОбменСАрхивомКлиент/Ext/Module.bsl"],
+      "failureClass": "archive-transfer-object",
+      "note": "Объектный контекст передачи дел отделен от менеджера и общих форм сертификатов."
+    },
+    {
+      "id": "s21",
+      "query": "настройка интеграции с 1С Архивом FTP каталог",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/НастройкаИнтеграцииСАрхивом/Forms/НастройкаИнтеграцииСАрхивом"],
+      "acceptablePathPrefixes": ["Constants/ИнтеграцияС1САрхивом", "CommonModules/ОбменСАрхивомТранспорт"],
+      "failureClass": "archive-settings-form",
+      "note": "Настроечный контекст 1С Архива не должен смешиваться с документом передачи дел."
+    },
+    {
+      "id": "s22",
+      "query": "транспортный контейнер ЭДО сохранить на диск команда",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ТранспортныйКонтейнерЭДО/Commands/СохранитьТранспортныйКонтейнерНаДиск/Ext/CommandModule.bsl"],
+      "acceptablePathPrefixes": ["Documents/ТранспортныйКонтейнерЭДО/Ext/ManagerModule.bsl", "CommonModules/ТранспортныеКонтейнерыЭДОКлиент"],
+      "failureClass": "edi-container-command",
+      "note": "Командный запрос должен поддержать команду сохранения контейнера."
+    },
+    {
+      "id": "s23",
+      "query": "протокол обмена по документу ЭДО форма отчет",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/ПротоколОбменаПоДокументуЭДО/Ext/ManagerModule.bsl"],
+      "acceptablePathPrefixes": ["DataProcessors/ПротоколОбменаПоДокументуЭДО/Templates/ПротоколОбменаПоДокументу_ru", "Documents/СообщениеЭДО/Commands/СообщенияДокумента"],
+      "failureClass": "edi-protocol-report",
+      "note": "Протокол обмена является отдельной обработкой, не общим ЭДО модулем."
+    },
+    {
+      "id": "s24",
+      "query": "сообщение ЭДО форма подписи карточка электронного документа",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/СообщениеЭДО/Forms/Подписи"],
+      "acceptablePathPrefixes": ["Documents/СообщениеЭДО/Commands/Подписи", "Documents/СообщениеЭДО/Ext/ManagerModule.bsl"],
+      "failureClass": "edi-message-signatures",
+      "note": "Форменный запрос про подписи сообщения ЭДО должен поддержать форму подписей."
+    },
+    {
+      "id": "s25",
+      "query": "результаты проверки подписи МЧД полномочия доверенности форма",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/РезультатыПроверкиПодписи/Forms/ПроверкаПолномочийДоверенности"],
+      "acceptablePathPrefixes": ["DataProcessors/РезультатыПроверкиПодписи/Forms/ПроверкаПолномочийДоверенностей", "CommonModules/РаботаСПодписямиДокументов/Ext/Module.bsl"],
+      "failureClass": "signature-check-form",
+      "note": "Форма проверки полномочий допустима для явного запроса проверки подписи."
+    },
+    {
+      "id": "s26",
+      "query": "электронная подпись служебный модуль проверка на сервере",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["CommonModules/ЭлектроннаяПодписьСлужебныйВызовСервера/Ext/Module.bsl", "Constants/ПроверятьЭлектронныеПодписиНаСервере.xml"],
+      "failureClass": "signature-service-module",
+      "note": "Служебный запрос про подпись должен оставлять common module допустимым топ-результатом."
+    },
+    {
+      "id": "s27",
+      "query": "входящее письмо ответить всем команда форма документа",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ВходящееПисьмо/Commands/ОтветитьВсем/Ext/CommandModule.bsl", "Documents/ВходящееПисьмо/Forms/ФормаДокумента"],
+      "acceptablePathPrefixes": ["Documents/ВходящееПисьмо/Commands/Ответить/Ext/CommandModule.bsl"],
+      "failureClass": "email-document-command",
+      "note": "Команда ответа входящего письма должна отделяться от журнала и настройки почты."
+    },
+    {
+      "id": "s28",
+      "query": "исходящее письмо переслать форма пересылки адресаты",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["Documents/ИсходящееПисьмо/Forms/ФормаПересылки"],
+      "acceptablePathPrefixes": ["Documents/ИсходящееПисьмо/Commands/Переслать/Ext/CommandModule.bsl", "Documents/ИсходящееПисьмо/Forms/ВставкаПолучателейПисьма"],
+      "failureClass": "email-document-form",
+      "note": "Форма пересылки исходящего письма является конкретным документным контекстом."
+    },
+    {
+      "id": "s29",
+      "query": "настройки отправки ЭДО дополнительные поля соглашение",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/НастройкиОтправкиЭДО/Ext/ManagerModule.bsl", "CommonModules/НастройкиОтправкиЭДО/Ext/Module.bsl"],
+      "acceptablePathPrefixes": ["DataProcessors/НастройкиОтправкиЭДО/Forms/НастройкаЗаполненияДополнительныхПолей"],
+      "failureClass": "edi-settings-processor",
+      "note": "Настройки отправки ЭДО должны вести к обработке настроек, не к документам просмотра."
+    },
+    {
+      "id": "s30",
+      "query": "обмен с контрагентами загрузка реквизитов контрагента форма",
+      "kind": "scenario",
+      "expectedPathPrefixes": ["DataProcessors/ОбменСКонтрагентами/Forms/ЗагрузкаРеквизитовКонтрагента"],
+      "acceptablePathPrefixes": ["DataProcessors/ОбменСКонтрагентами/Ext/ManagerModule.bsl", "CommonForms/ЗаполнениеРеквизитовКонтрагента"],
+      "failureClass": "counterparty-exchange-form",
+      "note": "Форма загрузки реквизитов контрагента должна отделяться от общих контрагентских модулей."
+    }
+  ]
+}

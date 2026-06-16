@@ -41,7 +41,7 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
 
     resolveWebviewView(
         webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
+        _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ) {
         console.log('SemanticSearchViewProvider: resolveWebviewView called');
@@ -164,7 +164,7 @@ export class SemanticSearchViewProvider implements vscode.WebviewViewProvider {
                                 editor.selection = new vscode.Selection(range.start, range.end);
                                 editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                             }
-                        } catch (error) {
+                        } catch {
                             vscode.window.showErrorMessage(`Failed to open file: ${message.relativePath}`);
                         }
                         return;

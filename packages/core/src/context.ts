@@ -11,7 +11,6 @@ import {
     VectorDocument,
     VectorSearchResult,
     HybridSearchRequest,
-    HybridSearchOptions,
     HybridSearchResult,
     RetrievalMode,
     RetrievalSchemaMetadata,
@@ -1619,7 +1618,7 @@ export class Context {
         if (isHybrid === true) {
             try {
                 // Check collection stats to see if it has data
-                const stats = await this.vectorDatabase.query(
+                await this.vectorDatabase.query(
                     collectionName,
                     undefined,
                     ["id"],
@@ -2055,8 +2054,6 @@ export class Context {
         console.log(
             `[Context] 📏 Detected dimension: ${dimension} for ${this.embedding.getProvider()}`,
         );
-        const dirName = path.basename(codebasePath);
-
         if (retrievalMode === "bge_m3_full") {
             await this.vectorDatabase.createBgeM3Collection(
                 collectionName,
@@ -3213,7 +3210,7 @@ export class Context {
                 globalIgnorePath,
                 "global .contextignore",
             );
-        } catch (error) {
+        } catch {
             // Global ignore file is optional, don't log warnings
             return [];
         }
@@ -3247,7 +3244,7 @@ export class Context {
                 );
                 return [];
             }
-        } catch (error) {
+        } catch {
             if (fileName.includes("global")) {
                 console.log(`📄 No ${fileName} file found`);
             }

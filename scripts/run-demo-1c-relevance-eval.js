@@ -236,6 +236,38 @@ function firstRelevantRank(results, expectedPathPrefixes, limit = 10) {
   return null;
 }
 
+function metricBucket() {
+  return {
+    hitAt1Count: 0,
+    hitAt3Count: 0,
+    hitAt5Count: 0,
+    hitAt10Count: 0,
+    hitAt1: 0,
+    hitAt3: 0,
+    hitAt5: 0,
+    hitAt10: 0,
+    mrrAt10: 0,
+  };
+}
+
+function addRankMetrics(bucket, rank) {
+  bucket.hitAt1Count += rank !== null && rank <= 1 ? 1 : 0;
+  bucket.hitAt3Count += rank !== null && rank <= 3 ? 1 : 0;
+  bucket.hitAt5Count += rank !== null && rank <= 5 ? 1 : 0;
+  bucket.hitAt10Count += rank !== null && rank <= 10 ? 1 : 0;
+  bucket.hitAt1 += rank !== null && rank <= 1 ? 1 : 0;
+  bucket.hitAt3 += rank !== null && rank <= 3 ? 1 : 0;
+  bucket.hitAt5 += rank !== null && rank <= 5 ? 1 : 0;
+  bucket.hitAt10 += rank !== null && rank <= 10 ? 1 : 0;
+  bucket.mrrAt10 += rank !== null ? 1 / rank : 0;
+}
+
+function finalizeRankMetrics(bucket, queryCount) {
+  for (const key of ['hitAt1', 'hitAt3', 'hitAt5', 'hitAt10', 'mrrAt10']) {
+    bucket[key] = Number((bucket[key] / queryCount).toFixed(4));
+  }
+}
+
 function precisionAt(results, expectedPathPrefixes, k) {
   const capped = results.slice(0, k);
   if (capped.length === 0) {
@@ -266,6 +298,8 @@ function score(dataset, resultsById, runMetadata = {}) {
       average: 0,
       max: 0,
     },
+    strict: metricBucket(),
+    acceptable: metricBucket(),
   };
   let latencyTotal = 0;
   let latencyCount = 0;
@@ -275,39 +309,55 @@ function score(dataset, resultsById, runMetadata = {}) {
     const results = Array.isArray(entry) ? entry : entry.results || [];
     const latencyMs = Array.isArray(entry) ? undefined : entry.latencyMs;
     const error = Array.isArray(entry) ? null : entry.error || null;
-    const rank = firstRelevantRank(results, query.expectedPathPrefixes, 10);
+    const strictPrefixes = query.expectedPathPrefixes || [];
+    const acceptablePrefixes = [
+      ...strictPrefixes,
+      ...(query.acceptablePathPrefixes || []),
+    ];
+    const strictRank = firstRelevantRank(results, strictPrefixes, 10);
+    const acceptableRank = firstRelevantRank(results, acceptablePrefixes, 10);
+    const alternateRank = firstRelevantRank(results, query.acceptablePathPrefixes || [], 10);
+    const rank = strictRank;
     const relevantAt10 = results
       .slice(0, 10)
-      .filter((result) => isRelevant(result, query.expectedPathPrefixes)).length;
+      .filter((result) => isRelevant(result, strictPrefixes)).length;
     const row = {
       id: query.id,
       query: query.query,
       kind: query.kind,
       firstRelevantRank: rank,
+      firstStrictRank: strictRank,
+      firstAcceptableRank: acceptableRank,
+      firstAlternateRank: alternateRank,
+      acceptableOnlyHit: strictRank === null && alternateRank !== null,
       relevantHitsAt10: relevantAt10,
       topResultPaths: results.slice(0, 10).map((result) => result.relativePath || result.path || ''),
       topResults: results.slice(0, 10),
       missing: rank === null,
       latencyMs,
       error,
+      failureClass: query.failureClass,
+      note: query.note,
     };
     perQuery.push(row);
 
     if (rank === null || error) {
       metrics.failures += 1;
     }
-    metrics.hitAt1Count += rank !== null && rank <= 1 ? 1 : 0;
-    metrics.hitAt3Count += rank !== null && rank <= 3 ? 1 : 0;
-    metrics.hitAt5Count += rank !== null && rank <= 5 ? 1 : 0;
-    metrics.hitAt10Count += rank !== null && rank <= 10 ? 1 : 0;
-    metrics.hitAt1 += rank !== null && rank <= 1 ? 1 : 0;
-    metrics.hitAt3 += rank !== null && rank <= 3 ? 1 : 0;
-    metrics.hitAt5 += rank !== null && rank <= 5 ? 1 : 0;
-    metrics.hitAt10 += rank !== null && rank <= 10 ? 1 : 0;
-    metrics.mrrAt10 += rank !== null ? 1 / rank : 0;
-    metrics.precisionAt3 += precisionAt(results, query.expectedPathPrefixes, 3);
-    metrics.precisionAt5 += precisionAt(results, query.expectedPathPrefixes, 5);
-    metrics.precisionAt10 += precisionAt(results, query.expectedPathPrefixes, 10);
+    addRankMetrics(metrics.strict, strictRank);
+    addRankMetrics(metrics.acceptable, acceptableRank);
+    metrics.hitAt1Count = metrics.strict.hitAt1Count;
+    metrics.hitAt3Count = metrics.strict.hitAt3Count;
+    metrics.hitAt5Count = metrics.strict.hitAt5Count;
+    metrics.hitAt10Count = metrics.strict.hitAt10Count;
+    metrics.hitAt1 = metrics.strict.hitAt1;
+    metrics.hitAt3 = metrics.strict.hitAt3;
+    metrics.hitAt5 = metrics.strict.hitAt5;
+    metrics.hitAt10 = metrics.strict.hitAt10;
+    metrics.mrrAt10 = metrics.strict.mrrAt10;
+    metrics.precisionAt3 += precisionAt(results, strictPrefixes, 3);
+    metrics.precisionAt5 += precisionAt(results, strictPrefixes, 5);
+    metrics.precisionAt10 += precisionAt(results, strictPrefixes, 10);
     metrics.relevantHitsAt10 += relevantAt10;
     if (Number.isFinite(latencyMs)) {
       latencyTotal += latencyMs;
@@ -319,6 +369,8 @@ function score(dataset, resultsById, runMetadata = {}) {
   for (const key of ['hitAt1', 'hitAt3', 'hitAt5', 'hitAt10', 'mrrAt10', 'precisionAt3', 'precisionAt5', 'precisionAt10']) {
     metrics[key] = Number((metrics[key] / dataset.queries.length).toFixed(4));
   }
+  finalizeRankMetrics(metrics.strict, dataset.queries.length);
+  finalizeRankMetrics(metrics.acceptable, dataset.queries.length);
   metrics.latencyMs.average = latencyCount > 0 ? Number((latencyTotal / latencyCount).toFixed(2)) : null;
   if (latencyCount === 0) {
     metrics.latencyMs.max = null;
@@ -346,11 +398,15 @@ function score(dataset, resultsById, runMetadata = {}) {
 function validateLabels(dataset, codebasePath) {
   const files = listFiles(codebasePath).map(normalizePath);
   const perQuery = dataset.queries.map((query) => {
-    const prefixes = query.expectedPathPrefixes.map((prefix) => {
+    const prefixes = [
+      ...(query.expectedPathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'strict' })),
+      ...(query.acceptablePathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'acceptable' })),
+    ].map(({ prefix, labelKind }) => {
       const normalizedPrefix = normalizePath(prefix);
       const matchingFiles = files.filter((file) => file.startsWith(normalizedPrefix));
       return {
         prefix,
+        labelKind,
         reachable: matchingFiles.length > 0,
         matchingFileCount: matchingFiles.length,
         sampleMatches: matchingFiles.slice(0, 5),
@@ -366,7 +422,12 @@ function validateLabels(dataset, codebasePath) {
   return {
     codebasePath,
     queryCount: dataset.queries.length,
-    expectedPrefixCount: perQuery.reduce((sum, row) => sum + row.prefixes.length, 0),
+    expectedPrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'strict').length
+    ), 0),
+    acceptablePrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'acceptable').length
+    ), 0),
     unreachablePrefixCount: perQuery.reduce((sum, row) => (
       sum + row.prefixes.filter((prefix) => !prefix.reachable).length
     ), 0),
@@ -511,6 +572,8 @@ function evaluateResidualAssertions(summary, assertions) {
 
 function enforceAcceptance(summary, options = {}) {
   const acceptanceThreshold = Number(options.acceptanceThreshold ?? summary.run?.acceptanceThreshold);
+  const strictHitAt1Threshold = Number(options.strictHitAt1Threshold ?? summary.run?.strictHitAt1Threshold);
+  const strictHitAt5Threshold = Number(options.strictHitAt5Threshold ?? summary.run?.strictHitAt5Threshold);
   const rawSummary = summary.run?.rawSummary || {};
   const toolErrors = Number(rawSummary.toolErrors || 0);
   const missingColbertErrors = Number(rawSummary.missingColbertErrors || 0);
@@ -522,6 +585,20 @@ function enforceAcceptance(summary, options = {}) {
     summary.metrics.hitAt10Count < acceptanceThreshold) {
     throw new Error(
       `Hit@10 count ${summary.metrics.hitAt10Count} is below acceptance threshold ${acceptanceThreshold}.`,
+    );
+  }
+  if (Number.isFinite(strictHitAt1Threshold) &&
+    !options.allowBelowAcceptanceThreshold &&
+    Number(summary.metrics.strict?.hitAt1Count ?? summary.metrics.hitAt1Count) < strictHitAt1Threshold) {
+    throw new Error(
+      `Strict Hit@1 count ${summary.metrics.strict?.hitAt1Count ?? summary.metrics.hitAt1Count} is below acceptance threshold ${strictHitAt1Threshold}.`,
+    );
+  }
+  if (Number.isFinite(strictHitAt5Threshold) &&
+    !options.allowBelowAcceptanceThreshold &&
+    Number(summary.metrics.strict?.hitAt5Count ?? summary.metrics.hitAt5Count) < strictHitAt5Threshold) {
+    throw new Error(
+      `Strict Hit@5 count ${summary.metrics.strict?.hitAt5Count ?? summary.metrics.hitAt5Count} is below acceptance threshold ${strictHitAt5Threshold}.`,
     );
   }
   if (!options.allowToolErrors && toolErrors > 0) {
@@ -576,6 +653,16 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   lines.push(`- Codebase: \`${summary.run.codebasePath || summary.fixture || 'unspecified'}\``);
   lines.push(`- Query count: ${summary.metrics.queryCount}`);
   lines.push(`- Hit@10: ${summary.metrics.hitAt10Count}/${summary.metrics.queryCount} (${(summary.metrics.hitAt10 * 100).toFixed(1)}%)`);
+  if (summary.metrics.strict) {
+    lines.push(`- Strict Hit@1: ${summary.metrics.strict.hitAt1Count}/${summary.metrics.queryCount}`);
+    lines.push(`- Strict Hit@5: ${summary.metrics.strict.hitAt5Count}/${summary.metrics.queryCount}`);
+    lines.push(`- Strict MRR@10: ${summary.metrics.strict.mrrAt10}`);
+  }
+  if (summary.metrics.acceptable) {
+    lines.push(`- Acceptable Hit@1: ${summary.metrics.acceptable.hitAt1Count}/${summary.metrics.queryCount}`);
+    lines.push(`- Acceptable Hit@5: ${summary.metrics.acceptable.hitAt5Count}/${summary.metrics.queryCount}`);
+    lines.push(`- Acceptable MRR@10: ${summary.metrics.acceptable.mrrAt10}`);
+  }
   lines.push(`- MRR@10: ${summary.metrics.mrrAt10}`);
   lines.push(`- Precision@10: ${summary.metrics.precisionAt10}`);
   lines.push(`- Failures: ${summary.metrics.failures}`);
@@ -596,10 +683,32 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
     }
   }
   lines.push('');
-  lines.push('| id | hit@10 | first relevant rank | latency ms | top paths |');
-  lines.push('| --- | ---: | ---: | ---: | --- |');
+  lines.push('| id | hit@10 | first strict rank | first acceptable rank | latency ms | top paths |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | --- |');
   for (const row of summary.perQuery) {
-    lines.push(`| ${row.id} | ${row.firstRelevantRank ? 'yes' : 'no'} | ${row.firstRelevantRank ?? ''} | ${row.latencyMs ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    const firstStrictRank = row.firstStrictRank ?? row.firstRelevantRank ?? null;
+    const firstAcceptableRank = row.firstAcceptableRank ?? firstStrictRank;
+    lines.push(`| ${row.id} | ${firstStrictRank ? 'yes' : 'no'} | ${firstStrictRank ?? ''} | ${firstAcceptableRank ?? ''} | ${row.latencyMs ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+  }
+  const strictMisses = summary.perQuery.filter((row) => !(row.firstStrictRank ?? row.firstRelevantRank));
+  if (strictMisses.length > 0) {
+    lines.push('');
+    lines.push('## Strict misses');
+    lines.push('| id | failure class | first acceptable rank | top paths |');
+    lines.push('| --- | --- | ---: | --- |');
+    for (const row of strictMisses) {
+      lines.push(`| ${row.id} | ${row.failureClass || ''} | ${row.firstAcceptableRank ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
+  }
+  const acceptableOnlyHits = summary.perQuery.filter((row) => row.acceptableOnlyHit);
+  if (acceptableOnlyHits.length > 0) {
+    lines.push('');
+    lines.push('## Acceptable-only hits');
+    lines.push('| id | failure class | first acceptable rank | top paths |');
+    lines.push('| --- | --- | ---: | --- |');
+    for (const row of acceptableOnlyHits) {
+      lines.push(`| ${row.id} | ${row.failureClass || ''} | ${row.firstAcceptableRank ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
   }
   if (summary.residualQueries?.length) {
     lines.push('');
@@ -654,6 +763,8 @@ function main() {
     resultsPath: args.results,
     labelSource: args.useReportLabels ? 'live-report expectedPrefixes' : datasetPath,
     acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
+    strictHitAt1Threshold: args.strictHitAt1Threshold ? Number(args.strictHitAt1Threshold) : undefined,
+    strictHitAt5Threshold: args.strictHitAt5Threshold ? Number(args.strictHitAt5Threshold) : undefined,
     startedAt: rawResults.startedAt,
     finishedAt: rawResults.finishedAt,
     rawSummary: rawResults.summary,
@@ -706,6 +817,8 @@ function main() {
   try {
     enforceAcceptance(summary, {
       acceptanceThreshold: args.acceptanceThreshold,
+      strictHitAt1Threshold: args.strictHitAt1Threshold,
+      strictHitAt5Threshold: args.strictHitAt5Threshold,
       allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
       allowToolErrors: Boolean(args.allowToolErrors),
       allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
