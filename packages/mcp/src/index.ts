@@ -56,6 +56,7 @@ import {
     createDaemonStatusResult,
     GET_DAEMON_STATUS_TOOL_DESCRIPTION
 } from './worker-planning-policy.js';
+import { shouldStopManagedWorkersAfterCancellation } from './workload-cancellation-policy.js';
 import { WorkloadManager } from './workload-manager.js';
 
 type ToolArgs = Record<string, unknown>;
@@ -589,7 +590,7 @@ This tool is versatile and can be used before completing various tasks to retrie
         const cancelledInteractiveWork = [...cancellation.queued, ...cancellation.active]
             .some((job) => job.type === 'interactive-index');
 
-        if (cancellation.queued.length > 0 || cancellation.active.length > 0) {
+        if (shouldStopManagedWorkersAfterCancellation(cancellation)) {
             await this.managedBgeM3WorkerManager?.stopAll(`cancelled workload for ${accessDecision.absolutePath}`);
         }
 
