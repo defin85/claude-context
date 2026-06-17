@@ -19,6 +19,10 @@
     "demo-unf-1c": {
       "label": "Управление нашей фирмой",
       "path": "examples/demo-unf-1c"
+    },
+    "demo-zup-1c": {
+      "label": "Зарплата и управление персоналом",
+      "path": "examples/demo-zup-1c"
     }
   },
   "queries": [
@@ -30,10 +34,28 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПроверкаКонтрагентовФНС/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в БП." },
-        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в УТ." },
-        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в УНФ." }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПроверкаКонтрагентовФНС/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в БП."
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в УТ."
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно проверить наличие и роль подсистемы проверки контрагентов в УНФ."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден исходный объект подсистемы проверки контрагентов ФНС с NdsResponse; есть контрагенты, но не этот диагностический сценарий."
+        }
       }
     },
     {
@@ -44,10 +66,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найдены source-backed объекты сохраненного состояния проверки контрагентов по ИНН/КПП."
+        }
       }
     },
     {
@@ -58,10 +95,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "needs-inspection",
+          "note": "В ЗУП есть подсистема МЧД, но точная константа АдресРеестраМЧД из исходной строки не найдена."
+        }
       }
     },
     {
@@ -72,10 +124,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Constants/ТипПодписиМЧД/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/ТипПодписиМЧД/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "needs-inspection",
+          "note": "В ЗУП есть подсистема МЧД, но точная константа ТипПодписиМЧД из исходной строки не найдена."
+        }
       }
     },
     {
@@ -86,10 +153,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "needs-inspection",
+          "note": "В ЗУП есть подсистема МЧД, но точная настройка отключения подбора МЧД по КПП не подтверждена."
+        }
       }
     },
     {
@@ -100,10 +182,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ВходящийДокументСЭДОФСС"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -114,10 +216,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ДокументЭДОБЗК"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonCommands/РассылкаДокументовЭДО/Ext/CommandModule.bsl"
+          ]
+        }
       }
     },
     {
@@ -128,10 +250,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден источник легкой формы просмотра входящего ЭДО из строки Документооборота."
+        }
       }
     },
     {
@@ -142,10 +279,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден источник легкой формы просмотра исходящего ЭДО из строки Документооборота."
+        }
       }
     },
     {
@@ -156,10 +308,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonForms/ПомощникОтправить/Ext/Form/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ПомощникОтправить/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден общий помощник отправки ПомощникОтправить с деревом вариантов."
+        }
       }
     },
     {
@@ -170,10 +337,26 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПомощникОтправитьКлиент", "CommonModules/ПомощникОтправить/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПомощникОтправитьКлиент",
+            "CommonModules/ПомощникОтправить/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден клиентский модуль ПомощникОтправить для вариантов отправки."
+        }
       }
     },
     {
@@ -184,10 +367,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП есть документы электронных писем, но нет source-backed журнала ЭлектроннаяПочта/ПечатьПисьма из этой строки."
+        }
       }
     },
     {
@@ -198,10 +396,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/СохранениеПисьма/Ext/Form/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/СохранениеПисьма/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП есть документы электронных писем, но нет source-backed формы журнала ЭлектроннаяПочта/СохранениеПисьма."
+        }
       }
     },
     {
@@ -212,10 +425,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП есть документы электронных писем, но нет source-backed формы журнала ЭлектроннаяПочта/ПросмотрВложенногоПисьма."
+        }
       }
     },
     {
@@ -226,10 +454,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/УчетныеЗаписиЭлектроннойПочты"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonCommands/НастройкаСистемнойУчетнойЗаписиЭлектроннойПочты"
+          ]
+        }
       }
     },
     {
@@ -240,10 +488,31 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl", "CommonModules/ОтправкаSMSЧерезСМСУслуги/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl",
+            "CommonModules/ОтправкаSMSЧерезСМСУслуги/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ОтправкаSMSЧерезСМСУслуги/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -254,10 +523,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/УведомлениеПоSMS/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/УведомлениеПоSMS/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/СообщениеSMS"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -268,10 +557,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -282,10 +591,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП есть интеграция с 1С:Архивом, но нет документа ПередачаДелВАрхив из строки Документооборота."
+        }
       }
     },
     {
@@ -296,10 +620,25 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl"] },
-        "demo-bp30-1c": { "status": "needs-inspection" },
-        "demo-ut-1c": { "status": "needs-inspection" },
-        "demo-unf-1c": { "status": "needs-inspection" }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection"
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП есть интеграция с 1С:Архивом, но нет формы документа ПередачаДелВАрхив из строки Документооборота."
+        }
       }
     },
     {
@@ -310,10 +649,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Документооборот не содержит source-inspected регламентированный отчет НДС." },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Reports/РегламентированныйОтчетНДС"] },
-        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно выбрать source-inspected отчет или альтернативную цель для НДС в УТ." },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Reports/РегламентированныйОтчетНДС"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Документооборот не содержит source-inspected регламентированный отчет НДС."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/РегламентированныйОтчетНДС"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно выбрать source-inspected отчет или альтернативную цель для НДС в УТ."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/РегламентированныйОтчетНДС"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Декларация по НДС относится к бухгалтерской отчетности, а не к ЗУП."
+        }
       }
     },
     {
@@ -324,10 +683,34 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["InformationRegisters/СостоянияКонтрагентов"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["InformationRegisters/СостоянияКонтрагентов"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["InformationRegisters/СостоянияКонтрагентов"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["InformationRegisters/СостоянияКонтрагентов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/СостоянияКонтрагентов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/СостоянияКонтрагентов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/СостоянияКонтрагентов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/СостоянияКонтрагентов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В ЗУП не найден регистр СостоянияКонтрагентов для сохраненного состояния проверки контрагентов."
+        }
       }
     },
     {
@@ -338,10 +721,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Для ДО не выбран складской регистр накопления." },
-        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно выбрать бухгалтерский или товарный регистр накопления для складского сценария БП." },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["AccumulationRegisters/ТоварыНаСкладах"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["AccumulationRegisters/ЗапасыКРасходуСоСкладов"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Для ДО не выбран складской регистр накопления."
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно выбрать бухгалтерский или товарный регистр накопления для складского сценария БП."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "AccumulationRegisters/ТоварыНаСкладах"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "AccumulationRegisters/ЗапасыКРасходуСоСкладов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Остатки товаров на складах и производство относятся к торгово-складскому контуру, а не к ЗУП."
+        }
       }
     },
     {
@@ -352,10 +755,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Документооборот не содержит source-inspected бухгалтерский регистр." },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["AccountingRegisters/Хозрасчетный"] },
-        "demo-ut-1c": { "status": "not-applicable", "reason": "Для УТ не выбран бухгалтерский регистр." },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["AccountingRegisters/Управленческий"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Документооборот не содержит source-inspected бухгалтерский регистр."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "AccountingRegisters/Хозрасчетный"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "Для УТ не выбран бухгалтерский регистр."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "AccountingRegisters/Управленческий"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Регистр бухгалтерии Хозрасчетный не входит в проверяемый зарплатно-кадровый контур ЗУП."
+        }
       }
     },
     {
@@ -366,10 +789,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Для ДО не выбран торговый документ реализации." },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl"] },
-        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно выбрать source-inspected документ продажи в УНФ." }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Для ДО не выбран торговый документ реализации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно выбрать source-inspected документ продажи в УНФ."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Документ реализации товаров и услуг относится к торговому/бухгалтерскому контуру, а не к ЗУП."
+        }
       }
     },
     {
@@ -380,10 +823,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Для ДО не выбран торговый заказ." },
-        "demo-bp30-1c": { "status": "not-applicable", "reason": "Для БП не выбран заказ клиента как source-inspected цель." },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЗаказКлиента/Ext/ObjectModule.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЗаказПокупателя/Ext/ObjectModule.bsl"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Для ДО не выбран торговый заказ."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "Для БП не выбран заказ клиента как source-inspected цель."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЗаказКлиента/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЗаказПокупателя/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Заказ клиента относится к торговому контуру, а не к ЗУП."
+        }
       }
     },
     {
@@ -394,10 +857,30 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Для ДО не выбран закупочный заказ." },
-        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно выбрать source-inspected закупочный сценарий в БП." },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЗаказПоставщику/Ext/ObjectModule.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЗаказПоставщику/Ext/ObjectModule.bsl"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Для ДО не выбран закупочный заказ."
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно выбрать source-inspected закупочный сценарий в БП."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЗаказПоставщику/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЗаказПоставщику/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "Заказ поставщику и ввод на основании относятся к торгово-закупочному контуру, а не к ЗУП."
+        }
       }
     },
     {
@@ -408,10 +891,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
+          ]
+        }
       }
     },
     {
@@ -422,10 +931,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["ScheduledJobs/ОтправкаЭлектронныхДокументов"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["ScheduledJobs/ОтправкаЭлектронныхДокументов"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["ScheduledJobs/ОтправкаЭлектронныхДокументов"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["ScheduledJobs/ОтправкаЭлектронныхДокументов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОтправкаЭлектронныхДокументов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОтправкаЭлектронныхДокументов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОтправкаЭлектронныхДокументов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОтправкаЭлектронныхДокументов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОбновлениеСостоянийДокументовЭДОБЗК"
+          ],
+          "acceptablePathPrefixes": [
+            "ScheduledJobs/ФоноваяОтправкаЗапросовСЭДО"
+          ]
+        }
       }
     },
     {
@@ -436,10 +974,34 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "not-applicable", "reason": "Для ДО не выбран retail/money movement сценарий." },
-        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно выбрать source-inspected кассовый или розничный документ в БП." },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЧекККМ/Ext/ObjectModule.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Documents/ЧекККМ/Ext/ObjectModule.bsl"], "acceptablePathPrefixes": ["Documents/ПоступлениеВКассу/Ext/ObjectModule.bsl", "Reports/ЗаказыНаПроизводство"] }
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "Для ДО не выбран retail/money movement сценарий."
+        },
+        "demo-bp30-1c": {
+          "status": "needs-inspection",
+          "note": "Нужно выбрать source-inspected кассовый или розничный документ в БП."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЧекККМ/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЧекККМ/Ext/ObjectModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/ПоступлениеВКассу/Ext/ObjectModule.bsl",
+            "Reports/ЗаказыНаПроизводство"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "ККМ, розничная выручка и движение денег относятся к розничному/торговому контуру, а не к ЗУП."
+        }
       }
     },
     {
@@ -450,10 +1012,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/ЖурналРегистрации"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/ЖурналРегистрации"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/ЖурналРегистрации"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/ЖурналРегистрации"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ЖурналРегистрации/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -464,10 +1055,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["DataProcessors/УдалениеПомеченныхОбъектов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -478,10 +1098,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        }
       }
     },
     {
@@ -492,10 +1138,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/КонтрагентыСлужебный/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -506,10 +1181,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Ext/ObjectModule.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Ext/ObjectModule.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Ext/ObjectModule.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Контрагенты/Ext/ObjectModule.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Ext/ObjectModule.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Контрагенты/Ext/ObjectModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/КонтрагентыСлужебный/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -520,10 +1224,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        }
       }
     },
     {
@@ -534,10 +1264,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Ext/ManagerModule.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Ext/ManagerModule.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Ext/ManagerModule.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["Catalogs/Номенклатура/Ext/ManagerModule.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
+          ]
+        }
       }
     },
     {
@@ -548,10 +1304,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -562,10 +1344,39 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ПользователиКлиентСервер/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -576,10 +1387,36 @@
       "kind": "positive",
       "controlClass": "source-inspected",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "expectedPathPrefixes": ["CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -590,10 +1427,41 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты", "Catalogs/Номенклатура"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты", "Catalogs/Номенклатура"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты", "Catalogs/Номенклатура"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты", "Catalogs/Номенклатура"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        }
       }
     },
     {
@@ -604,10 +1472,41 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["DataProcessors/ЖурналРегистрации", "DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["DataProcessors/ЖурналРегистрации", "DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["DataProcessors/ЖурналРегистрации", "DataProcessors/УдалениеПомеченныхОбъектов"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["DataProcessors/ЖурналРегистрации", "DataProcessors/УдалениеПомеченныхОбъектов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        }
       }
     },
     {
@@ -618,10 +1517,36 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["SettingsStorages/ХранилищеВариантовОтчетов"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        }
       }
     },
     {
@@ -632,10 +1557,36 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["CommonModules/ПользователиКлиент/Ext/Module.bsl"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        }
       }
     },
     {
@@ -646,10 +1597,36 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Контрагенты/Forms/ФормаЭлемента"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        }
       }
     },
     {
@@ -660,10 +1637,561 @@
       "kind": "negative-control",
       "controlClass": "negative-control",
       "targets": {
-        "demo-do30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-bp30-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-ut-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] },
-        "demo-unf-1c": { "status": "applicable", "prohibitedPathPrefixes": ["Catalogs/Номенклатура/Forms/ФормаЭлемента"] }
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup01",
+      "query": "начисление зарплаты документ проведение расчет начислений сотрудников",
+      "intent": "document-posting-navigation",
+      "domain": "payroll-accrual",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/НачислениеЗарплаты"
+          ],
+          "acceptablePathPrefixes": [
+            "DocumentJournals/НачислениеЗарплаты"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup02",
+      "query": "ведомость на выплату зарплаты журнал выбор документов оснований",
+      "intent": "journal-form-navigation",
+      "domain": "payroll-payment",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ВедомостиНаВыплатуЗарплаты"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonForms/ВыборДокументовОснованийВедомостейНаВыплатуЗарплаты"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup03",
+      "query": "прием на работу документ кадровый приказ форма сотрудник должность",
+      "intent": "hr-order-navigation",
+      "domain": "hiring",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ПриемНаРаботу"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/ПриемНаРаботуСписком"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup04",
+      "query": "кадровый перевод документ изменение должности подразделения оплаты",
+      "intent": "hr-order-navigation",
+      "domain": "hr-transfer",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/КадровыйПеревод"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/КадровыйПереводСписком"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup05",
+      "query": "увольнение сотрудника документ расчет компенсации отпуска",
+      "intent": "hr-order-navigation",
+      "domain": "dismissal",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/Увольнение"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/УвольнениеСписком"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup06",
+      "query": "заявка сотрудника отпуск бизнес процесс согласование отпусков",
+      "intent": "business-process-navigation",
+      "domain": "leave",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "BusinessProcesses/ЗаявкаСотрудникаОтпуск"
+          ],
+          "acceptablePathPrefixes": [
+            "DocumentJournals/Отпуска"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup07",
+      "query": "остатки отпусков отчет права на отпуск заработанные дни",
+      "intent": "report-navigation",
+      "domain": "leave-balances",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/ОстаткиОтпусков"
+          ],
+          "acceptablePathPrefixes": [
+            "ScheduledJobs/ПроверкаАктуальностиЗаработанныхПравНаОтпуск"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup08",
+      "query": "больничный лист документ расчет пособия СЭДО ФСС",
+      "intent": "document-navigation",
+      "domain": "sick-leave",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/БольничныйЛист"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup09",
+      "query": "табель учета рабочего времени документ данные табельного учета",
+      "intent": "document-register-navigation",
+      "domain": "time-sheet",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ТабельУчетаРабочегоВремени"
+          ],
+          "acceptablePathPrefixes": [
+            "AccumulationRegisters/ДанныеТабельногоУчетаРабочегоВремениСотрудников"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup10",
+      "query": "НДФЛ документы расчет удержанный налог регистр сведения доходах",
+      "intent": "tax-register-navigation",
+      "domain": "ndfl",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ДокументыПоНДФЛ"
+          ],
+          "acceptablePathPrefixes": [
+            "AccumulationRegisters/СведенияОДоходахНДФЛ",
+            "CommonModules/УчетНДФЛКлиент"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup11",
+      "query": "страховые взносы отражение документов учет взносов регистр",
+      "intent": "tax-register-navigation",
+      "domain": "insurance-contributions",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ОтражениеДокументовВУчетеСтраховыхВзносов"
+          ],
+          "acceptablePathPrefixes": [
+            "AccumulationRegisters/СтраховыеВзносыПоФизическимЛицам",
+            "CommonModules/УчетСтраховыхВзносовСобытия/Ext/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup12",
+      "query": "входящий документ СЭДО ФСС запрос средний заработок обмен",
+      "intent": "integration-document-navigation",
+      "domain": "sedo-fss",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ВходящийДокументСЭДОФСС"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/ЗапросСреднегоЗаработкаСЭДО",
+            "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zup13",
+      "query": "воинский учет сотрудники бронирование отчет форма организация",
+      "intent": "report-register-navigation",
+      "domain": "military-accounting",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ВоинскийУчет"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ВоинскийУчет/Ext/Module.bsl",
+            "Reports/ВоинскийУчетБронирование"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zupn01",
+      "query": "сотрудник форма список открыть элемент",
+      "intent": "negative-control",
+      "domain": "broad-employee-form-term",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Documents/НачислениеЗарплаты",
+            "Documents/ПриемНаРаботу"
+          ]
+        }
+      }
+    },
+    {
+      "id": "zupn02",
+      "query": "зарплата расчет документ общий модуль",
+      "intent": "negative-control",
+      "domain": "broad-payroll-term",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "ZUP-specific payroll and HR scenario; not expected in this fixture."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DocumentJournals/ВедомостиНаВыплатуЗарплаты",
+            "Reports/ОстаткиОтпусков"
+          ]
+        }
       }
     }
   ]

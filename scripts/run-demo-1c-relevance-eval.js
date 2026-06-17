@@ -573,6 +573,24 @@ function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
   const flatDataset = flattenUniversalMatrixForFixture(dataset, fixtureKey, {
     includeOptionalTargets: runMetadata.includeOptionalTargets,
   });
+  const notApplicableTargets = dataset.queries
+    .map((query) => {
+      const target = universalTargetForFixture(query, fixtureKey);
+      if (target?.status !== 'not-applicable') {
+        return null;
+      }
+      return {
+        id: query.id,
+        query: query.query,
+        fixtureKey,
+        intent: query.intent,
+        domain: query.domain,
+        controlClass: query.controlClass,
+        targetStatus: target.status,
+        reason: target.reason || target.note || null,
+      };
+    })
+    .filter(Boolean);
   const summary = scoreFlatDataset(flatDataset, resultsById, {
     ...runMetadata,
     matrixFixture: fixtureKey,
@@ -592,6 +610,7 @@ function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
     positiveQueryCount: summary.metrics.queryCount,
     sourceQueryCount: dataset.queries.length,
     includeOptionalTargets: Boolean(runMetadata.includeOptionalTargets),
+    notApplicableTargets,
   };
   summary.grouped = {
     fixture: groupPerQuery(summary.perQuery, 'fixtureKey'),
@@ -719,6 +738,7 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
       prefixes,
       issues,
       note: target.note,
+      reason: target.reason,
     };
   });
   const unreachable = perQuery
@@ -754,6 +774,14 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
     unresolved: perQuery
       .filter((row) => row.targetStatus === 'needs-inspection')
       .map((row) => ({ id: row.id, query: row.query, fixtureKey, note: row.note })),
+    notApplicable: perQuery
+      .filter((row) => row.targetStatus === 'not-applicable')
+      .map((row) => ({
+        id: row.id,
+        query: row.query,
+        fixtureKey,
+        reason: row.reason || row.note || null,
+      })),
     unreachable,
     perQuery,
   };
@@ -972,6 +1000,20 @@ function enforceAcceptance(summary, options = {}) {
   }
 }
 
+function buildThresholdRecommendation(summary, labelValidation) {
+  if (!labelValidation) {
+    return undefined;
+  }
+  const queryCount = Number(summary?.metrics?.queryCount);
+  const hitAt10Count = Number(summary?.metrics?.hitAt10Count);
+  const denominator = Number.isFinite(queryCount) ? queryCount : 'current';
+  const numerator = Number.isFinite(hitAt10Count) ? hitAt10Count : 'current';
+  if (labelValidation.strictAcceptanceReady !== false && labelValidation.unreachablePrefixCount === 0) {
+    return `Hit@10 ${numerator}/${denominator} is valid for the current reachable label set.`;
+  }
+  return `Do not use Hit@10 ${numerator}/${denominator} as strict acceptance until unresolved or unreachable labels are corrected or excluded.`;
+}
+
 function compareRanks(before, after) {
   if (before === after) {
     return 'unchanged';
@@ -1028,6 +1070,9 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   }
   if (summary.matrix) {
     lines.push(`- Matrix fixture: ${summary.matrix.fixtureKey}`);
+    if (summary.matrix.notApplicableTargets?.length) {
+      lines.push(`- Not-applicable targets: ${summary.matrix.notApplicableTargets.length}`);
+    }
   }
   if (summary.negativeControls) {
     lines.push(`- Negative controls: ${summary.negativeControls.passCount}/${summary.negativeControls.queryCount} passed`);
@@ -1070,6 +1115,15 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
     lines.push('| --- | --- | --- | --- |');
     for (const row of summary.negativeControls.perQuery) {
       lines.push(`| ${row.id} | ${row.passed ? 'yes' : 'no'} | ${row.violations.join('<br>')} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
+  }
+  if (summary.matrix?.notApplicableTargets?.length) {
+    lines.push('');
+    lines.push('## Not-applicable targets');
+    lines.push('| id | reason |');
+    lines.push('| --- | --- |');
+    for (const row of summary.matrix.notApplicableTargets) {
+      lines.push(`| ${row.id} | ${row.reason || ''} |`);
     }
   }
   const strictMisses = summary.perQuery.filter((row) => !(row.firstStrictRank ?? row.firstRelevantRank));
@@ -1137,7 +1191,7 @@ function main() {
   const labelValidation = args.validateLabelsAgainst
     ? validateLabels(dataset, args.validateLabelsAgainst, { matrixFixture: args.matrixFixture })
     : undefined;
-  const summary = score(dataset, resultsById, {
+  const runMetadata = {
     backendLabel: args.backendLabel || args.backend || rawResults.backend,
     retrievalMode: args.retrievalMode || rawResults.retrievalMode,
     rankingProfile: args.rankingProfile || rawResults.rankingProfile,
@@ -1157,19 +1211,22 @@ function main() {
     residualQueryIds: parseCsvList(args.residualQueryIds),
     requiredResidualAssertions,
     baselineMode: args.baselineMode || undefined,
-	    labelValidation: labelValidation ? {
-	      codebasePath: labelValidation.codebasePath,
-	      fixtureKey: labelValidation.fixtureKey,
-	      unreachablePrefixCount: labelValidation.unreachablePrefixCount,
-	      needsInspectionCount: labelValidation.needsInspectionCount,
-	      issueCount: labelValidation.issueCount,
-	      strictAcceptanceReady: labelValidation.strictAcceptanceReady,
-	      ambiguousQueryIds: labelValidation.ambiguousQueryIds,
-	      thresholdRecommendation: labelValidation.strictAcceptanceReady !== false && labelValidation.unreachablePrefixCount === 0
-	        ? 'Hit@10 24/30 is valid for the current reachable label set.'
-	        : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
-	    } : undefined,
-  });
+    labelValidation: labelValidation ? {
+      codebasePath: labelValidation.codebasePath,
+      fixtureKey: labelValidation.fixtureKey,
+      unreachablePrefixCount: labelValidation.unreachablePrefixCount,
+      needsInspectionCount: labelValidation.needsInspectionCount,
+      notApplicableTargetCount: labelValidation.notApplicableTargetCount,
+      issueCount: labelValidation.issueCount,
+      strictAcceptanceReady: labelValidation.strictAcceptanceReady,
+      ambiguousQueryIds: labelValidation.ambiguousQueryIds,
+      notApplicable: labelValidation.notApplicable,
+    } : undefined,
+  };
+  const summary = score(dataset, resultsById, runMetadata);
+  if (summary.run?.labelValidation) {
+    summary.run.labelValidation.thresholdRecommendation = buildThresholdRecommendation(summary, labelValidation);
+  }
   const comparison = args.baseline
     ? buildComparison(readJson(args.baseline), summary)
     : undefined;
@@ -1242,4 +1299,5 @@ module.exports = {
   buildComparison,
   writeMarkdownReport,
   evaluateResidualAssertions,
+  buildThresholdRecommendation,
 };

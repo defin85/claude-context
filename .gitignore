@@ -75,6 +75,7 @@ examples/demo-do30-1c/
 examples/demo-bp30-1c/
 examples/demo-ut-1c/
 examples/demo-unf-1c/
+examples/demo-zup-1c/
 
 evaluation/retrieval_results*
 .venv/

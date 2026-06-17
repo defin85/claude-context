@@ -16,6 +16,7 @@ const {
   buildComparison,
   writeMarkdownReport,
   evaluateResidualAssertions,
+  buildThresholdRecommendation,
 } = require('./run-demo-1c-relevance-eval.js');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -196,7 +197,10 @@ async function main() {
     ? inferMatrixFixtureKey(dataset, { matrixFixture: args.matrixFixture, codebasePath })
     : undefined;
   const collectionDataset = isUniversalMatrixDataset(dataset)
-    ? collectionDatasetForFixture(dataset, matrixFixture, { includeOptionalTargets: Boolean(args.includeOptionalTargets) })
+    ? collectionDatasetForFixture(dataset, matrixFixture, {
+      includeOptionalTargets: Boolean(args.includeOptionalTargets),
+      includeNegativeControls: Boolean(args.includeNegativeControls),
+    })
     : dataset;
   const backendLabel = args.backendLabel || 'qdrant-default-live';
   const artifactDir = path.resolve(args.artifactDir || defaultArtifactDir);
@@ -273,14 +277,16 @@ async function main() {
       fixtureKey: labelValidation.fixtureKey,
       unreachablePrefixCount: labelValidation.unreachablePrefixCount,
       needsInspectionCount: labelValidation.needsInspectionCount,
+      notApplicableTargetCount: labelValidation.notApplicableTargetCount,
       issueCount: labelValidation.issueCount,
       strictAcceptanceReady: labelValidation.strictAcceptanceReady,
       ambiguousQueryIds: labelValidation.ambiguousQueryIds,
-      thresholdRecommendation: labelValidation.strictAcceptanceReady !== false && labelValidation.unreachablePrefixCount === 0
-        ? 'Hit@10 24/30 is valid for the current reachable label set.'
-        : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
+      notApplicable: labelValidation.notApplicable,
     },
   });
+  if (summary.run?.labelValidation) {
+    summary.run.labelValidation.thresholdRecommendation = buildThresholdRecommendation(summary, labelValidation);
+  }
   const comparison = args.baseline ? buildComparison(readJson(args.baseline), summary) : undefined;
   if (comparison) {
     summary.comparison = comparison;

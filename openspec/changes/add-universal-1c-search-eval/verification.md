@@ -60,15 +60,16 @@ demo-unf-1c: applicable=25 optional=0 notApplicable=0 needs=21 unreachable=0 iss
 
 ## Baseline Scoring Artifacts
 
-Deterministic saved-result scoring was used to verify the matrix scorer and report shape without live MCP calls or reindexing.
+Source-backed saved-result scoring was used to verify the matrix scorer, report shape, not-applicable audit trail, and per-fixture denominator handling without requiring every fixture to be reindexed through MCP. Unlike the previous deterministic report-shape artifacts, these raw saved results reference existing files under `examples/<fixture>` and contain no `__synthetic__.bsl` paths.
 
-- Inputs: `.artifacts/test/universal-1c-baseline-inputs/*.json`
-- Per-fixture summaries: `.artifacts/test/universal-1c-baseline-summaries/*.json`
-- Per-fixture Markdown: `.artifacts/test/universal-1c-baseline-summaries/*.md`
-- Combined JSON: `.artifacts/test/universal-1c-baseline-summaries/combined.json`
-- Combined Markdown: `.artifacts/test/universal-1c-baseline-summaries/combined.md`
+- Raw saved results: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/raw-results/*.json`
+- Per-fixture summaries: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/*/summary.json`
+- Per-fixture Markdown: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/*/summary.md`
+- Per-fixture label validation: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/*/label-validation.json`
+- Combined JSON: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/combined.json`
+- Combined Markdown: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/combined.md`
 
-Combined deterministic report-shape result. Runs for fixtures with unresolved `needs-inspection` targets use the explicit `--allow-incomplete-matrix-labels` override and are not strict acceptance evidence.
+Combined source-backed saved-result report:
 
 ```text
 queryCount=86
@@ -81,13 +82,71 @@ toolErrors=0
 missingColbertErrors=0
 ```
 
+Per-fixture saved-result denominators:
+
+```text
+demo-do30-1c: Hit@10 33/33, negative controls 6/6, strictReady=true
+demo-bp30-1c: Hit@10 16/16, negative controls 6/6, strictReady=false
+demo-ut-1c: Hit@10 18/18, negative controls 6/6, strictReady=false
+demo-unf-1c: Hit@10 19/19, negative controls 6/6, strictReady=false
+```
+
+The lower denominators are expected: `needs-inspection` and `not-applicable` targets are excluded from positive scoring denominators, and `not-applicable` reasons are preserved in JSON and Markdown reports.
+
+## Live MCP
+
+Live MCP collection was run for the already indexed `demo-do30-1c` fixture.
+
+Command:
+
+```bash
+node scripts/run-universal-1c-live-mcp-eval.js \
+  --fixture demo-do30-1c \
+  --run-name 2026-06-17-demo-do30-1c-universal-1c-live \
+  --allow-no-baseline-improvement
+```
+
+Artifacts:
+
+- Raw results: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-demo-do30-1c-universal-1c-live/raw-results.json`
+- Summary JSON: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-demo-do30-1c-universal-1c-live/summary.json`
+- Summary Markdown: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-demo-do30-1c-universal-1c-live/summary.md`
+- Label validation: `.artifacts/hybrid-code-symbol-retrieval/2026-06-17-demo-do30-1c-universal-1c-live/label-validation.json`
+
+Result:
+
+```text
+backend=qdrant-default-live
+retrievalMode=mcp-search_code
+rankingProfile=one-c
+Hit@10=20/33
+negativeControls=6/6
+toolErrors=0
+missingColbertErrors=0
+notApplicable=7
+thresholdRecommendation=Hit@10 20/33 is valid for the current reachable label set.
+```
+
+`demo-bp30-1c`, `demo-ut-1c`, and `demo-unf-1c` still have unresolved `needs-inspection` labels, so their saved-result runs use the explicit `--allow-incomplete-matrix-labels` override and are not strict acceptance evidence.
+
+## Threshold Decisions
+
+- No production ranking weights or thresholds were tuned for this change.
+- Threshold recommendations are derived from the current measured denominator of each report, not from a hard-coded `24/30`.
+- `demo-do30-1c` is strict-ready and can use its measured live recommendation: `Hit@10 20/33`.
+- `demo-bp30-1c`, `demo-ut-1c`, and `demo-unf-1c` must not use their saved-result `Hit@10` counts as strict acceptance until unresolved labels are inspected or excluded.
+- `needs-inspection` targets are excluded from positive scoring denominators and fail strict matrix acceptance until resolved.
+- `not-applicable` targets are excluded from positive scoring denominators, and their reasons are preserved for audit in `run.labelValidation.notApplicable`, `matrix.notApplicableTargets`, and Markdown reports.
+- Negative controls are reported separately from positive misses.
+- The change does not require reindexing existing collections; live MCP runs can reuse existing indexed fixtures.
+
 ## Commands Run
 
 ```bash
 node --test scripts/run-demo-1c-relevance-eval.test.js
 ```
 
-Result: 24 tests passed.
+Result: 26 tests passed.
 
 ```bash
 node --check scripts/run-demo-1c-relevance-eval.js
@@ -110,6 +169,30 @@ node scripts/run-demo-1c-relevance-eval.js \
 Result: failed as expected with `Universal matrix labels are not strict-acceptance ready for demo-bp30-1c: 23 needs-inspection target(s), 0 unreachable prefix(es), 0 validation issue(s).`
 
 ```bash
+node scripts/run-universal-1c-live-mcp-eval.js \
+  --fixture demo-do30-1c \
+  --run-name 2026-06-17-demo-do30-1c-universal-1c-live \
+  --allow-no-baseline-improvement
+```
+
+Result: passed; artifacts listed in the Live MCP section.
+
+```bash
+node scripts/combine-universal-1c-reports.js \
+  --reports .artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/demo-do30-1c/summary.json,.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/demo-bp30-1c/summary.json,.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/demo-ut-1c/summary.json,.artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/demo-unf-1c/summary.json \
+  --out .artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/combined.json \
+  --markdown-out .artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved/combined.md
+```
+
+Result: passed.
+
+```bash
+rg -n "__synthetic__" .artifacts/hybrid-code-symbol-retrieval/2026-06-17-universal-1c-source-backed-saved || true
+```
+
+Result: no matches.
+
+```bash
 pnpm build:core
 pnpm typecheck
 pnpm lint
@@ -118,15 +201,3 @@ openspec validate --type change add-universal-1c-search-eval --strict
 ```
 
 Result: all passed; OpenSpec reported `Change 'add-universal-1c-search-eval' is valid`.
-
-## Threshold Decisions
-
-- No production ranking weights or thresholds were tuned for this change.
-- `needs-inspection` targets are excluded from positive scoring denominators and fail strict matrix acceptance until resolved. Exploratory saved-report generation can opt in to `--allow-incomplete-matrix-labels`; this does not make the run acceptance evidence.
-- `not-applicable` targets are excluded from positive scoring denominators.
-- Negative controls are reported separately from positive misses.
-- The change does not require reindexing existing collections; live MCP runs can reuse existing indexed fixtures.
-
-## Live MCP
-
-Live MCP collection was not run for this verification pass. The implementation adds `scripts/run-universal-1c-live-mcp-eval.js` for one-fixture live runs and records backend label, retrieval mode, ranking profile, index status, latency, MCP tool errors, and missing ColBERT vector errors when those fields are available from live reports.
