@@ -25,9 +25,20 @@ function createOperatorStatus(): DaemonOperatorStatus {
             healthy: true,
             knownCodebases: [{ path: '/repo', status: 'indexed' }],
             workload: {
+                mode: 'daemon',
                 indexing: {
+                    maxConcurrency: 1,
                     activeCount: 0,
                     queuedCount: 0,
+                    activeJobs: [],
+                    queuedJobs: [],
+                },
+                search: {
+                    maxConcurrency: 4,
+                    activeCount: 0,
+                    queuedCount: 0,
+                    activeJobs: [],
+                    queuedJobs: [],
                 },
             },
             sync: {

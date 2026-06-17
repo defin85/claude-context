@@ -1,8 +1,8 @@
 ## 1. Backend Contract Review
 
-- [ ] 1.1 Inspect dashboard daemon/status payloads for active and queued job fields.
-- [ ] 1.2 Add dashboard API fields for queue position, workload type, and timing only if missing from existing sanitized status.
-- [ ] 1.3 Add API tests for active, queued, and empty workload payloads.
+- [x] 1.1 Inspect dashboard daemon/status payloads for active and queued job fields.
+- [x] 1.2 Add dashboard API fields for queue position, workload type, and timing only if missing from existing sanitized status.
+- [x] 1.3 Add API tests for active, queued, and empty workload payloads.
 
 ## 2. Frontend Operations View
 

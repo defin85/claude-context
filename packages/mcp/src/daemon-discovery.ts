@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { getErrorCode, getErrorMessage } from './utils.js';
+import type { WorkloadLaneSnapshot, WorkloadSnapshot } from './workload-manager.js';
 
 export const DAEMON_CLIENT_CONFIG_FORMAT_VERSION = 'v1';
 export const DAEMON_CLIENT_COMPATIBILITY_VERSION = 1;
@@ -61,16 +62,7 @@ export interface DaemonRegistryRuntimeSummary {
     healthy: boolean;
     statusReason?: string;
     knownCodebases?: Array<{ path: string; status: string }>;
-    workload?: {
-        indexing?: {
-            activeCount?: number;
-            queuedCount?: number;
-        };
-        search?: {
-            activeCount?: number;
-            queuedCount?: number;
-        };
-    };
+    workload?: WorkloadSnapshot;
     sync?: {
         outcome?: string;
         reason?: string;
@@ -134,6 +126,47 @@ function sanitizeDaemonClientConfig(config: DaemonClientConfigFile | null): Omit
     const sanitized: Partial<DaemonClientConfigFile> = { ...config };
     delete sanitized.bearerToken;
     return sanitized as Omit<DaemonClientConfigFile, 'bearerToken'>;
+}
+
+function sanitizeWorkloadLaneSnapshot(lane: WorkloadLaneSnapshot | undefined): WorkloadLaneSnapshot | undefined {
+    if (!lane) {
+        return undefined;
+    }
+
+    return {
+        maxConcurrency: lane.maxConcurrency,
+        activeCount: lane.activeCount,
+        queuedCount: lane.queuedCount,
+        activeJobs: (lane.activeJobs || []).map((job) => ({ ...job })),
+        queuedJobs: (lane.queuedJobs || []).map((job, index) => ({
+            ...job,
+            queuePosition: job.queuePosition ?? index + 1
+        }))
+    };
+}
+
+export function sanitizeDaemonWorkloadSnapshot(workload: WorkloadSnapshot | undefined): WorkloadSnapshot | undefined {
+    if (!workload) {
+        return undefined;
+    }
+
+    return {
+        mode: workload.mode,
+        indexing: sanitizeWorkloadLaneSnapshot(workload.indexing) || {
+            maxConcurrency: 0,
+            activeCount: 0,
+            queuedCount: 0,
+            activeJobs: [],
+            queuedJobs: []
+        },
+        search: sanitizeWorkloadLaneSnapshot(workload.search) || {
+            maxConcurrency: 0,
+            activeCount: 0,
+            queuedCount: 0,
+            activeJobs: [],
+            queuedJobs: []
+        }
+    };
 }
 
 export class DaemonClientConfigManager {
@@ -323,10 +356,7 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
                 const runtimeStatus = await readJsonFile<{
                     reason?: string;
                     knownCodebases?: Array<{ path: string; info?: { status?: string } }>;
-                    workload?: {
-                        indexing?: { activeCount?: number; queuedCount?: number };
-                        search?: { activeCount?: number; queuedCount?: number };
-                    };
+                    workload?: WorkloadSnapshot;
                     sync?: { outcome?: string; skipReason?: string; errorMessage?: string };
                 }>(registry.runtimeStatusFilePath);
                 statusReason = runtimeStatus?.reason;
@@ -336,18 +366,7 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
                         status: entry.info?.status || 'unknown'
                     }));
                 }
-                workload = runtimeStatus?.workload
-                    ? {
-                        indexing: {
-                            activeCount: runtimeStatus.workload.indexing?.activeCount,
-                            queuedCount: runtimeStatus.workload.indexing?.queuedCount
-                        },
-                        search: {
-                            activeCount: runtimeStatus.workload.search?.activeCount,
-                            queuedCount: runtimeStatus.workload.search?.queuedCount
-                        }
-                    }
-                    : undefined;
+                workload = sanitizeDaemonWorkloadSnapshot(runtimeStatus?.workload);
                 sync = runtimeStatus?.sync
                     ? {
                         outcome: runtimeStatus.sync.outcome,

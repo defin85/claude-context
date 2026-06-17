@@ -58,6 +58,7 @@ export interface WorkloadJobSnapshot {
     startedAt?: string;
     readyAt?: string;
     cancelRequestedAt?: string;
+    queuePosition?: number;
 }
 
 export interface WorkloadLaneSnapshot {
@@ -484,12 +485,13 @@ export class WorkloadManager {
                 startedAt: job.startedAt,
                 ...(job.cancelRequestedAt ? { cancelRequestedAt: job.cancelRequestedAt } : {})
             })),
-            queuedJobs: queue.map((job) => ({
+            queuedJobs: queue.map((job, index) => ({
                 id: job.id,
                 type: job.type,
                 codebasePath: job.codebasePath,
                 priority: job.priority,
                 enqueuedAt: job.enqueuedAt,
+                queuePosition: index + 1,
                 ...(typeof job.readyAt === 'number' ? { readyAt: new Date(job.readyAt).toISOString() } : {})
             }))
         };
