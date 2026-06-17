@@ -290,6 +290,52 @@ npx @zilliz/claude-context-mcp@latest --daemon-stop
 
 `--daemon-restart` reuses active discovery metadata for daemon host/port/path/token/allow-roots when those flags are omitted, but it still inherits embedding/vector DB environment from the current shell.
 
+### Local web dashboard
+
+The daemon can also serve an opt-in local dashboard on the same loopback HTTP server. It is disabled by default and uses the daemon bearer token for all `/api` routes.
+
+```bash
+pnpm build:web-dashboard
+
+MCP_RUNTIME_MODE=daemon \
+MCP_DAEMON_TOKEN=local-secret \
+MCP_DAEMON_ALLOW_ROOTS=/repo/a:/repo/b \
+MCP_DASHBOARD_ENABLED=true \
+MCP_DASHBOARD_STATIC_DIR=packages/web-dashboard/dist \
+npx @zilliz/claude-context-mcp@latest
+```
+
+Open `http://127.0.0.1:39393/dashboard` and paste the daemon bearer token into the token field. The static dashboard files do not embed the token; the browser sends it as an `Authorization: Bearer ...` header only for dashboard API requests.
+
+Dashboard options:
+
+- `--dashboard` or `MCP_DASHBOARD_ENABLED=true`: enable the dashboard in daemon mode.
+- `--dashboard-route <path>` or `MCP_DASHBOARD_ROUTE`: route prefix, default `/dashboard`.
+- `--dashboard-static-dir <path>` or `MCP_DASHBOARD_STATIC_DIR`: production build directory. If omitted, the daemon serves a minimal placeholder page.
+
+The dashboard currently provides polling-based daemon status, known codebase listing, indexing status, search, index, clear, and cancel actions. API routes reject non-loopback requests, non-local web origins, missing bearer tokens, and route collisions with the MCP endpoint.
+
+Keep the dashboard bound to `127.0.0.1`. Do not expose it on a non-local interface, reverse proxy, or shared host without a separate deployment review for authentication, TLS, origin policy, and secret handling.
+
+For frontend development, start a daemon with the dashboard enabled, then run:
+
+```bash
+DASHBOARD_API_TARGET=http://127.0.0.1:39393/dashboard pnpm dev:web-dashboard
+```
+
+The Vite dev server proxies `/api` to the daemon dashboard API. Paste the daemon bearer token into the local UI; do not put the token into static files or Vite environment variables.
+
+Useful verification commands:
+
+```bash
+pnpm --filter @zilliz/claude-context-mcp exec tsx --test src/config.test.ts src/dashboard-api.test.ts
+pnpm build:mcp-with-dashboard
+pnpm lint
+pnpm typecheck
+pnpm build
+pnpm exec openspec validate add-web-dashboard --strict
+```
+
 ## Usage with MCP Clients
 
 <details>

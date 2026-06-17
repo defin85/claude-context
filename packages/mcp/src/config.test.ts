@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMcpConfig } from './config.js';
+import { createMcpConfig, createMcpRuntimeConfig } from './config.js';
 
 const trackedEnv = [
     'EMBEDDING_PROVIDER',
@@ -16,6 +16,12 @@ const trackedEnv = [
     'INDEX_EMBEDDING_BATCH_SIZE',
     'INDEX_INSERT_BATCH_SIZE',
     'VECTOR_DATABASE_BACKEND',
+    'MCP_RUNTIME_MODE',
+    'MCP_DAEMON_ALLOW_ROOTS',
+    'MCP_DAEMON_TOKEN',
+    'MCP_DASHBOARD_ENABLED',
+    'MCP_DASHBOARD_ROUTE',
+    'MCP_DASHBOARD_STATIC_DIR',
 ];
 
 function withEnv(env: Record<string, string | undefined>, run: () => void): void {
@@ -182,5 +188,61 @@ test('vector database backend defaults to Qdrant while preserving explicit backe
         const config = createMcpConfig();
 
         assert.equal(config.vectorDatabaseBackend, 'lancedb');
+    });
+});
+
+test('daemon dashboard is disabled by default and can be enabled from CLI', () => {
+    withEnv({
+        MCP_DAEMON_ALLOW_ROOTS: '/repo',
+        MCP_DAEMON_TOKEN: 'test-token',
+    }, () => {
+        const disabled = createMcpRuntimeConfig(['--mode', 'daemon']);
+
+        assert.equal(disabled.daemon?.dashboard.enabled, false);
+        assert.equal(disabled.daemon?.dashboard.routePrefix, '/dashboard');
+        assert.equal(disabled.daemon?.dashboard.apiPrefix, '/dashboard/api');
+
+        const enabled = createMcpRuntimeConfig([
+            '--mode', 'daemon',
+            '--dashboard',
+            '--dashboard-route', '/ops',
+            '--dashboard-static-dir', '/tmp/dashboard',
+        ]);
+
+        assert.equal(enabled.daemon?.dashboard.enabled, true);
+        assert.equal(enabled.daemon?.dashboard.routePrefix, '/ops');
+        assert.equal(enabled.daemon?.dashboard.apiPrefix, '/ops/api');
+        assert.equal(enabled.daemon?.dashboard.staticDir, '/tmp/dashboard');
+    });
+});
+
+test('daemon dashboard can be enabled from environment and rejects MCP route collisions', () => {
+    withEnv({
+        MCP_RUNTIME_MODE: 'daemon',
+        MCP_DAEMON_ALLOW_ROOTS: '/repo',
+        MCP_DAEMON_TOKEN: 'test-token',
+        MCP_DASHBOARD_ENABLED: 'true',
+        MCP_DASHBOARD_ROUTE: '/mcp',
+    }, () => {
+        assert.throws(
+            () => createMcpRuntimeConfig(),
+            /Dashboard route '\/mcp' conflicts with daemon MCP endpoint '\/mcp'/,
+        );
+    });
+
+    withEnv({
+        MCP_RUNTIME_MODE: 'daemon',
+        MCP_DAEMON_ALLOW_ROOTS: '/repo',
+        MCP_DAEMON_TOKEN: 'test-token',
+        MCP_DASHBOARD_ENABLED: 'true',
+        MCP_DASHBOARD_ROUTE: '/dashboard/',
+        MCP_DASHBOARD_STATIC_DIR: '/tmp/dashboard',
+    }, () => {
+        const config = createMcpRuntimeConfig();
+
+        assert.equal(config.daemon?.dashboard.enabled, true);
+        assert.equal(config.daemon?.dashboard.routePrefix, '/dashboard');
+        assert.equal(config.daemon?.dashboard.apiPrefix, '/dashboard/api');
+        assert.equal(config.daemon?.dashboard.staticDir, '/tmp/dashboard');
     });
 });

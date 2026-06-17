@@ -11,6 +11,7 @@ console.warn = (...args: unknown[]) => {
 };
 
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -44,6 +45,11 @@ import {
     DaemonClientConfigManager,
     readDaemonOperatorStatus
 } from './daemon-discovery.js';
+import { DashboardApiAdapter, DashboardApiResponse } from './dashboard-api.js';
+import {
+    isDashboardApiRoutePath,
+    shouldHandleAsDashboardRoute
+} from './dashboard-routing.js';
 import { handleDaemonCliCommand } from './daemon-cli.js';
 import { migrateWorkspaceStateToDaemon } from './daemon-state-migration.js';
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
@@ -721,6 +727,11 @@ This tool is versatile and can be used before completing various tasks to retrie
         }
 
         const requestUrl = new URL(request.url || '/', `http://${daemonConfig.host}:${daemonConfig.port}`);
+        if (shouldHandleAsDashboardRoute(requestUrl.pathname, daemonConfig.dashboard)) {
+            await this.handleDashboardRequest(request, response, requestUrl);
+            return;
+        }
+
         if (requestUrl.pathname !== daemonConfig.endpointPath) {
             this.writeDaemonError(response, 404, 'Not found.');
             return;
@@ -782,6 +793,333 @@ This tool is versatile and can be used before completing various tasks to retrie
                 this.writeDaemonError(response, 500, 'Internal server error.');
             }
         }
+    }
+
+    private async handleDashboardRequest(
+        request: http.IncomingMessage,
+        response: http.ServerResponse,
+        requestUrl: URL
+    ): Promise<void> {
+        const daemonConfig = this.runtimeConfig.daemon;
+        if (!daemonConfig) {
+            this.writeDashboardJson(response, {
+                statusCode: 500,
+                body: { ok: false, error: 'Daemon runtime is not configured.' }
+            });
+            return;
+        }
+
+        if (!this.isLoopbackRequest(request)) {
+            this.writeDashboardJson(response, {
+                statusCode: 403,
+                body: { ok: false, error: 'Dashboard only accepts loopback connections.' }
+            });
+            return;
+        }
+
+        const rejectedOrigin = this.getRejectedOrigin(request.headers.origin, request.headers.referer);
+        if (rejectedOrigin) {
+            this.writeDashboardJson(response, {
+                statusCode: 403,
+                body: { ok: false, error: `Rejected non-local web origin '${rejectedOrigin}'.` }
+            });
+            return;
+        }
+
+        if (isDashboardApiRoutePath(requestUrl.pathname, daemonConfig.dashboard.apiPrefix)) {
+            await this.handleDashboardApiRequest(request, response, requestUrl);
+            return;
+        }
+
+        await this.handleDashboardStaticRequest(request, response, requestUrl);
+    }
+
+    private async handleDashboardApiRequest(
+        request: http.IncomingMessage,
+        response: http.ServerResponse,
+        requestUrl: URL
+    ): Promise<void> {
+        const daemonConfig = this.runtimeConfig.daemon;
+        if (!daemonConfig) {
+            this.writeDashboardJson(response, {
+                statusCode: 500,
+                body: { ok: false, error: 'Daemon runtime is not configured.' }
+            });
+            return;
+        }
+
+        const providedToken = this.extractBearerToken(request.headers.authorization)
+            || this.extractDashboardSessionToken(request.headers.cookie);
+        if (!providedToken || !this.tokensMatch(providedToken, daemonConfig.bearerToken)) {
+            this.writeDashboardJson(
+                response,
+                {
+                    statusCode: 401,
+                    body: { ok: false, error: 'Missing or invalid daemon bearer token.' }
+                },
+                { 'WWW-Authenticate': 'Bearer realm="claude-context-dashboard"' }
+            );
+            return;
+        }
+
+        const body = request.method === 'POST'
+            ? await this.readDashboardJsonBody(request)
+            : undefined;
+        if (body instanceof Error) {
+            this.writeDashboardJson(response, {
+                statusCode: 400,
+                body: { ok: false, error: body.message }
+            });
+            return;
+        }
+
+        const adapter = new DashboardApiAdapter({
+            toolHandlers: this.toolHandlers,
+            getDaemonStatus: () => this.handleGetDaemonStatusTool(),
+            listCodebases: () => this.listDashboardCodebases(),
+            cancelCodebaseWorkload: (args) => this.handleCancelCodebaseWorkloadTool(args),
+        });
+
+        const relativePath = requestUrl.pathname.slice(daemonConfig.dashboard.apiPrefix.length) || '/';
+        const apiPath = `/api${relativePath}`;
+        const result = await adapter.handle({
+            method: request.method || 'GET',
+            path: apiPath,
+            query: requestUrl.searchParams,
+            body,
+        });
+        this.writeDashboardJson(response, result);
+    }
+
+    private async handleDashboardStaticRequest(
+        request: http.IncomingMessage,
+        response: http.ServerResponse,
+        requestUrl: URL
+    ): Promise<void> {
+        const daemonConfig = this.runtimeConfig.daemon;
+        if (!daemonConfig) {
+            this.writeDashboardJson(response, {
+                statusCode: 500,
+                body: { ok: false, error: 'Daemon runtime is not configured.' }
+            });
+            return;
+        }
+
+        this.setDashboardSessionCookie(response, daemonConfig.dashboard.routePrefix, daemonConfig.bearerToken);
+
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+            this.writeDashboardJson(response, {
+                statusCode: 405,
+                body: { ok: false, error: 'Method not allowed.' }
+            }, { Allow: 'GET, HEAD' });
+            return;
+        }
+
+        if (requestUrl.pathname === daemonConfig.dashboard.routePrefix) {
+            response.writeHead(302, {
+                Location: `${daemonConfig.dashboard.routePrefix}/`,
+                'Cache-Control': 'no-store',
+            });
+            response.end();
+            return;
+        }
+
+        if (daemonConfig.dashboard.staticDir) {
+            const served = await this.tryServeDashboardStaticFile(
+                response,
+                requestUrl.pathname,
+                daemonConfig.dashboard.routePrefix,
+                daemonConfig.dashboard.staticDir,
+                request.method === 'HEAD'
+            );
+            if (served) {
+                return;
+            }
+        }
+
+        this.writeDashboardHtml(response, this.createDefaultDashboardHtml(), request.method === 'HEAD');
+    }
+
+    private setDashboardSessionCookie(response: http.ServerResponse, routePrefix: string, token: string): void {
+        response.setHeader(
+            'Set-Cookie',
+            `claude_context_dashboard_token=${encodeURIComponent(token)}; Path=${routePrefix}; HttpOnly; SameSite=Strict`
+        );
+    }
+
+    private extractDashboardSessionToken(cookieHeader: string | string[] | undefined): string | null {
+        const candidate = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : cookieHeader;
+        if (!candidate) {
+            return null;
+        }
+
+        for (const part of candidate.split(';')) {
+            const [rawName, ...rawValueParts] = part.trim().split('=');
+            if (rawName === 'claude_context_dashboard_token') {
+                return decodeURIComponent(rawValueParts.join('='));
+            }
+        }
+
+        return null;
+    }
+
+    private async listDashboardCodebases(): Promise<Array<{ path: string; status: string }>> {
+        const snapshotInfo = this.snapshotManager.getAllCodebaseInfo();
+        const codebases = new Map<string, string>();
+
+        for (const [codebasePath, info] of Object.entries(snapshotInfo)) {
+            codebases.set(codebasePath, info.status);
+        }
+
+        for (const codebasePath of await this.codebaseConfigManager.listConfiguredCodebases()) {
+            if (!codebases.has(codebasePath)) {
+                codebases.set(codebasePath, 'configured');
+            }
+        }
+
+        for (const lane of [this.workloadManager?.getSnapshot().indexing, this.workloadManager?.getSnapshot().search]) {
+            for (const job of [...(lane?.activeJobs || []), ...(lane?.queuedJobs || [])]) {
+                if (!codebases.has(job.codebasePath)) {
+                    codebases.set(job.codebasePath, 'queued');
+                }
+            }
+        }
+
+        return [...codebases.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([codebasePath, status]) => ({ path: codebasePath, status }));
+    }
+
+    private async readDashboardJsonBody(request: http.IncomingMessage): Promise<unknown | Error> {
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+
+        for await (const chunk of request) {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            totalBytes += buffer.length;
+            if (totalBytes > 1024 * 1024) {
+                return new Error('Dashboard request body is too large.');
+            }
+            chunks.push(buffer);
+        }
+
+        if (chunks.length === 0) {
+            return new Error('Expected a JSON object request body.');
+        }
+
+        try {
+            return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+        } catch {
+            return new Error('Invalid JSON request body.');
+        }
+    }
+
+    private async tryServeDashboardStaticFile(
+        response: http.ServerResponse,
+        pathname: string,
+        routePrefix: string,
+        staticDir: string,
+        headOnly: boolean
+    ): Promise<boolean> {
+        const relativeUrlPath = pathname === routePrefix
+            ? 'index.html'
+            : decodeURIComponent(pathname.slice(routePrefix.length + 1)) || 'index.html';
+        const safeRelativePath = path.normalize(relativeUrlPath).replace(/^(\.\.(\/|\\|$))+/, '');
+        const staticRoot = path.resolve(staticDir);
+        const filePath = path.resolve(staticRoot, safeRelativePath);
+
+        if (!filePath.startsWith(`${staticRoot}${path.sep}`) && filePath !== staticRoot) {
+            this.writeDashboardJson(response, {
+                statusCode: 403,
+                body: { ok: false, error: 'Forbidden dashboard asset path.' }
+            });
+            return true;
+        }
+
+        try {
+            const stat = await fs.promises.stat(filePath);
+            if (!stat.isFile()) {
+                return false;
+            }
+
+            response.writeHead(200, {
+                'Content-Type': this.getDashboardContentType(filePath),
+                'Cache-Control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=300',
+            });
+            if (!headOnly) {
+                response.end(await fs.promises.readFile(filePath));
+            } else {
+                response.end();
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private getDashboardContentType(filePath: string): string {
+        const extension = path.extname(filePath);
+        switch (extension) {
+            case '.html':
+                return 'text/html; charset=utf-8';
+            case '.js':
+                return 'text/javascript; charset=utf-8';
+            case '.css':
+                return 'text/css; charset=utf-8';
+            case '.json':
+                return 'application/json; charset=utf-8';
+            case '.svg':
+                return 'image/svg+xml';
+            case '.png':
+                return 'image/png';
+            case '.jpg':
+            case '.jpeg':
+                return 'image/jpeg';
+            default:
+                return 'application/octet-stream';
+        }
+    }
+
+    private writeDashboardJson(
+        response: http.ServerResponse,
+        result: DashboardApiResponse,
+        headers: Record<string, string> = {}
+    ): void {
+        if (response.writableEnded) {
+            return;
+        }
+
+        response.writeHead(result.statusCode, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            ...headers
+        });
+        response.end(JSON.stringify(result.body));
+    }
+
+    private writeDashboardHtml(response: http.ServerResponse, html: string, headOnly: boolean): void {
+        response.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store',
+        });
+        response.end(headOnly ? undefined : html);
+    }
+
+    private createDefaultDashboardHtml(): string {
+        return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Context Dashboard</title>
+</head>
+<body>
+  <main>
+    <h1>Claude Context Dashboard</h1>
+    <p>Build the web dashboard package and configure MCP_DASHBOARD_STATIC_DIR to serve the full interface.</p>
+  </main>
+</body>
+</html>`;
     }
 
     private isLoopbackRequest(request: http.IncomingMessage): boolean {

@@ -92,6 +92,7 @@ export interface McpDaemonConfig {
     host: string;
     port: number;
     endpointPath: string;
+    dashboard: McpDashboardConfig;
     allowRoots: string[];
     maxIndexingConcurrency: number;
     maxSearchConcurrency: number;
@@ -99,6 +100,13 @@ export interface McpDaemonConfig {
     tokenSha256: string;
     generatedBearerToken: boolean;
     stateWorkspacePath: string;
+}
+
+export interface McpDashboardConfig {
+    enabled: boolean;
+    routePrefix: string;
+    apiPrefix: string;
+    staticDir?: string;
 }
 
 export interface McpRuntimeConfig {
@@ -115,6 +123,9 @@ interface ParsedCliOptions {
     daemonMaxIndexingConcurrency?: number;
     daemonMaxSearchConcurrency?: number;
     daemonAllowRoots: string[];
+    dashboardEnabled?: boolean;
+    dashboardRoute?: string;
+    dashboardStaticDir?: string;
 }
 
 // Legacy format (v1) - for backward compatibility
@@ -538,6 +549,15 @@ function parseCliOptions(args: string[]): ParsedCliOptions {
             case '--allow-root':
                 parsed.daemonAllowRoots.push(next());
                 break;
+            case '--dashboard':
+                parsed.dashboardEnabled = true;
+                break;
+            case '--dashboard-route':
+                parsed.dashboardRoute = next();
+                break;
+            case '--dashboard-static-dir':
+                parsed.dashboardStaticDir = next();
+                break;
             case '--help':
             case '-h':
                 break;
@@ -557,7 +577,45 @@ function normalizeDaemonPath(rawPath: string | undefined): string {
     if (!candidate.startsWith('/')) {
         throw new Error(`Invalid daemon endpoint path '${candidate}'. Expected an absolute path like '/mcp'.`);
     }
+    return normalizeRoutePath(candidate);
+}
+
+function normalizeRoutePath(rawPath: string): string {
+    const candidate = rawPath.trim();
+    if (!candidate.startsWith('/')) {
+        throw new Error(`Invalid route path '${candidate}'. Expected an absolute path like '/dashboard'.`);
+    }
+
+    if (candidate.length > 1 && candidate.endsWith('/')) {
+        return candidate.slice(0, -1);
+    }
+
     return candidate;
+}
+
+function hasRouteCollision(left: string, right: string): boolean {
+    return left === right
+        || left.startsWith(`${right}/`)
+        || right.startsWith(`${left}/`);
+}
+
+function normalizeDashboardConfig(
+    rawEnabled: boolean | undefined,
+    rawRoute: string | undefined,
+    rawStaticDir: string | undefined,
+    daemonEndpointPath: string
+): McpDashboardConfig {
+    const routePrefix = normalizeRoutePath(rawRoute || '/dashboard');
+    if (hasRouteCollision(routePrefix, daemonEndpointPath)) {
+        throw new Error(`Dashboard route '${routePrefix}' conflicts with daemon MCP endpoint '${daemonEndpointPath}'.`);
+    }
+
+    return {
+        enabled: rawEnabled ?? false,
+        routePrefix,
+        apiPrefix: `${routePrefix}/api`,
+        ...(rawStaticDir ? { staticDir: rawStaticDir } : {})
+    };
 }
 
 function normalizeDaemonHost(rawHost: string | undefined): string {
@@ -609,12 +667,21 @@ export function createMcpRuntimeConfig(args: string[] = []): McpRuntimeConfig {
         || crypto.randomBytes(24).toString('hex');
     const generatedBearerToken = !cliOptions.daemonToken && !envManager.get('MCP_DAEMON_TOKEN');
 
+    const endpointPath = normalizeDaemonPath(cliOptions.daemonPath || envManager.get('MCP_DAEMON_PATH'));
+    const dashboardConfig = normalizeDashboardConfig(
+        cliOptions.dashboardEnabled ?? getBooleanFromEnv('MCP_DASHBOARD_ENABLED', false),
+        cliOptions.dashboardRoute || envManager.get('MCP_DASHBOARD_ROUTE'),
+        cliOptions.dashboardStaticDir || envManager.get('MCP_DASHBOARD_STATIC_DIR'),
+        endpointPath
+    );
+
     return {
         mode: 'daemon',
         daemon: {
             host: normalizeDaemonHost(cliOptions.daemonHost || envManager.get('MCP_DAEMON_HOST')),
             port: cliOptions.daemonPort || parsePositivePort(envManager.get('MCP_DAEMON_PORT'), 39393),
-            endpointPath: normalizeDaemonPath(cliOptions.daemonPath || envManager.get('MCP_DAEMON_PATH')),
+            endpointPath,
+            dashboard: dashboardConfig,
             allowRoots,
             maxIndexingConcurrency: cliOptions.daemonMaxIndexingConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_INDEXING_CONCURRENCY'), 1, 'daemon max indexing concurrency'),
             maxSearchConcurrency: cliOptions.daemonMaxSearchConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_SEARCH_CONCURRENCY'), 4, 'daemon max search concurrency'),
@@ -702,6 +769,12 @@ export function logRuntimeConfigurationSummary(runtimeConfig: McpRuntimeConfig):
     console.log(`[MCP]   Daemon Max Search Concurrency: ${daemon.maxSearchConcurrency}`);
     console.log(`[MCP]   Daemon Token SHA256: ${daemon.tokenSha256}`);
     console.log(`[MCP]   Daemon State Root: ${daemon.stateWorkspacePath}`);
+    console.log(`[MCP]   Dashboard Enabled: ${daemon.dashboard.enabled ? 'true' : 'false'}`);
+    if (daemon.dashboard.enabled) {
+        console.log(`[MCP]   Dashboard Route: http://${daemon.host}:${daemon.port}${daemon.dashboard.routePrefix}`);
+        console.log(`[MCP]   Dashboard API Prefix: ${daemon.dashboard.apiPrefix}`);
+        console.log(`[MCP]   Dashboard Static Dir: ${daemon.dashboard.staticDir || '[embedded build]'} `);
+    }
 
     if (daemon.generatedBearerToken) {
         console.log(`[MCP]   Generated Daemon Bearer Token: ${daemon.bearerToken}`);
@@ -764,6 +837,9 @@ Options:
   --daemon-max-indexing <count>       Max concurrent indexing/sync jobs in daemon mode
   --daemon-max-search <count>         Max concurrent search requests in daemon mode
   --allow-root <absolute-path>        Allowed codebase root for daemon mode; repeatable
+  --dashboard                         Enable the local web dashboard in daemon mode
+  --dashboard-route <path>            Dashboard route prefix (default: /dashboard)
+  --dashboard-static-dir <path>       Static dashboard build directory
 
 Environment Variables:
   MCP_SERVER_NAME         Server name
@@ -776,6 +852,9 @@ Environment Variables:
   MCP_DAEMON_MAX_INDEXING_CONCURRENCY Max concurrent indexing/sync jobs in daemon mode
   MCP_DAEMON_MAX_SEARCH_CONCURRENCY   Max concurrent search requests in daemon mode
   MCP_DAEMON_ALLOW_ROOTS  Allowed codebase roots for daemon mode, separated by '${path.delimiter}'
+  MCP_DASHBOARD_ENABLED   Enable the local web dashboard in daemon mode
+  MCP_DASHBOARD_ROUTE     Dashboard route prefix (default: /dashboard)
+  MCP_DASHBOARD_STATIC_DIR Static dashboard build directory
   
   Embedding Provider Configuration:
   EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama, BGE_M3 (default: OpenAI)
