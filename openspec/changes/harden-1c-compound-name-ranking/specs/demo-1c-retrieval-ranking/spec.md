@@ -5,8 +5,9 @@ The system SHALL provide evaluation coverage that distinguishes generic compound
 
 #### Scenario: Holdout dataset is collected separately
 - **WHEN** compound-name ranking is evaluated
-- **THEN** the evaluation SHALL include a committed holdout dataset separate from the original `demo-do30-1c` 30-query scenario dataset
-- **AND** each holdout query SHALL include an identifier, query text, strict expected path prefixes, optional acceptable path prefixes, and a failure or control class
+- **THEN** the evaluation SHALL include committed holdout coverage separate from the original `demo-do30-1c` 30-query scenario dataset
+- **AND** the holdout coverage SHALL either extend the universal 1C matrix or use a universal-matrix-compatible shape with identifier, query text, intent, domain, kind, failure or control class, and per-fixture targets
+- **AND** each applicable target SHALL include strict expected path prefixes and optional acceptable path prefixes
 - **AND** the dataset SHALL mark labels as evaluation truth only, not production ranking rules
 
 #### Scenario: Holdout includes positive and negative controls
@@ -36,7 +37,13 @@ The system SHALL improve compound-name scenario ranking without regressing curre
 - **THEN** it SHALL record backend label, retrieval mode, ranking profile, index status, raw top results, latency, score output, and comparison output where applicable
 - **AND** it SHALL require `0` MCP tool errors
 - **AND** it SHALL require `0` missing ColBERT vector errors
-- **AND** it SHALL meet the holdout strict and negative-control thresholds documented in the change verification
+- **AND** it SHALL meet holdout strict-positive and negative-control thresholds fixed before the final acceptance run and documented in the change verification
+
+#### Scenario: Universal contour is supporting evidence until targets are inspected
+- **WHEN** compound-name ranking is accepted for this change
+- **THEN** universal matrix results for configured fixtures with source-inspected applicable targets SHALL be recorded as supporting evidence
+- **AND** configured fixture targets still marked `needs-inspection` SHALL NOT be used as hard completion gates for this change
+- **AND** any regression in a previously passing configured fixture/query pair SHALL be listed and reviewed before acceptance
 
 #### Scenario: Existing small demo acceptance still runs
 - **WHEN** compound-name ranking is validated

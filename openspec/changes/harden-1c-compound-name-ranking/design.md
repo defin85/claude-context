@@ -15,10 +15,11 @@ The current live path uses Qdrant with full BGE-M3 dense, sparse, and ColBERT re
 **Goals:**
 
 - Improve generic matching between natural Russian query phrases and compound 1C metadata names.
-- Add holdout and negative-control evaluation so improvements are not only tuned to the six known misses.
+- Add universal-matrix-compatible holdout and negative-control evaluation so improvements are not only tuned to the six known misses.
 - Preserve the current `demo-do30-1c` tuned baseline and existing `demo-1c` acceptance behavior.
 - Require query-level comparison and explicit regression review before acceptance.
 - Keep production ranking independent from expected prefixes, scenario IDs, fixture notes, and evaluation labels.
+- Keep production ranking independent from configured universal fixture names and per-fixture labels.
 
 **Non-Goals:**
 
@@ -42,18 +43,18 @@ Alternative considered: add special-case scenario intent branches for each misse
 
 ### Decision: Require supporting evidence before applying compound-name boosts
 
-Compound-name support should apply only when the candidate has additional evidence from path kind, object kind, content, semantic score, lexical score, exact-symbol evidence, or provider evidence. The boost must be bounded and should reorder close candidates rather than override strongly supported unrelated results.
+Compound-name support should apply only when the candidate has independent evidence beyond raw compound-name token overlap. Valid supporting evidence includes matching requested path kind or module kind, matching 1C object kind, content terms, semantic score, lexical score, exact-symbol evidence, or provider evidence. The boost must be bounded and should reorder close candidates rather than override strongly supported unrelated results.
 
 Rationale:
 
-- Exact-looking name fragments can collide across large 1C configurations.
+- Exact-looking name fragments can collide across large 1C configurations, so the compound name itself must not be the only reason for a material rank change.
 - The existing `one-c` profile already combines semantic, lexical, path, object-kind, object-name, provider, and diversity signals; compound-name matching should be one component in that fusion.
 
 Alternative considered: make compound-name match a dominant score. That would risk over-ranking exact-looking but semantically wrong forms.
 
 ### Decision: Add holdout and negative-control evaluation
 
-Create a new evaluation dataset under `evaluation/retrieval/` for queries not used as the original acceptance labels. It should include:
+Create a new evaluation dataset under `evaluation/retrieval/` for queries not used as the original acceptance labels. The dataset should either be part of the universal 1C matrix or use the same shape: shared `id`, `query`, `intent`, `domain`, `kind`, `controlClass`, and per-fixture `targets` with explicit `applicable`, `optional`, `not-applicable`, or `needs-inspection` status. It should include:
 
 - held-out positive queries for compound names and neighboring contexts;
 - negative controls where generic domain terms must not force an exact-name-looking candidate;
@@ -63,8 +64,27 @@ Rationale:
 
 - The user explicitly called out the risk of fitting to the known answers.
 - Holdout and negative controls make the acceptance gate about general behavior rather than fixture-specific lookup.
+- Reusing the universal matrix shape avoids a second incompatible evaluation format for the same ranking behavior.
 
 Alternative considered: only raise `demo-do30` thresholds. That would not distinguish real ranking improvement from local score chasing.
+
+### Decision: Use universal evidence without making incomplete targets a hard gate
+
+The final acceptance for this change should hard-gate the current `demo-do30-1c` tuned baseline, existing `demo-1c` acceptance, fixed compound-name holdout thresholds, and negative-control behavior. Universal multi-fixture results should be collected and reported as supporting evidence, but targets still marked `needs-inspection` in the configured universal fixtures should not become hard completion gates for this change.
+
+Rationale:
+
+- This change is about generic ranking hardening, not finishing all universal labels.
+- The universal contour is still the right portability evidence, but incomplete per-fixture targets should not block a scoped ranking fix.
+
+### Decision: Do not tune production ranking by fixture identity
+
+Production `rankingProfile=one-c` weights must not branch on configured fixture names such as `demo-do30-1c`, `demo-bp30-1c`, `demo-ut-1c`, `demo-unf-1c`, or `demo-zup-1c`. Ranking signals must remain based on query text, 1C path shape, metadata kind, module kind, content, lexical evidence, semantic evidence, exact-symbol evidence, provider evidence, and diagnostics.
+
+Rationale:
+
+- Fixture-specific weights would undermine the universal contour and make a local score gain non-portable.
+- The current problem is a generic compound-name matching gap, not a configuration identity problem.
 
 ### Decision: Keep full BGE-M3 retrieval unchanged
 
@@ -87,11 +107,11 @@ Alternative considered: reindex with extra metadata fields. That may be useful l
 
 ## Migration Plan
 
-1. Add holdout and negative-control datasets with label validation tests.
+1. Add universal-matrix-compatible holdout and negative-control datasets with label validation tests.
 2. Add focused unit tests for compound-name matching and negative cases before changing ranking.
 3. Implement bounded compound-name signals in `code-symbol-retrieval.ts`.
-4. Run scorer tests, focused core tests, existing `demo-1c`, current `demo-do30`, and new holdout live evaluations.
-5. Compare against current tuned `demo-do30` final report and require `0` regressions before acceptance.
+4. Run scorer tests, focused core tests, existing `demo-1c`, current `demo-do30`, new holdout live evaluations, and universal supporting-evidence runs for configured fixtures that have source-inspected targets.
+5. Compare against a committed or explicitly archived current tuned `demo-do30` final report and require `0` regressions before acceptance.
 6. Rollback is limited to ranking and evaluation files because existing vector collections remain compatible.
 
 ## Open Questions

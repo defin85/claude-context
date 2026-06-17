@@ -4,11 +4,12 @@ The `improve-1c-scenario-ranking` change raised the large `demo-do30-1c` strict 
 
 ## What Changes
 
-- Add a held-out 1C scenario evaluation set focused on compound metadata-name matching, negative controls, and currently missed intent classes.
+- Add a held-out 1C scenario evaluation set focused on compound metadata-name matching, negative controls, and currently missed intent classes; the holdout MUST either extend the universal 1C matrix or use a universal-matrix-compatible shape with intent, domain, control class, and per-fixture targets.
 - Improve `rankingProfile=one-c` ranking by normalizing and matching compound 1C object, form, command, constant, manager-module, and object-module names against natural-language query phrases.
 - Keep scenario-specific labels, query IDs, expected prefixes, and fixture notes out of production ranking code.
+- Keep fixture names such as `demo-do30-1c`, `demo-bp30-1c`, `demo-ut-1c`, `demo-unf-1c`, and `demo-zup-1c` out of production ranking weight selection.
 - Add negative tests so generic domain terms such as email, EDI, МЧД, archive, state, signature, and counterparty do not force unrelated exact-name matches.
-- Add live comparison gates against the current tuned `demo-do30-1c` final report and a new holdout report, requiring no query-level regressions before acceptance.
+- Add live comparison gates against the current tuned `demo-do30-1c` final report and a new holdout report, requiring no query-level regressions before acceptance; universal multi-fixture results are supporting evidence for this change until configured universal targets are fully source-inspected.
 - Non-goal: change Qdrant schema, BGE-M3 storage shape, ColBERT vectors, chunking, indexing scope, or worker scheduling.
 - Non-goal: require strict `30/30` Top-1 on `demo-do30-1c`; the goal is robust ranking behavior, not a fixture-only perfect score.
 - Non-goal: broaden strict labels merely to improve aggregate metrics without source inspection.
