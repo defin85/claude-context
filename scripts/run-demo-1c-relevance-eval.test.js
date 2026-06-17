@@ -9,6 +9,8 @@ const test = require('node:test');
 const {
   buildComparison,
   enforceAcceptance,
+  collectionDatasetForFixture,
+  flattenUniversalMatrixForFixture,
   normalizeResults,
   score,
   validateLabels,
@@ -590,4 +592,302 @@ test('writes strict misses and acceptable-only hits to markdown reports', () => 
   assert.match(markdown, /## Strict misses/);
   assert.match(markdown, /\| s01 \| fns-counterparty-state \| 1 \|/);
   assert.match(markdown, /## Acceptable-only hits/);
+});
+
+test('loads the universal 1C matrix with complete fixture targets', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'universal-1c-search-matrix.json'));
+  const fixtures = Object.keys(dataset.fixtures);
+  const positive = dataset.queries.filter((query) => query.kind !== 'negative-control');
+  const negative = dataset.queries.filter((query) => query.kind === 'negative-control');
+  const positiveText = JSON.stringify(positive);
+  const requiredCoverage = {
+    reports: /Reports\//,
+    informationRegisters: /InformationRegisters\//,
+    accumulationRegisters: /AccumulationRegisters\//,
+    accountingRegisters: /AccountingRegisters\//,
+    documentPosting: /document-posting|проведение/i,
+    beforeWrite: /before-write|перед записью/i,
+    fillOnBase: /fill-on-base|ввод на основании/i,
+    exchangePlans: /ExchangePlans\//,
+    scheduledJobs: /ScheduledJobs\//,
+    accounting: /accounting|бухгалтер/i,
+    trade: /trade|торгов/i,
+    warehouse: /warehouse|склад/i,
+    production: /production|производ/i,
+    retail: /retail|розниц/i,
+  };
+
+  assert.equal(dataset.dataset, 'universal-1c-search-matrix');
+  assert.equal(dataset.labelsAreProductionRules, false);
+  assert.equal(positive.length, 40);
+  assert.equal(negative.length, 6);
+  assert.deepEqual(fixtures, ['demo-do30-1c', 'demo-bp30-1c', 'demo-ut-1c', 'demo-unf-1c']);
+  assert.equal(dataset.queries.every((query) => fixtures.every((fixture) => query.targets[fixture])), true);
+  for (const [coverageName, pattern] of Object.entries(requiredCoverage)) {
+    assert.match(positiveText, pattern, `missing universal matrix coverage: ${coverageName}`);
+  }
+});
+
+test('validates universal target statuses without scoring unresolved targets as misses', () => {
+  const fixtureRoot = path.join(repoRoot, '.artifacts', 'test', 'universal-fixture');
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.join(fixtureRoot, 'CommonModules', 'Strict', 'Ext'), { recursive: true });
+  fs.mkdirSync(path.join(fixtureRoot, 'CommonModules', 'Optional', 'Ext'), { recursive: true });
+  fs.writeFileSync(path.join(fixtureRoot, 'CommonModules', 'Strict', 'Ext', 'Module.bsl'), '', 'utf8');
+  fs.writeFileSync(path.join(fixtureRoot, 'CommonModules', 'Optional', 'Ext', 'Module.bsl'), '', 'utf8');
+  const dataset = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    labelsAreProductionRules: false,
+    fixtures: { 'demo-unit': { path: fixtureRoot } },
+    queries: [
+      {
+        id: 'applicable',
+        query: 'strict module',
+        kind: 'positive',
+        intent: 'module',
+        domain: 'common',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['CommonModules/Strict'] } },
+      },
+      {
+        id: 'optional',
+        query: 'optional module',
+        kind: 'positive',
+        intent: 'module',
+        domain: 'common',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'optional', expectedPathPrefixes: ['CommonModules/Optional'] } },
+      },
+      {
+        id: 'not-applicable',
+        query: 'foreign domain',
+        kind: 'positive',
+        intent: 'foreign',
+        domain: 'foreign',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'not-applicable' } },
+      },
+      {
+        id: 'needs-inspection',
+        query: 'unknown domain',
+        kind: 'positive',
+        intent: 'unknown',
+        domain: 'unknown',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'needs-inspection', note: 'manual review pending' } },
+      },
+    ],
+  };
+
+  const validation = validateLabels(dataset, fixtureRoot, { matrixFixture: 'demo-unit' });
+  const flat = flattenUniversalMatrixForFixture(dataset, 'demo-unit');
+
+  assert.equal(validation.applicableTargetCount, 1);
+  assert.equal(validation.optionalTargetCount, 1);
+  assert.equal(validation.notApplicableTargetCount, 1);
+  assert.equal(validation.needsInspectionCount, 1);
+  assert.equal(validation.unreachablePrefixCount, 0);
+  assert.equal(validation.strictAcceptanceReady, false);
+  assert.deepEqual(flat.queries.map((query) => query.id), ['applicable']);
+});
+
+test('rejects universal acceptance while fixture labels still need inspection', () => {
+  const summary = {
+    dataset: 'universal-1c-search-matrix',
+    metrics: {
+      hitAt10Count: 1,
+      queryCount: 1,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+      labelValidation: {
+        fixtureKey: 'demo-unit',
+        strictAcceptanceReady: false,
+        needsInspectionCount: 1,
+        unreachablePrefixCount: 0,
+        issueCount: 0,
+      },
+    },
+    perQuery: [],
+  };
+
+  assert.throws(
+    () => enforceAcceptance(summary),
+    /Universal matrix labels are not strict-acceptance ready for demo-unit/,
+  );
+});
+
+test('reports malformed universal targets and unreachable applicable labels', () => {
+  const fixtureRoot = path.join(repoRoot, '.artifacts', 'test', 'universal-invalid-fixture');
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const dataset = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    labelsAreProductionRules: false,
+    fixtures: { 'demo-unit': { path: fixtureRoot } },
+    queries: [
+      {
+        id: 'missing',
+        query: 'missing target',
+        kind: 'positive',
+        intent: 'module',
+        domain: 'common',
+        controlClass: 'source-inspected',
+        targets: {},
+      },
+      {
+        id: 'bad-status',
+        query: 'bad target status',
+        kind: 'positive',
+        intent: 'module',
+        domain: 'common',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'unknown', expectedPathPrefixes: ['CommonModules/Missing'] } },
+      },
+      {
+        id: 'unreachable',
+        query: 'unreachable strict label',
+        kind: 'positive',
+        intent: 'module',
+        domain: 'common',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['CommonModules/Missing'] } },
+      },
+    ],
+  };
+
+  const validation = validateLabels(dataset, fixtureRoot, { matrixFixture: 'demo-unit' });
+
+  assert.equal(validation.missingTargetCount, 1);
+  assert.equal(validation.issueCount, 2);
+  assert.equal(validation.unreachablePrefixCount, 1);
+  assert.equal(validation.unreachable.some((row) => row.id === 'missing'), true);
+  assert.equal(validation.unreachable.some((row) => row.id === 'bad-status'), true);
+  assert.equal(validation.unreachable.some((row) => row.id === 'unreachable'), true);
+});
+
+test('keeps fixture keys in baseline comparison rows for universal matrix reports', () => {
+  const baseline = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    metrics: { hitAt10Count: 0, hitAt10: 0 },
+    run: {},
+    perQuery: [
+      {
+        id: 'u31',
+        query: 'журнал регистрации',
+        fixtureKey: 'demo-bp30-1c',
+        firstRelevantRank: null,
+        topResultPaths: [],
+      },
+      {
+        id: 'u31',
+        query: 'журнал регистрации',
+        fixtureKey: 'demo-ut-1c',
+        firstRelevantRank: 1,
+        topResultPaths: ['DataProcessors/ЖурналРегистрации/Ext/ObjectModule.bsl'],
+      },
+    ],
+  };
+  const tuned = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    metrics: { hitAt10Count: 1, hitAt10: 1 },
+    run: {},
+    perQuery: [
+      {
+        id: 'u31',
+        query: 'журнал регистрации',
+        fixtureKey: 'demo-bp30-1c',
+        firstRelevantRank: 1,
+        topResultPaths: ['DataProcessors/ЖурналРегистрации/Ext/ObjectModule.bsl'],
+      },
+      {
+        id: 'u31',
+        query: 'журнал регистрации',
+        fixtureKey: 'demo-ut-1c',
+        firstRelevantRank: null,
+        topResultPaths: [],
+      },
+    ],
+  };
+
+  const comparison = buildComparison(baseline, tuned);
+
+  assert.equal(comparison.comparable, true);
+  assert.equal(comparison.improvements[0].fixtureKey, 'demo-bp30-1c');
+  assert.equal(comparison.regressions[0].fixtureKey, 'demo-ut-1c');
+});
+
+test('scores universal positives by fixture and reports negative controls separately', () => {
+  const dataset = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    labelsAreProductionRules: false,
+    fixtures: { 'demo-unit': { path: 'examples/demo-unit' } },
+    queries: [
+      {
+        id: 'q1',
+        query: 'контрагент форма',
+        kind: 'positive',
+        intent: 'object-card-navigation',
+        domain: 'counterparties',
+        controlClass: 'source-inspected',
+        targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['Catalogs/Контрагенты'] } },
+      },
+      {
+        id: 'n1',
+        query: 'зарплатный проект',
+        kind: 'negative-control',
+        intent: 'negative-control',
+        domain: 'payroll',
+        controlClass: 'negative-control',
+        targets: { 'demo-unit': { status: 'applicable', prohibitedPathPrefixes: ['Catalogs/Контрагенты'] } },
+      },
+    ],
+  };
+  const collection = collectionDatasetForFixture(dataset, 'demo-unit');
+  const results = [
+    { id: 'q1', top10: [{ path: 'Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form/Module.bsl' }] },
+    { id: 'n1', top10: [{ path: 'Catalogs/Контрагенты/Ext/ObjectModule.bsl' }] },
+  ];
+
+  const summary = score(dataset, normalizeResults(results, collection), {
+    backendLabel: 'unit',
+    matrixFixture: 'demo-unit',
+  });
+
+  assert.equal(collection.queries.length, 2);
+  assert.equal(summary.metrics.queryCount, 1);
+  assert.equal(summary.metrics.strict.hitAt10Count, 1);
+  assert.equal(summary.grouped.fixture['demo-unit'].queryCount, 1);
+  assert.equal(summary.grouped.domain.counterparties.strict.hitAt10Count, 1);
+  assert.equal(summary.negativeControls.queryCount, 1);
+  assert.equal(summary.negativeControls.failCount, 1);
+  assert.deepEqual(summary.negativeControls.failures[0].violations, ['Catalogs/Контрагенты/Ext/ObjectModule.bsl']);
+});
+
+test('keeps universal matrix labels out of production ranking code', () => {
+  const productionRanking = fs.readFileSync(
+    path.join(repoRoot, 'packages', 'core', 'src', 'code-symbol-retrieval.ts'),
+    'utf8',
+  );
+
+  for (const forbidden of [
+    'universal-1c-search-matrix',
+    'demo-bp30-1c',
+    'demo-ut-1c',
+    'demo-unf-1c',
+    'needs-inspection',
+    'prohibitedPathPrefixes',
+    'u31',
+    'n01',
+  ]) {
+    assert.equal(productionRanking.includes(forbidden), false, `unexpected production ranking reference: ${forbidden}`);
+  }
 });

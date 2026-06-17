@@ -59,6 +59,117 @@ function normalizePath(value) {
   return String(value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
 }
 
+const UNIVERSAL_MATRIX_DATASET = 'universal-1c-search-matrix';
+const UNIVERSAL_TARGET_STATUSES = new Set([
+  'applicable',
+  'optional',
+  'not-applicable',
+  'needs-inspection',
+]);
+
+function isUniversalMatrixDataset(dataset) {
+  return Boolean(
+    dataset &&
+    Array.isArray(dataset.queries) &&
+    (dataset.dataset === UNIVERSAL_MATRIX_DATASET || dataset.matrix === 'universal-1c-search'),
+  );
+}
+
+function inferMatrixFixtureKey(dataset, options = {}) {
+  if (options.matrixFixture) {
+    return options.matrixFixture;
+  }
+  if (options.fixtureKey) {
+    return options.fixtureKey;
+  }
+  if (options.codebasePath) {
+    return path.basename(path.resolve(options.codebasePath));
+  }
+  const fixtureKeys = Object.keys(dataset.fixtures || {});
+  if (fixtureKeys.length === 1) {
+    return fixtureKeys[0];
+  }
+  throw new Error('Universal 1C matrix scoring requires --matrix-fixture or --codebase-path.');
+}
+
+function comparisonKey(row) {
+  return row.fixtureKey ? `${row.fixtureKey}::${row.id}` : row.id;
+}
+
+function isNegativeControlQuery(query) {
+  return query.kind === 'negative-control' || query.controlClass === 'negative-control';
+}
+
+function universalTargetForFixture(query, fixtureKey) {
+  return query.targets && query.targets[fixtureKey];
+}
+
+function universalQueriesForFixture(dataset, fixtureKey, options = {}) {
+  const includeOptional = Boolean(options.includeOptionalTargets);
+  const includeNegativeControls = Boolean(options.includeNegativeControls);
+  const queries = [];
+  for (const query of dataset.queries) {
+    const target = universalTargetForFixture(query, fixtureKey);
+    if (!target) {
+      continue;
+    }
+    if (!['applicable', ...(includeOptional ? ['optional'] : [])].includes(target.status)) {
+      continue;
+    }
+    if (isNegativeControlQuery(query) && !includeNegativeControls) {
+      continue;
+    }
+    if (!isNegativeControlQuery(query) || includeNegativeControls) {
+      queries.push({
+        ...query,
+        fixtureKey,
+        matrixQueryId: query.id,
+        targetStatus: target.status,
+        expectedPathPrefixes: target.expectedPathPrefixes || [],
+        acceptablePathPrefixes: target.acceptablePathPrefixes || [],
+        prohibitedPathPrefixes: target.prohibitedPathPrefixes || [],
+        note: target.note || query.note,
+      });
+    }
+  }
+  return queries;
+}
+
+function flattenUniversalMatrixForFixture(dataset, fixtureKey, options = {}) {
+  const fixtureInfo = dataset.fixtures?.[fixtureKey] || {};
+  return {
+    dataset: `${dataset.dataset}:${fixtureKey}`,
+    version: dataset.version,
+    fixture: fixtureInfo.path || fixtureKey,
+    labelsAreProductionRules: dataset.labelsAreProductionRules,
+    matrix: dataset.dataset,
+    matrixFixture: fixtureKey,
+    queries: universalQueriesForFixture(dataset, fixtureKey, {
+      includeOptionalTargets: options.includeOptionalTargets,
+      includeNegativeControls: false,
+    }),
+  };
+}
+
+function collectionDatasetForFixture(dataset, fixtureKey, options = {}) {
+  if (!isUniversalMatrixDataset(dataset)) {
+    return dataset;
+  }
+  const fixtureInfo = dataset.fixtures?.[fixtureKey] || {};
+  return {
+    dataset: `${dataset.dataset}:${fixtureKey}:collection`,
+    version: dataset.version,
+    fixture: fixtureInfo.path || fixtureKey,
+    labelsAreProductionRules: dataset.labelsAreProductionRules,
+    matrix: dataset.dataset,
+    matrixFixture: fixtureKey,
+    queries: universalQueriesForFixture(dataset, fixtureKey, {
+      includeOptionalTargets: options.includeOptionalTargets,
+      includeNegativeControls: true,
+    }),
+  };
+}
+
 function normalizeResultItem(item) {
   const relativePath = normalizePath(item.relativePath || item.path || item.filePath || '');
   const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
@@ -276,7 +387,7 @@ function precisionAt(results, expectedPathPrefixes, k) {
   return capped.filter((result) => isRelevant(result, expectedPathPrefixes)).length / k;
 }
 
-function score(dataset, resultsById, runMetadata = {}) {
+function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
   const perQuery = [];
   const metrics = {
     queryCount: dataset.queries.length,
@@ -395,7 +506,115 @@ function score(dataset, resultsById, runMetadata = {}) {
   return summary;
 }
 
-function validateLabels(dataset, codebasePath) {
+function groupPerQuery(rows, fieldName) {
+  const groups = {};
+  for (const row of rows) {
+    const key = row[fieldName] || 'unspecified';
+    if (!groups[key]) {
+      groups[key] = {
+        queryCount: 0,
+        failures: 0,
+        strict: metricBucket(),
+        acceptable: metricBucket(),
+      };
+    }
+    const group = groups[key];
+    group.queryCount += 1;
+    group.failures += row.firstStrictRank === null || row.error ? 1 : 0;
+    addRankMetrics(group.strict, row.firstStrictRank);
+    addRankMetrics(group.acceptable, row.firstAcceptableRank);
+  }
+  for (const group of Object.values(groups)) {
+    finalizeRankMetrics(group.strict, group.queryCount);
+    finalizeRankMetrics(group.acceptable, group.queryCount);
+  }
+  return groups;
+}
+
+function scoreNegativeControls(dataset, resultsById, fixtureKey, options = {}) {
+  const queries = universalQueriesForFixture(dataset, fixtureKey, {
+    includeOptionalTargets: options.includeOptionalTargets,
+    includeNegativeControls: true,
+  }).filter(isNegativeControlQuery);
+  const perQuery = queries.map((query) => {
+    const entry = resultsById[query.id] || [];
+    const results = Array.isArray(entry) ? entry : entry.results || [];
+    const error = Array.isArray(entry) ? null : entry.error || null;
+    const prohibitedPrefixes = query.prohibitedPathPrefixes || [];
+    const topResultPaths = results.slice(0, 10).map((result) => result.relativePath || result.path || '');
+    const violations = topResultPaths
+      .filter((resultPath) => prohibitedPrefixes.some((prefix) => normalizePath(resultPath).startsWith(normalizePath(prefix))));
+    return {
+      id: query.id,
+      query: query.query,
+      intent: query.intent,
+      domain: query.domain,
+      controlClass: query.controlClass,
+      targetStatus: query.targetStatus,
+      passed: violations.length === 0 && !error,
+      violations,
+      prohibitedPathPrefixes: prohibitedPrefixes,
+      topResultPaths,
+      error,
+      note: query.note,
+    };
+  });
+  return {
+    queryCount: perQuery.length,
+    passCount: perQuery.filter((row) => row.passed).length,
+    failCount: perQuery.filter((row) => !row.passed).length,
+    failures: perQuery.filter((row) => !row.passed),
+    perQuery,
+  };
+}
+
+function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
+  const fixtureKey = inferMatrixFixtureKey(dataset, runMetadata);
+  const flatDataset = flattenUniversalMatrixForFixture(dataset, fixtureKey, {
+    includeOptionalTargets: runMetadata.includeOptionalTargets,
+  });
+  const summary = scoreFlatDataset(flatDataset, resultsById, {
+    ...runMetadata,
+    matrixFixture: fixtureKey,
+  });
+  for (const row of summary.perQuery) {
+    const source = flatDataset.queries.find((query) => query.id === row.id);
+    row.fixtureKey = fixtureKey;
+    row.intent = source?.intent;
+    row.domain = source?.domain;
+    row.controlClass = source?.controlClass;
+    row.targetStatus = source?.targetStatus;
+  }
+  summary.matrix = {
+    dataset: dataset.dataset,
+    fixtureKey,
+    fixtureLabel: dataset.fixtures?.[fixtureKey]?.label,
+    positiveQueryCount: summary.metrics.queryCount,
+    sourceQueryCount: dataset.queries.length,
+    includeOptionalTargets: Boolean(runMetadata.includeOptionalTargets),
+  };
+  summary.grouped = {
+    fixture: groupPerQuery(summary.perQuery, 'fixtureKey'),
+    domain: groupPerQuery(summary.perQuery, 'domain'),
+    intent: groupPerQuery(summary.perQuery, 'intent'),
+    controlClass: groupPerQuery(summary.perQuery, 'controlClass'),
+  };
+  summary.negativeControls = scoreNegativeControls(dataset, resultsById, fixtureKey, {
+    includeOptionalTargets: runMetadata.includeOptionalTargets,
+  });
+  summary.dataset = dataset.dataset;
+  summary.fixture = dataset.fixtures?.[fixtureKey]?.path || summary.fixture;
+  return summary;
+}
+
+function score(dataset, resultsById, runMetadata = {}) {
+  if (isUniversalMatrixDataset(dataset)) {
+    return scoreUniversalMatrixDataset(dataset, resultsById, runMetadata);
+  }
+  return scoreFlatDataset(dataset, resultsById, runMetadata);
+}
+
+function validateFlatLabels(dataset, codebasePath) {
   const files = listFiles(codebasePath).map(normalizePath);
   const perQuery = dataset.queries.map((query) => {
     const prefixes = [
@@ -443,7 +662,117 @@ function validateLabels(dataset, codebasePath) {
   };
 }
 
+function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
+  const fixtureKey = inferMatrixFixtureKey(dataset, {
+    ...options,
+    codebasePath,
+  });
+  const files = listFiles(codebasePath).map(normalizePath);
+  const perQuery = dataset.queries.map((query) => {
+    const target = universalTargetForFixture(query, fixtureKey);
+    if (!target) {
+      return {
+        id: query.id,
+        query: query.query,
+        kind: query.kind,
+        fixtureKey,
+        targetStatus: 'missing-target',
+        allReachable: false,
+        prefixes: [],
+        issues: [`missing target for fixture ${fixtureKey}`],
+      };
+    }
+    const issues = [];
+    if (!UNIVERSAL_TARGET_STATUSES.has(target.status)) {
+      issues.push(`invalid target status ${target.status}`);
+    }
+    const shouldValidatePrefixes = ['applicable', 'optional'].includes(target.status) && !isNegativeControlQuery(query);
+    if (target.status === 'applicable' && !isNegativeControlQuery(query) && !target.expectedPathPrefixes?.length) {
+      issues.push('applicable positive target must include expectedPathPrefixes');
+    }
+    const prefixes = shouldValidatePrefixes
+      ? [
+        ...(target.expectedPathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'strict' })),
+        ...(target.acceptablePathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'acceptable' })),
+      ].map(({ prefix, labelKind }) => {
+        const normalizedPrefix = normalizePath(prefix);
+        const matchingFiles = files.filter((file) => file.startsWith(normalizedPrefix));
+        return {
+          prefix,
+          labelKind,
+          reachable: matchingFiles.length > 0,
+          matchingFileCount: matchingFiles.length,
+          sampleMatches: matchingFiles.slice(0, 5),
+        };
+      })
+      : [];
+    return {
+      id: query.id,
+      query: query.query,
+      kind: query.kind,
+      intent: query.intent,
+      domain: query.domain,
+      controlClass: query.controlClass,
+      fixtureKey,
+      targetStatus: target.status,
+      allReachable: prefixes.every((prefix) => prefix.reachable) && issues.length === 0,
+      prefixes,
+      issues,
+      note: target.note,
+    };
+  });
+  const unreachable = perQuery
+    .filter((row) => row.prefixes.some((prefix) => !prefix.reachable) || row.issues.length > 0)
+    .map((row) => ({
+      id: row.id,
+      query: row.query,
+      targetStatus: row.targetStatus,
+      issues: row.issues,
+      prefixes: row.prefixes.filter((prefix) => !prefix.reachable),
+    }));
+  return {
+    codebasePath,
+    fixtureKey,
+    queryCount: dataset.queries.length,
+    applicableTargetCount: perQuery.filter((row) => row.targetStatus === 'applicable').length,
+    optionalTargetCount: perQuery.filter((row) => row.targetStatus === 'optional').length,
+    notApplicableTargetCount: perQuery.filter((row) => row.targetStatus === 'not-applicable').length,
+    needsInspectionCount: perQuery.filter((row) => row.targetStatus === 'needs-inspection').length,
+    missingTargetCount: perQuery.filter((row) => row.targetStatus === 'missing-target').length,
+    expectedPrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'strict').length
+    ), 0),
+    acceptablePrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'acceptable').length
+    ), 0),
+    unreachablePrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => !prefix.reachable).length
+    ), 0),
+    issueCount: perQuery.reduce((sum, row) => sum + row.issues.length, 0),
+    strictAcceptanceReady: unreachable.length === 0 && perQuery.every((row) => row.targetStatus !== 'needs-inspection'),
+    ambiguousQueryIds: [],
+    unresolved: perQuery
+      .filter((row) => row.targetStatus === 'needs-inspection')
+      .map((row) => ({ id: row.id, query: row.query, fixtureKey, note: row.note })),
+    unreachable,
+    perQuery,
+  };
+}
+
+function validateLabels(dataset, codebasePath, options = {}) {
+  if (isUniversalMatrixDataset(dataset)) {
+    return validateUniversalMatrixLabels(dataset, codebasePath, options);
+  }
+  return validateFlatLabels(dataset, codebasePath);
+}
+
 function listFiles(root) {
+  if (!fs.existsSync(root)) {
+    throw new Error(`Fixture path not found: ${root}`);
+  }
+  if (!fs.statSync(root).isDirectory()) {
+    throw new Error(`Fixture path is not a directory: ${root}`);
+  }
   const results = [];
   const walk = (dir, prefix = '') => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -461,20 +790,21 @@ function listFiles(root) {
 }
 
 function buildComparison(baseline, tuned) {
-  const baselineById = new Map(baseline.perQuery.map((row) => [row.id, row]));
-  const tunedIds = new Set(tuned.perQuery.map((row) => row.id));
+  const baselineById = new Map(baseline.perQuery.map((row) => [comparisonKey(row), row]));
+  const tunedIds = new Set(tuned.perQuery.map((row) => comparisonKey(row)));
   const baselineOnlyIds = baseline.perQuery
-    .map((row) => row.id)
-    .filter((id) => !tunedIds.has(id));
+    .map((row) => comparisonKey(row))
+    .filter((key) => !tunedIds.has(key));
   const tunedOnlyIds = tuned.perQuery
-    .map((row) => row.id)
-    .filter((id) => !baselineById.has(id));
+    .map((row) => comparisonKey(row))
+    .filter((key) => !baselineById.has(key));
   const perQuery = tuned.perQuery.map((row) => {
-    const previous = baselineById.get(row.id);
+    const previous = baselineById.get(comparisonKey(row));
     if (!previous) {
       return {
         id: row.id,
         query: row.query,
+        fixtureKey: row.fixtureKey,
         baselineRank: null,
         tunedRank: row.firstRelevantRank,
         status: 'not_comparable',
@@ -485,6 +815,7 @@ function buildComparison(baseline, tuned) {
     return {
       id: row.id,
       query: row.query,
+      fixtureKey: row.fixtureKey,
       baselineRank: previous?.firstRelevantRank ?? null,
       tunedRank: row.firstRelevantRank,
       status: compareRanks(previous?.firstRelevantRank ?? null, row.firstRelevantRank),
@@ -579,7 +910,19 @@ function enforceAcceptance(summary, options = {}) {
   const missingColbertErrors = Number(rawSummary.missingColbertErrors || 0);
   const baselineHitAt10Count = Number(summary.comparison?.baseline?.hitAt10Count);
   const baselineMode = options.baselineMode || 'strict-improvement';
+  const labelValidation = options.labelValidation || summary.run?.labelValidation;
 
+  if (summary.dataset === UNIVERSAL_MATRIX_DATASET &&
+    labelValidation &&
+    labelValidation.strictAcceptanceReady === false &&
+    !options.allowIncompleteMatrixLabels) {
+    throw new Error(
+      `Universal matrix labels are not strict-acceptance ready for ${labelValidation.fixtureKey || 'unknown fixture'}: ` +
+      `${labelValidation.needsInspectionCount || 0} needs-inspection target(s), ` +
+      `${labelValidation.unreachablePrefixCount || 0} unreachable prefix(es), ` +
+      `${labelValidation.issueCount || 0} validation issue(s).`,
+    );
+  }
   if (Number.isFinite(acceptanceThreshold) &&
     !options.allowBelowAcceptanceThreshold &&
     summary.metrics.hitAt10Count < acceptanceThreshold) {
@@ -649,8 +992,16 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   lines.push('');
   lines.push(`- Dataset: \`${summary.dataset}\` ${summary.version || ''}`.trim());
   lines.push(`- Backend: ${summary.run.backendLabel || 'unspecified'}`);
+  lines.push(`- Retrieval mode: ${summary.run.retrievalMode || 'unspecified'}`);
   lines.push(`- Ranking profile: ${summary.run.rankingProfile || 'unspecified'}`);
   lines.push(`- Codebase: \`${summary.run.codebasePath || summary.fixture || 'unspecified'}\``);
+  if (summary.run.indexStatus) {
+    lines.push(`- Index status: ${summary.run.indexStatus.status || summary.run.indexStatus.state || 'recorded'}`);
+  }
+  if (summary.run.rawSummary) {
+    lines.push(`- MCP tool errors: ${summary.run.rawSummary.toolErrors ?? 0}`);
+    lines.push(`- Missing ColBERT vector errors: ${summary.run.rawSummary.missingColbertErrors ?? 0}`);
+  }
   lines.push(`- Query count: ${summary.metrics.queryCount}`);
   lines.push(`- Hit@10: ${summary.metrics.hitAt10Count}/${summary.metrics.queryCount} (${(summary.metrics.hitAt10 * 100).toFixed(1)}%)`);
   if (summary.metrics.strict) {
@@ -671,6 +1022,15 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   }
   if (labelValidation) {
     lines.push(`- Label validation: ${labelValidation.unreachablePrefixCount === 0 ? 'all expected prefixes reachable' : `${labelValidation.unreachablePrefixCount} unreachable prefixes`}`);
+    if (labelValidation.needsInspectionCount !== undefined) {
+      lines.push(`- Needs inspection: ${labelValidation.needsInspectionCount}`);
+    }
+  }
+  if (summary.matrix) {
+    lines.push(`- Matrix fixture: ${summary.matrix.fixtureKey}`);
+  }
+  if (summary.negativeControls) {
+    lines.push(`- Negative controls: ${summary.negativeControls.passCount}/${summary.negativeControls.queryCount} passed`);
   }
   if (comparison) {
     lines.push(`- Compared baseline Hit@10: ${comparison.baseline.hitAt10Count}/${summary.metrics.queryCount}`);
@@ -689,6 +1049,28 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
     const firstStrictRank = row.firstStrictRank ?? row.firstRelevantRank ?? null;
     const firstAcceptableRank = row.firstAcceptableRank ?? firstStrictRank;
     lines.push(`| ${row.id} | ${firstStrictRank ? 'yes' : 'no'} | ${firstStrictRank ?? ''} | ${firstAcceptableRank ?? ''} | ${row.latencyMs ?? ''} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+  }
+  if (summary.grouped) {
+    lines.push('');
+    lines.push('## Grouped summary');
+    for (const [groupName, groups] of Object.entries(summary.grouped)) {
+      lines.push('');
+      lines.push(`### ${groupName}`);
+      lines.push('| group | queries | strict hit@10 | acceptable hit@10 | failures |');
+      lines.push('| --- | ---: | ---: | ---: | ---: |');
+      for (const [key, value] of Object.entries(groups)) {
+        lines.push(`| ${key} | ${value.queryCount} | ${value.strict.hitAt10Count} | ${value.acceptable.hitAt10Count} | ${value.failures} |`);
+      }
+    }
+  }
+  if (summary.negativeControls?.perQuery?.length) {
+    lines.push('');
+    lines.push('## Negative controls');
+    lines.push('| id | passed | violations | top paths |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const row of summary.negativeControls.perQuery) {
+      lines.push(`| ${row.id} | ${row.passed ? 'yes' : 'no'} | ${row.violations.join('<br>')} | ${row.topResultPaths.slice(0, 5).map((item, index) => `#${index + 1} ${item}`).join('<br>')} |`);
+    }
   }
   const strictMisses = summary.perQuery.filter((row) => !(row.firstStrictRank ?? row.firstRelevantRank));
   if (strictMisses.length > 0) {
@@ -753,10 +1135,11 @@ function main() {
   const resultsById = normalizeResults(rawResults.results || rawResults, dataset, args.backend);
   const requiredResidualAssertions = parseJsonOption(args.requiredResidualAssertionsJson, 'required-residual-assertions-json');
   const labelValidation = args.validateLabelsAgainst
-    ? validateLabels(dataset, args.validateLabelsAgainst)
+    ? validateLabels(dataset, args.validateLabelsAgainst, { matrixFixture: args.matrixFixture })
     : undefined;
   const summary = score(dataset, resultsById, {
     backendLabel: args.backendLabel || args.backend || rawResults.backend,
+    retrievalMode: args.retrievalMode || rawResults.retrievalMode,
     rankingProfile: args.rankingProfile || rawResults.rankingProfile,
     codebasePath: args.codebasePath || rawResults.codebasePath || dataset.fixture,
     datasetPath,
@@ -768,17 +1151,24 @@ function main() {
     startedAt: rawResults.startedAt,
     finishedAt: rawResults.finishedAt,
     rawSummary: rawResults.summary,
+    indexStatus: rawResults.indexStatus,
+    matrixFixture: args.matrixFixture,
+    includeOptionalTargets: Boolean(args.includeOptionalTargets),
     residualQueryIds: parseCsvList(args.residualQueryIds),
     requiredResidualAssertions,
     baselineMode: args.baselineMode || undefined,
-    labelValidation: labelValidation ? {
-      codebasePath: labelValidation.codebasePath,
-      unreachablePrefixCount: labelValidation.unreachablePrefixCount,
-      ambiguousQueryIds: labelValidation.ambiguousQueryIds,
-      thresholdRecommendation: labelValidation.unreachablePrefixCount === 0
-        ? 'Hit@10 24/30 is valid for the current reachable label set.'
-        : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
-    } : undefined,
+	    labelValidation: labelValidation ? {
+	      codebasePath: labelValidation.codebasePath,
+	      fixtureKey: labelValidation.fixtureKey,
+	      unreachablePrefixCount: labelValidation.unreachablePrefixCount,
+	      needsInspectionCount: labelValidation.needsInspectionCount,
+	      issueCount: labelValidation.issueCount,
+	      strictAcceptanceReady: labelValidation.strictAcceptanceReady,
+	      ambiguousQueryIds: labelValidation.ambiguousQueryIds,
+	      thresholdRecommendation: labelValidation.strictAcceptanceReady !== false && labelValidation.unreachablePrefixCount === 0
+	        ? 'Hit@10 24/30 is valid for the current reachable label set.'
+	        : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
+	    } : undefined,
   });
   const comparison = args.baseline
     ? buildComparison(readJson(args.baseline), summary)
@@ -821,11 +1211,13 @@ function main() {
       strictHitAt5Threshold: args.strictHitAt5Threshold,
       allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
       allowToolErrors: Boolean(args.allowToolErrors),
-      allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
-      allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
-      baselineMode: args.baselineMode,
-      requiredResidualAssertions,
-    });
+	      allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
+	      allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+	      allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
+	      baselineMode: args.baselineMode,
+	      labelValidation,
+	      requiredResidualAssertions,
+	    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -840,6 +1232,10 @@ module.exports = {
   enforceAcceptance,
   parseCsvList,
   parseJsonOption,
+  isUniversalMatrixDataset,
+  inferMatrixFixtureKey,
+  flattenUniversalMatrixForFixture,
+  collectionDatasetForFixture,
   normalizeResults,
   score,
   validateLabels,

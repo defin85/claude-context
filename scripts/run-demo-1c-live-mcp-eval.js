@@ -7,6 +7,9 @@ const {
   enforceAcceptance,
   parseCsvList,
   parseJsonOption,
+  isUniversalMatrixDataset,
+  inferMatrixFixtureKey,
+  collectionDatasetForFixture,
   normalizeResults,
   score,
   validateLabels,
@@ -189,6 +192,12 @@ async function main() {
   const datasetPath = args.dataset || defaultDatasetPath;
   const dataset = readJson(datasetPath);
   const codebasePath = path.resolve(args.codebasePath || defaultCodebasePath);
+  const matrixFixture = isUniversalMatrixDataset(dataset)
+    ? inferMatrixFixtureKey(dataset, { matrixFixture: args.matrixFixture, codebasePath })
+    : undefined;
+  const collectionDataset = isUniversalMatrixDataset(dataset)
+    ? collectionDatasetForFixture(dataset, matrixFixture, { includeOptionalTargets: Boolean(args.includeOptionalTargets) })
+    : dataset;
   const backendLabel = args.backendLabel || 'qdrant-default-live';
   const artifactDir = path.resolve(args.artifactDir || defaultArtifactDir);
   const runName = args.runName || `${new Date().toISOString().replace(/[:.]/g, '-')}-demo-1c-live`;
@@ -213,13 +222,15 @@ async function main() {
 
   const startedAt = new Date().toISOString();
   const indexStatus = await ensureIndexed(clientConfig, options);
-  const collected = await collectResults(clientConfig, dataset, options);
+  const collected = await collectResults(clientConfig, collectionDataset, options);
   const finishedAt = new Date().toISOString();
   const rawReport = {
     dataset: dataset.dataset,
     version: dataset.version,
     codebasePath,
+    matrixFixture,
     backend: backendLabel,
+    retrievalMode: args.retrievalMode || 'mcp-search_code',
     rankingProfile: options.rankingProfile,
     startedAt,
     finishedAt,
@@ -227,7 +238,7 @@ async function main() {
       text: textFromResult(indexStatus),
       structuredContent: indexStatus.structuredContent,
     },
-    caseCount: dataset.queries.length,
+    caseCount: collectionDataset.queries.length,
     summary: {
       toolErrors: collected.errors.toolErrors,
       missingColbertErrors: collected.errors.missingColbertErrors,
@@ -236,10 +247,11 @@ async function main() {
   };
   writeJson(rawPath, rawReport);
 
-  const resultsById = normalizeResults(rawReport.results, dataset, undefined);
-  const labelValidation = validateLabels(dataset, codebasePath);
+  const resultsById = normalizeResults(rawReport.results, collectionDataset, undefined);
+  const labelValidation = validateLabels(dataset, codebasePath, { matrixFixture });
   const summary = score(dataset, resultsById, {
     backendLabel,
+    retrievalMode: rawReport.retrievalMode,
     rankingProfile: options.rankingProfile,
     codebasePath,
     datasetPath,
@@ -253,11 +265,18 @@ async function main() {
     startedAt,
     finishedAt,
     rawSummary: rawReport.summary,
+    indexStatus: rawReport.indexStatus,
+    matrixFixture,
+    includeOptionalTargets: Boolean(args.includeOptionalTargets),
     labelValidation: {
       codebasePath: labelValidation.codebasePath,
+      fixtureKey: labelValidation.fixtureKey,
       unreachablePrefixCount: labelValidation.unreachablePrefixCount,
+      needsInspectionCount: labelValidation.needsInspectionCount,
+      issueCount: labelValidation.issueCount,
+      strictAcceptanceReady: labelValidation.strictAcceptanceReady,
       ambiguousQueryIds: labelValidation.ambiguousQueryIds,
-      thresholdRecommendation: labelValidation.unreachablePrefixCount === 0
+      thresholdRecommendation: labelValidation.strictAcceptanceReady !== false && labelValidation.unreachablePrefixCount === 0
         ? 'Hit@10 24/30 is valid for the current reachable label set.'
         : 'Do not use Hit@10 24/30 until unreachable labels are corrected or excluded.',
     },
@@ -290,7 +309,9 @@ async function main() {
     allowToolErrors: Boolean(args.allowToolErrors),
     allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
     allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+    allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
     baselineMode: args.baselineMode,
+    labelValidation,
     requiredResidualAssertions,
   });
   console.log(JSON.stringify({
