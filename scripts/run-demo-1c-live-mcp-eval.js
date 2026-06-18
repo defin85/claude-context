@@ -318,6 +318,7 @@ async function main() {
     allowToolErrors: Boolean(args.allowToolErrors),
     allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
     allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+    allowQueryRegressions: Boolean(args.allowQueryRegressions),
     allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
     baselineMode: args.baselineMode,
     labelValidation,

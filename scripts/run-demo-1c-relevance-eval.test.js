@@ -223,6 +223,78 @@ test('supports non-regression baseline mode without requiring strict improvement
   );
 });
 
+test('rejects query-level baseline regressions even when aggregate non-regression passes', () => {
+  const baseline = {
+    dataset: 'unit',
+    version: '1',
+    metrics: {
+      hitAt10Count: 1,
+      hitAt10: 0.5,
+    },
+    run: {},
+    perQuery: [
+      {
+        id: 'stable',
+        query: 'previous strict hit',
+        firstRelevantRank: 1,
+        topResultPaths: ['CommonModules/Stable/Ext/Module.bsl'],
+      },
+      {
+        id: 'new-hit',
+        query: 'previous miss',
+        firstRelevantRank: null,
+        topResultPaths: [],
+      },
+    ],
+  };
+  const tuned = {
+    dataset: 'unit',
+    version: '1',
+    metrics: {
+      hitAt10Count: 1,
+      queryCount: 2,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+    },
+    perQuery: [
+      {
+        id: 'stable',
+        query: 'previous strict hit',
+        firstRelevantRank: null,
+        topResultPaths: [],
+      },
+      {
+        id: 'new-hit',
+        query: 'previous miss',
+        firstRelevantRank: 1,
+        topResultPaths: ['CommonModules/NewHit/Ext/Module.bsl'],
+      },
+    ],
+  };
+  tuned.comparison = buildComparison(baseline, tuned);
+
+  assert.equal(tuned.comparison.regressions.length, 1);
+  assert.throws(
+    () => enforceAcceptance(tuned, { baselineMode: 'non-regression' }),
+    /Query-level baseline regressions are not allowed: stable/,
+  );
+  assert.doesNotThrow(() => enforceAcceptance(tuned, {
+    baselineMode: 'non-regression',
+    allowQueryRegressions: true,
+  }));
+});
+
+test('demo-do30 live runner defaults to the tuned strict top1 baseline threshold', () => {
+  const runner = fs.readFileSync(path.join(repoRoot, 'scripts', 'run-demo-do30-1c-live-mcp-eval.js'), 'utf8');
+
+  assert.match(runner, /'--strict-hit-at1-threshold', '21'/);
+  assert.match(runner, /'--strict-hit-at5-threshold', '24'/);
+});
+
 test('enforces required residual assertions even when aggregate acceptance passes', () => {
   const summary = {
     metrics: {

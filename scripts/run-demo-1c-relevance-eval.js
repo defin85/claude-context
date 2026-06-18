@@ -1001,6 +1001,14 @@ function enforceAcceptance(summary, options = {}) {
           `Hit@10 count ${summary.metrics.hitAt10Count} is below baseline ${baselineHitAt10Count}.`,
         );
       }
+      const regressions = summary.comparison?.regressions || [];
+      if (!options.allowQueryRegressions && regressions.length > 0) {
+        const preview = regressions
+          .slice(0, 5)
+          .map((row) => row.fixtureKey ? `${row.fixtureKey}::${row.id}` : row.id)
+          .join(', ');
+        throw new Error(`Query-level baseline regressions are not allowed: ${preview}.`);
+      }
     } else if (summary.metrics.hitAt10Count <= baselineHitAt10Count) {
       throw new Error(
         `Hit@10 count ${summary.metrics.hitAt10Count} does not improve over baseline ${baselineHitAt10Count}.`,
@@ -1286,14 +1294,15 @@ function main() {
       strictHitAt5Threshold: args.strictHitAt5Threshold,
       allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
       allowNegativeControlFailures: Boolean(args.allowNegativeControlFailures),
-	      allowToolErrors: Boolean(args.allowToolErrors),
-	      allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
-	      allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
-	      allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
-	      baselineMode: args.baselineMode,
-	      labelValidation,
-	      requiredResidualAssertions,
-	    });
+      allowToolErrors: Boolean(args.allowToolErrors),
+      allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
+      allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
+      allowQueryRegressions: Boolean(args.allowQueryRegressions),
+      allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
+      baselineMode: args.baselineMode,
+      labelValidation,
+      requiredResidualAssertions,
+    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

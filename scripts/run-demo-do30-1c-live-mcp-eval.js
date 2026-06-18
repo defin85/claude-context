@@ -23,7 +23,7 @@ const defaults = [
   '--run-name', runName,
   '--ranking-profile', 'one-c',
   '--limit', '50',
-  '--strict-hit-at1-threshold', '18',
+  '--strict-hit-at1-threshold', '21',
   '--strict-hit-at5-threshold', '24',
   '--baseline-mode', 'non-regression',
 ];

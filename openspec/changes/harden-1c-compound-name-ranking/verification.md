@@ -3,6 +3,7 @@
 ## Focused Tests
 
 - `node --test scripts/run-demo-1c-relevance-eval.test.js` - passed, 33 tests.
+- `node --test scripts/run-demo-1c-relevance-eval.test.js` - passed after finish-to-100 closure, 35 tests.
 - `pnpm --filter @zilliz/claude-context-core test -- context.code-symbol-retrieval.test.ts` - passed, 42 tests.
 - `pnpm build:core` - passed.
 - `systemctl --user restart claude-context-mcp.service` - daemon restarted and reported `active`.
@@ -22,6 +23,12 @@
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-demo-do30-rerun/comparison.json`
   - Result: strict Top1 `23/30`, strict Top5 `26/30`, strict Top10 `26/30`, query-level regressions `0`, improvements `4`, MCP tool errors `0`, missing ColBERT vector errors `0`.
 
+- Finish-to-100 demo-do30 acceptance replay with tightened query-level regression gate:
+  - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-demo-do30/summary.json`
+  - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-demo-do30/comparison.json`
+  - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-demo-do30/label-validation.json`
+  - Result: strict Top1 `23/30`, strict Top5 `26/30`, strict Top10 `26/30`, query-level regressions `0`, improvements `4`, strict Top1 gate `21`, strict Top5 gate `24`, MCP tool errors `0`, missing ColBERT vector errors `0`.
+
 - Compound-name holdout live evaluation:
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-holdout-rerun/summary.json`
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-holdout-rerun/raw-results.json`
@@ -29,9 +36,13 @@
   - Result: strict positive Top10 `4/8`, negative controls `5/5`, unreachable strict prefixes `0`, MCP tool errors `0`, missing ColBERT vector errors `0`.
   - The final positive threshold is fixed at `4/8` for this change because the remaining strict misses require retrieval or storage changes outside this change scope.
 
+- Finish-to-100 compound-name holdout acceptance replay:
+  - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-holdout/summary.json`
+  - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-holdout/label-validation.json`
+  - Result: strict positive Top10 `4/8`, negative controls `5/5`, strict positive gate `4`, negative-control gate `5`, unreachable strict prefixes `0`, MCP tool errors `0`, missing ColBERT vector errors `0`.
+
 - Universal matrix supporting evidence:
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-demo-do30-universal/summary.json`
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-demo-do30-universal/raw-results.json`
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-demo-do30-universal/label-validation.json`
   - Result: positive strict Top10 `24/33`, negative controls `6/6`, unreachable strict prefixes `0`, MCP tool errors `0`, missing ColBERT vector errors `0`.
-
