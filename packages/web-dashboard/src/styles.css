@@ -212,6 +212,11 @@ p {
     gap: 12px;
 }
 
+.operator-log {
+    display: grid;
+    gap: 12px;
+}
+
 .section-heading {
     display: flex;
     justify-content: space-between;
@@ -257,6 +262,72 @@ h3 {
     gap: 12px;
     min-height: 124px;
     padding: 14px;
+}
+
+.log-list {
+    display: grid;
+    gap: 8px;
+}
+
+.log-entry {
+    background: #ffffff;
+    border: 1px solid #d7ded9;
+    border-left: 4px solid #8b9993;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.log-entry.success {
+    border-left-color: #176b5f;
+}
+
+.log-entry.failure {
+    border-left-color: #b65d4b;
+}
+
+.log-main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    align-items: center;
+}
+
+.log-main strong,
+.log-main small,
+.log-main span,
+.log-main p {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.log-main small {
+    color: #66756f;
+    text-align: right;
+}
+
+.log-main > span:not(.status-label),
+.log-main p {
+    grid-column: 2 / -1;
+}
+
+.status-label {
+    border: 1px solid #c9d3ce;
+    border-radius: 999px;
+    color: #40504a;
+    font-size: 12px;
+    line-height: 1;
+    padding: 5px 8px;
+    text-align: center;
+}
+
+.status-label.success {
+    border-color: #87bdb4;
+    color: #176b5f;
+}
+
+.status-label.failure {
+    border-color: #d8a095;
+    color: #8d3427;
 }
 
 .job-list {
@@ -457,6 +528,19 @@ pre {
 
     .job-row {
         grid-template-columns: 1fr;
+    }
+
+    .log-main {
+        grid-template-columns: 1fr;
+    }
+
+    .log-main small {
+        text-align: left;
+    }
+
+    .log-main > span:not(.status-label),
+    .log-main p {
+        grid-column: 1;
     }
 
     .actions,

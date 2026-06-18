@@ -1,4 +1,11 @@
 import './styles.css';
+import {
+    ActionLogEntry,
+    createActionRecorder,
+    createDiagnosticsPayload,
+    maxActionLogEntries,
+    sanitizeError,
+} from './actionLog';
 import { buildProgressSummary, CodebaseStatus } from './operationsView';
 
 type ApiSuccess<T> = { ok: true; data: T };
@@ -99,10 +106,12 @@ const state = {
     error: '',
     searchQuery: '',
     searchResults: [] as SearchResult[],
+    actionLog: [] as ActionLogEntry[],
     busy: false,
     refreshInFlight: false,
 };
 let lastRefreshFingerprint = '';
+const actionRecorder = createActionRecorder({ entries: state.actionLog, maxEntries: maxActionLogEntries });
 
 const apiBase = `${window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '')}/api`;
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -143,6 +152,20 @@ function setToken(value: string): void {
 }
 
 async function refresh(options: { showBusy?: boolean; showMessage?: boolean; forceRender?: boolean } = {}): Promise<void> {
+    const shouldRecord = Boolean(options.showBusy || options.showMessage);
+    if (!shouldRecord) {
+        await refreshInternal(options);
+        return;
+    }
+
+    try {
+        await actionRecorder.record('refresh', () => refreshInternal(options, true), { targetPath: state.selectedPath || undefined });
+    } catch {
+        // refreshInternal already rendered the operator-visible error.
+    }
+}
+
+async function refreshInternal(options: { showBusy?: boolean; showMessage?: boolean; forceRender?: boolean } = {}, rethrowErrors = false): Promise<void> {
     if (state.refreshInFlight) {
         return;
     }
@@ -177,8 +200,11 @@ async function refresh(options: { showBusy?: boolean; showMessage?: boolean; for
             render();
         }
     } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
+        state.error = sanitizeError(error);
         render();
+        if (rethrowErrors) {
+            throw error;
+        }
     } finally {
         if (options.showBusy) {
             state.busy = false;
@@ -221,14 +247,14 @@ async function runAction(action: 'index' | 'clear' | 'cancel', path = state.sele
     state.error = '';
     render();
     try {
-        await api(route, {
+        await actionRecorder.record(action, () => api(route, {
             method: 'POST',
             body: JSON.stringify({
                 path,
                 ...(action === 'index' ? { splitter: 'ast' } : {}),
                 ...(action === 'cancel' ? { reason: `Cancelled ${cancelKind} indexing from web dashboard.` } : {}),
             }),
-        });
+        }), { targetPath: path });
         state.message = action === 'index'
             ? 'Индексация поставлена в очередь.'
             : action === 'clear'
@@ -236,7 +262,7 @@ async function runAction(action: 'index' | 'clear' | 'cancel', path = state.sele
                 : 'Отмена отправлена.';
         await refresh({ forceRender: true });
     } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
+        state.error = sanitizeError(error);
     } finally {
         state.busy = false;
         render();
@@ -254,20 +280,43 @@ async function search(): Promise<void> {
     state.error = '';
     render();
     try {
-        const data = await api<SearchData>('/search', {
+        const data = await actionRecorder.record('search', () => api<SearchData>('/search', {
             method: 'POST',
             body: JSON.stringify({
                 path: state.selectedPath,
                 query: state.searchQuery,
                 limit: 10,
             }),
-        });
+        }), { targetPath: state.selectedPath });
         state.searchResults = data.results || [];
         state.message = `Найдено результатов: ${state.searchResults.length}`;
     } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
+        state.error = sanitizeError(error);
     } finally {
         state.busy = false;
+        render();
+    }
+}
+
+async function copyDiagnostics(): Promise<void> {
+    state.error = '';
+    try {
+        await actionRecorder.record('copy-diagnostics', async () => {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error('Буфер обмена недоступен в текущем браузере.');
+            }
+            const payload = createDiagnosticsPayload({
+                daemonSummary: state.status || null,
+                selectedPath: state.selectedPath,
+                selectedStatus: state.selectedStatus || null,
+                actionLog: state.actionLog,
+            });
+            await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        }, { targetPath: state.selectedPath || undefined });
+        state.message = 'Диагностика скопирована.';
+    } catch (error) {
+        state.error = sanitizeError(error);
+    } finally {
         render();
     }
 }
@@ -330,6 +379,7 @@ function render(): void {
                 ${operationsSection(activeIndexingJobs, queuedIndexingJobs, state.selectedStatus, state.status?.accelerator)}
                 ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
                 ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
+                ${operatorLogSection(state.actionLog)}
                 <section class="search">
                     <input id="query" type="search" placeholder="Поиск по коду" value="${escapeHtml(state.searchQuery)}" />
                     <button id="search" class="primary" ${state.busy ? 'disabled' : ''}>Искать</button>
@@ -373,6 +423,7 @@ function bind(): void {
         state.searchQuery = (event.target as HTMLInputElement).value;
     });
     document.querySelector('#search')?.addEventListener('click', () => void search());
+    document.querySelector('#copy-diagnostics')?.addEventListener('click', () => void copyDiagnostics());
     document.querySelectorAll<HTMLButtonElement>('.codebase').forEach((button) => {
         button.addEventListener('click', () => {
             state.selectedPath = button.dataset.path || '';
@@ -381,6 +432,36 @@ function bind(): void {
             render();
         });
     });
+}
+
+function operatorLogSection(entries: ActionLogEntry[]): string {
+    const visibleEntries = entries.slice().reverse();
+    return `
+        <section class="operator-log" aria-label="Журнал действий">
+            <div class="section-heading">
+                <div>
+                    <h2>Журнал действий</h2>
+                    <p>Последние операции панели в текущей вкладке.</p>
+                </div>
+                <button id="copy-diagnostics" ${state.busy ? 'disabled' : ''}>Копировать диагностику</button>
+            </div>
+            ${visibleEntries.length === 0 ? '<p class="empty small">Действий пока нет.</p>' : `
+                <div class="log-list">
+                    ${visibleEntries.map((entry) => `
+                        <article class="log-entry ${entry.status}">
+                            <div class="log-main">
+                                <span class="status-label ${entry.status}">${escapeHtml(actionStatusLabel(entry.status))}</span>
+                                <strong>${escapeHtml(actionLabel(entry.action))}</strong>
+                                <small>${escapeHtml(formatActionTimestamp(entry.timestamp))}${entry.durationMs !== undefined ? ` · ${escapeHtml(formatDuration(entry.durationMs))}` : ''}</small>
+                                ${entry.targetPath ? `<span title="${escapeHtml(entry.targetPath)}">${escapeHtml(entry.targetPath)}</span>` : ''}
+                                ${entry.error ? `<p>${escapeHtml(entry.error)}</p>` : ''}
+                            </div>
+                        </article>
+                    `).join('')}
+                </div>
+            `}
+        </section>
+    `;
 }
 
 function metric(label: string, value: string, tone: string): string {
@@ -433,6 +514,49 @@ function escapeHtml(value: string): string {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+}
+
+function actionLabel(action: ActionLogEntry['action']): string {
+    switch (action) {
+        case 'refresh':
+            return 'Обновление';
+        case 'index':
+            return 'Индексация';
+        case 'cancel':
+            return 'Отмена';
+        case 'clear':
+            return 'Очистка';
+        case 'search':
+            return 'Поиск';
+        case 'copy-diagnostics':
+            return 'Копирование диагностики';
+    }
+}
+
+function actionStatusLabel(status: ActionLogEntry['status']): string {
+    switch (status) {
+        case 'started':
+            return 'идёт';
+        case 'success':
+            return 'успех';
+        case 'failure':
+            return 'ошибка';
+    }
+}
+
+function formatActionTimestamp(value: string): string {
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) {
+        return value;
+    }
+    return new Date(parsed).toLocaleTimeString();
+}
+
+function formatDuration(value: number): string {
+    if (value < 1000) {
+        return `${value} мс`;
+    }
+    return `${(value / 1000).toFixed(1)} с`;
 }
 
 function collectIndexingJobs(
