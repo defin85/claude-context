@@ -239,6 +239,7 @@ describe('Context code-symbol retrieval', () => {
             oneCObjectKindBoost: expect.any(Number),
             oneCObjectNameBoost: expect.any(Number),
             oneCIntentBoost: expect.any(Number),
+            oneCCompoundNameBoost: expect.any(Number),
             rankingProfile: 'auto',
             duplicatePenalty: expect.any(Number),
             diversityReason: expect.any(String),
@@ -925,6 +926,84 @@ describe('Context code-symbol retrieval', () => {
         expect(saveResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
     });
 
+    it('adds compound-name diagnostics for email journal form names', async () => {
+        const printForm = doc({
+            id: 'email-print-compound',
+            content: 'Печать письма журнал электронная почта форма печати',
+            relativePath: 'src/cf/DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const attachmentForm = doc({
+            id: 'email-attachment-compound',
+            content: 'Просмотр вложенного письма вложение файл',
+            relativePath: 'src/cf/DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const accountSetup = doc({
+            id: 'email-account-compound',
+            content: 'Настройка учетной записи smtp почта',
+            relativePath: 'src/cf/DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([printForm, attachmentForm, accountSetup]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: accountSetup, score: 0.8 },
+            { document: printForm, score: 0.45 },
+            { document: attachmentForm, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const printResults = await context.semanticSearch('/tmp/example', 'форма печати письма в журнале электронной почты', 3);
+        const attachmentResults = await context.semanticSearch('/tmp/example', 'просмотр вложенного письма форма журнала электронной почты', 3);
+
+        expect(printResults[0].relativePath).toBe(printForm.relativePath);
+        expect(attachmentResults[0].relativePath).toBe(attachmentForm.relativePath);
+        expect(printResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+        expect(attachmentResults[0].metadata?.oneCCompoundNameEvidence?.matchedTerms).toEqual(expect.arrayContaining(['просмотр', 'вложенного', 'письма']));
+    });
+
+    it('adds compound-name diagnostics for MCHD constants and counterparty state modules', async () => {
+        const constantManager = doc({
+            id: 'mchd-compound',
+            content: 'АдресРеестраМЧД ФНС адрес реестра машиночитаемых доверенностей',
+            relativePath: 'src/cf/Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const stateModule = doc({
+            id: 'counterparty-state-compound',
+            content: 'Сохраненное состояние контрагента ИНН КПП загрузить состояние проверки',
+            relativePath: 'src/cf/CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const generic = doc({
+            id: 'generic-mchd-counterparty',
+            content: 'МЧД подписи контрагенты проверки состояние обмена',
+            relativePath: 'src/cf/CommonModules/ОбменСКонтрагентами/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([constantManager, stateModule, generic]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: generic, score: 0.8 },
+            { document: constantManager, score: 0.45 },
+            { document: stateModule, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const constantResults = await context.semanticSearch('/tmp/example', 'адрес реестра МЧД ФНС константа менеджер', 3);
+        const stateResults = await context.semanticSearch('/tmp/example', 'сохраненное состояние контрагента по ИНН КПП клиент сервер', 3);
+
+        expect(constantResults[0].relativePath).toBe(constantManager.relativePath);
+        expect(stateResults[0].relativePath).toBe(stateModule.relativePath);
+        expect(constantResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+        expect(stateResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+    });
+
     it('supports SMS service-module acceptability and SMS notification document intent', async () => {
         const smsService = doc({
             id: 'sms-service',
@@ -1001,6 +1080,86 @@ describe('Context code-symbol retrieval', () => {
         expect(objectResults[0].relativePath).toBe(archiveObject.relativePath);
         expect(managerResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
         expect(objectResults[0].metadata?.oneCScenarioIntentBoost).toBeGreaterThan(0);
+        expect(managerResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+        expect(objectResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+    });
+
+    it('adds compound-name support for EDI message signature forms without over-ranking broad EDI queries', async () => {
+        const signatureForm = doc({
+            id: 'edi-signature-form-compound',
+            content: 'Сообщение ЭДО подписи форма проверка подписи',
+            relativePath: 'src/cf/Documents/СообщениеЭДО/Forms/Подписи/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const broadEdi = doc({
+            id: 'broad-edi-module',
+            content: 'ЭДО обмен документами общий модуль интеграции маршрутизация',
+            relativePath: 'src/cf/CommonModules/ИнтеграцияЭДО/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([signatureForm, broadEdi]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: broadEdi, score: 0.8 },
+            { document: signatureForm, score: 0.45 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const signatureResults = await context.semanticSearch('/tmp/example', 'форма подписи сообщения ЭДО проверка подписи', 2);
+        const broadResults = await context.semanticSearch('/tmp/example', 'ЭДО обмен документами общий модуль интеграции', 2);
+
+        expect(signatureResults[0].relativePath).toBe(signatureForm.relativePath);
+        expect(signatureResults[0].metadata?.oneCCompoundNameBoost).toBeGreaterThan(0);
+        expect(broadResults[0].relativePath).toBe(broadEdi.relativePath);
+        expect(broadResults.find((result) => result.relativePath === signatureForm.relativePath)?.metadata?.oneCCompoundNameBoost || 0).toBeLessThan(0.5);
+    });
+
+    it('keeps broad email and MCHD negative controls from exact-looking compound forms', async () => {
+        const printForm = doc({
+            id: 'email-negative-print',
+            content: 'Печать письма журнал электронная почта форма печати',
+            relativePath: 'src/cf/DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const mailSettings = doc({
+            id: 'email-settings-negative',
+            content: 'Настройка электронной почты учетная запись smtp сервер',
+            relativePath: 'src/cf/DataProcessors/НастройкаПочты/Forms/НастройкиВстроеннойПочты/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const registryAddress = doc({
+            id: 'mchd-negative-address',
+            content: 'АдресРеестраМЧД ФНС адрес реестра машиночитаемых доверенностей',
+            relativePath: 'src/cf/Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const signatureCheck = doc({
+            id: 'mchd-negative-signature',
+            content: 'МЧД проверка полномочий подписи доверенность форма результата',
+            relativePath: 'src/cf/DataProcessors/РезультатыПроверкиПодписи/Forms/ПроверкаПолномочийДоверенности/Ext/Form.xml',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([printForm, mailSettings, registryAddress, signatureCheck]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: printForm, score: 0.55 },
+            { document: mailSettings, score: 0.8 },
+            { document: registryAddress, score: 0.55 },
+            { document: signatureCheck, score: 0.8 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const emailResults = await context.semanticSearch('/tmp/example', 'настройка электронной почты учетная запись smtp', 2);
+        const mchdResults = await context.semanticSearch('/tmp/example', 'МЧД проверка полномочий подписи доверенность форма результата', 2);
+
+        expect(emailResults[0].relativePath).toBe(mailSettings.relativePath);
+        expect(mchdResults[0].relativePath).toBe(signatureCheck.relativePath);
+        expect(emailResults.find((result) => result.relativePath === printForm.relativePath)?.metadata?.oneCCompoundNameBoost || 0).toBe(0);
+        expect(mchdResults.find((result) => result.relativePath === registryAddress.relativePath)?.metadata?.oneCCompoundNameBoost || 0).toBeLessThanOrEqual(0.5);
     });
 
     it('dampens generic term dominance only when specific scenario evidence exists', async () => {

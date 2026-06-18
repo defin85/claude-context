@@ -276,6 +276,8 @@ export function fuseCodeSearchResults(
         _oneCObjectNameBoost: number;
         _oneCIntentBoost: number;
         _oneCScenarioIntentBoost: number;
+        _oneCCompoundNameBoost: number;
+        _oneCCompoundNameEvidence?: Record<string, any>;
         _oneCGenericTermPenalty: number;
         _providerRank: number;
     }>();
@@ -293,6 +295,23 @@ export function fuseCodeSearchResults(
         const exactSymbolBoost = scoreExactSymbol(tokens, result.content);
         const pathBoost = scorePath(tokens, result.relativePath, result.metadata);
         const oneCSignals = scoreOneCPathSignals(tokens, result.relativePath, result.content, result.metadata, rankingProfile);
+        const compoundNameSignal = scoreOneCCompoundNameSignal(
+            tokens,
+            result.relativePath,
+            result.content,
+            result.metadata,
+            rankingProfile,
+            {
+                semanticScore,
+                lexicalScore,
+                exactSymbolBoost,
+                pathBoost,
+                objectKindBoost: oneCSignals.objectKindBoost,
+                intentBoost: oneCSignals.intentBoost,
+                scenarioIntentBoost: oneCSignals.scenarioIntentBoost,
+                hasProviderEvidence: providerRank < Number.MAX_SAFE_INTEGER,
+            },
+        );
         const mergedMetadata = {
             ...sanitizeResultMetadata(existing?.metadata || {}),
             ...sanitizeResultMetadata(result.metadata || {}),
@@ -323,6 +342,12 @@ export function fuseCodeSearchResults(
             _oneCScenarioIntentBoost: existing
                 ? Math.max(existing._oneCScenarioIntentBoost, oneCSignals.scenarioIntentBoost)
                 : oneCSignals.scenarioIntentBoost,
+            _oneCCompoundNameBoost: existing
+                ? Math.max(existing._oneCCompoundNameBoost, compoundNameSignal.boost)
+                : compoundNameSignal.boost,
+            _oneCCompoundNameEvidence: compoundNameSignal.boost > (existing?._oneCCompoundNameBoost ?? 0)
+                ? compoundNameSignal.diagnostics
+                : existing?._oneCCompoundNameEvidence,
             _oneCGenericTermPenalty: existing
                 ? Math.max(
                     existing._oneCGenericTermPenalty,
@@ -372,6 +397,7 @@ export function fuseCodeSearchResults(
             result._oneCObjectNameBoost +
             result._oneCIntentBoost +
             result._oneCScenarioIntentBoost +
+            result._oneCCompoundNameBoost +
             providerRankBoost -
             protectedGenericPenalty;
 
@@ -392,6 +418,8 @@ export function fuseCodeSearchResults(
                 oneCObjectNameBoost: result._oneCObjectNameBoost,
                 oneCIntentBoost: result._oneCIntentBoost,
                 oneCScenarioIntentBoost: result._oneCScenarioIntentBoost,
+                oneCCompoundNameBoost: result._oneCCompoundNameBoost,
+                ...(result._oneCCompoundNameEvidence ? { oneCCompoundNameEvidence: result._oneCCompoundNameEvidence } : {}),
                 oneCGenericTermPenalty: protectedGenericPenalty,
                 rankingProfile,
                 providerRankBoost,
@@ -632,12 +660,30 @@ function buildLexicalFilters(tokens: CodeSymbolQueryTokens): Array<string | unde
     const terms = unique([...tokens.exactTerms, ...tokens.identifierTerms, ...tokens.pathTerms])
         .slice(0, 6)
         .map(escapeFilterString);
+    const compoundTerms = buildCompoundQueryPathTerms(tokens).map(escapeFilterString);
     const filters: string[] = [];
+    for (const term of compoundTerms) {
+        filters.push(`relativePath like "%${term}%"`);
+    }
     for (const term of terms) {
         filters.push(`relativePath like "%${term}%"`);
         filters.push(`content like "%${term}%"`);
     }
     return filters.length > 0 ? filters : [undefined];
+}
+
+function buildCompoundQueryPathTerms(tokens: CodeSymbolQueryTokens): string[] {
+    const terms = tokens.naturalTerms
+        .map((term) => term.replace(/_/g, ''))
+        .filter((term) => term.length >= 3 && !['форма', 'модуль', 'журнал', 'документ'].includes(term));
+    const compounds: string[] = [];
+    for (let index = 0; index < terms.length - 1; index += 1) {
+        compounds.push(`${terms[index]}${terms[index + 1]}`);
+        if (terms[index + 2]) {
+            compounds.push(`${terms[index]}${terms[index + 1]}${terms[index + 2]}`);
+        }
+    }
+    return unique(compounds.filter((term) => term.length >= 8)).slice(0, 8);
 }
 
 async function mapProviderCandidatesToChunks(
@@ -793,6 +839,22 @@ interface OneCSignalScores {
     scenarioIntentBoost: number;
 }
 
+interface OneCCompoundNameSupport {
+    semanticScore: number;
+    lexicalScore: number;
+    exactSymbolBoost: number;
+    pathBoost: number;
+    objectKindBoost: number;
+    intentBoost: number;
+    scenarioIntentBoost: number;
+    hasProviderEvidence: boolean;
+}
+
+interface OneCCompoundNameSignal {
+    boost: number;
+    diagnostics?: Record<string, any>;
+}
+
 const ONE_C_OBJECT_KIND_BY_SEGMENT: Record<string, string> = {
     Catalogs: 'catalog',
     Documents: 'document',
@@ -826,6 +888,26 @@ const PRINT_TERMS = ['печать', 'печатная', 'печатный', 'п
 const STOCK_REPORT_TERMS = ['остат', 'склад', 'отчет'];
 const PRODUCT_CARD_TERMS = ['карточк', 'реквизит', 'цена', 'артикул', 'штрихкод'];
 const ONE_C_GENERIC_HIGH_COLLISION_TERMS = ['обработка', 'состояние', 'проверка', 'подпись', 'настройка', 'форма', 'документ', 'письмо'];
+const ONE_C_COMPOUND_BROAD_TERMS = [
+    'электронная',
+    'почта',
+    'письмо',
+    'письма',
+    'сообщение',
+    'документ',
+    'форма',
+    'подпись',
+    'подписи',
+    'настройка',
+    'состояние',
+    'проверка',
+    'архив',
+    'контрагент',
+    'контрагента',
+    'отправка',
+    'менеджер',
+    'объект',
+];
 const ONE_C_SPECIFIC_SCENARIO_TERMS = [
     'ndsresponse',
     'фнс',
@@ -872,6 +954,165 @@ function scoreOneCPathSignals(
         intentBoost,
         scenarioIntentBoost,
     };
+}
+
+function scoreOneCCompoundNameSignal(
+    tokens: CodeSymbolQueryTokens,
+    relativePath: string,
+    content: string,
+    metadata: Record<string, any> | undefined,
+    rankingProfile: RankingProfile,
+    support: OneCCompoundNameSupport,
+): OneCCompoundNameSignal {
+    if (rankingProfile === 'generic') {
+        return { boost: 0 };
+    }
+
+    const pathInfo = parseOneCPath(relativePath);
+    if (!pathInfo.recognized) {
+        return { boost: 0 };
+    }
+
+    const groups = [
+        { role: 'object', terms: splitOneCNameTerms(pathInfo.objectName || '') },
+        { role: 'area', terms: splitOneCNameTerms(pathInfo.areaName || '') },
+        { role: 'module', terms: moduleKindTerms(pathInfo.moduleKind) },
+    ].filter((group) => group.terms.length > 0);
+    const allTerms = unique(groups.flatMap((group) => group.terms));
+    if (allTerms.length === 0) {
+        return { boost: 0 };
+    }
+
+    const normalizedQuery = tokens.normalizedQuery;
+    const queryTermStems = new Set(tokens.naturalTerms.map(stemOneCTerm));
+    const matchedTerms = allTerms.filter((term) => queryMatchesCompoundTerm(normalizedQuery, queryTermStems, term));
+    const matchedSpecificTerms = matchedTerms.filter(isSpecificCompoundTerm);
+    const adjacentMatches = countAdjacentCompoundMatches(normalizedQuery, allTerms);
+    const abbreviationMatches = allTerms.filter((term) => isAbbreviationLike(term) && normalizedQuery.includes(term));
+    const matchedRoles = groups
+        .filter((group) => group.terms.some((term) => matchedTerms.includes(term)))
+        .map((group) => group.role);
+
+    const hasConcreteCompoundIntent =
+        matchedSpecificTerms.length > 0 ||
+        adjacentMatches > 0 ||
+        abbreviationMatches.length > 0 ||
+        matchedRoles.length >= 2;
+    if (matchedTerms.length < 2 || !hasConcreteCompoundIntent) {
+        return { boost: 0 };
+    }
+    if (
+        pathInfo.objectKind === 'commonModule' &&
+        splitOneCNameTerms(pathInfo.objectName || '').length <= 2 &&
+        matchedSpecificTerms.length === 0
+    ) {
+        return { boost: 0 };
+    }
+
+    const supportReasons = compoundSupportReasons(tokens, content, metadata, pathInfo, support);
+    if (supportReasons.length === 0) {
+        return { boost: 0 };
+    }
+
+    const coverage = matchedTerms.length / allTerms.length;
+    const rawBoost =
+        0.2 +
+        Math.min(0.45, coverage * 0.45) +
+        Math.min(0.25, matchedSpecificTerms.length * 0.12) +
+        Math.min(0.2, adjacentMatches * 0.1) +
+        Math.min(0.15, abbreviationMatches.length * 0.08) +
+        Math.min(0.15, supportReasons.length * 0.05);
+    const boost = Number(Math.min(1.1, rawBoost).toFixed(4));
+
+    return {
+        boost,
+        diagnostics: {
+            matchedTerms,
+            matchedRoles,
+            support: supportReasons,
+            coverage: Number(coverage.toFixed(3)),
+        },
+    };
+}
+
+function moduleKindTerms(moduleKind: string | undefined): string[] {
+    if (moduleKind === 'managerModule') {
+        return ['менеджер', 'модуль', 'менеджера'];
+    }
+    if (moduleKind === 'objectModule') {
+        return ['объект', 'модуль', 'объектный'];
+    }
+    return [];
+}
+
+function queryMatchesCompoundTerm(normalizedQuery: string, queryTermStems: Set<string>, term: string): boolean {
+    const stem = stemOneCTerm(term);
+    return normalizedQuery.includes(term) || (stem.length >= 4 && queryTermStems.has(stem));
+}
+
+function countAdjacentCompoundMatches(normalizedQuery: string, terms: string[]): number {
+    const stems = terms.map(stemOneCTerm).filter((term) => term.length >= 4);
+    let count = 0;
+    for (let index = 0; index < stems.length - 1; index += 1) {
+        const left = stems[index];
+        const right = stems[index + 1];
+        if (normalizedQuery.includes(`${left} ${right}`) || normalizedQuery.includes(`${left}${right}`)) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+function isSpecificCompoundTerm(term: string): boolean {
+    const stem = stemOneCTerm(term);
+    return stem.length >= 5 && !ONE_C_COMPOUND_BROAD_TERMS.includes(term) && !ONE_C_COMPOUND_BROAD_TERMS.includes(stem);
+}
+
+function isAbbreviationLike(term: string): boolean {
+    return ['мчд', 'эдо', 'фнс', 'sms', 'инн', 'кпп'].includes(term);
+}
+
+function compoundSupportReasons(
+    tokens: CodeSymbolQueryTokens,
+    content: string,
+    metadata: Record<string, any> | undefined,
+    pathInfo: OneCPathInfo,
+    support: OneCCompoundNameSupport,
+): string[] {
+    const reasons: string[] = [];
+    const normalizedQuery = tokens.normalizedQuery;
+    const candidateText = normalizeText(`${content} ${JSON.stringify(metadata || {})}`);
+    if (support.semanticScore >= 0.45) {
+        reasons.push('semantic');
+    }
+    if (support.lexicalScore > 0) {
+        reasons.push('lexical');
+    }
+    if (support.exactSymbolBoost > 0) {
+        reasons.push('exact-symbol');
+    }
+    if (support.hasProviderEvidence) {
+        reasons.push('provider');
+    }
+    if (support.objectKindBoost > 0 || support.intentBoost > 0 || support.scenarioIntentBoost > 0) {
+        reasons.push('one-c-path-intent');
+    }
+    if (
+        (normalizedQuery.includes('форма') && pathInfo.area === 'Forms') ||
+        (normalizedQuery.includes('команд') && pathInfo.area === 'Commands') ||
+        (normalizedQuery.includes('констант') && pathInfo.objectKind === 'constant') ||
+        (normalizedQuery.includes('менеджер') && pathInfo.moduleKind === 'managerModule') ||
+        (normalizedQuery.includes('объект') && pathInfo.moduleKind === 'objectModule')
+    ) {
+        reasons.push('requested-kind');
+    }
+    if (tokens.naturalTerms.some((term) => term.length >= 4 && candidateText.includes(stemOneCTerm(term)))) {
+        reasons.push('content');
+    }
+    if (support.pathBoost > 0 && tokens.hasCodeLikeTerm) {
+        reasons.push('path');
+    }
+    return unique(reasons);
 }
 
 function parseOneCPath(relativePath: string): OneCPathInfo {

@@ -1,0 +1,350 @@
+{
+  "dataset": "compound-1c-name-holdout",
+  "version": 1,
+  "matrix": "universal-1c-search",
+  "labelsAreProductionRules": false,
+  "fixtures": {
+    "demo-do30-1c": {
+      "label": "Документооборот 3.0",
+      "path": "examples/demo-do30-1c"
+    },
+    "demo-bp30-1c": {
+      "label": "Бухгалтерия предприятия 3.0",
+      "path": "examples/demo-bp30-1c"
+    },
+    "demo-ut-1c": {
+      "label": "Управление торговлей",
+      "path": "examples/demo-ut-1c"
+    },
+    "demo-unf-1c": {
+      "label": "Управление нашей фирмой",
+      "path": "examples/demo-unf-1c"
+    },
+    "demo-zup-1c": {
+      "label": "Зарплата и управление персоналом",
+      "path": "examples/demo-zup-1c"
+    }
+  },
+  "queries": [
+    {
+      "id": "cnh01",
+      "query": "форма печати письма в журнале электронной почты",
+      "intent": "compound-form-name",
+      "domain": "email",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "email-print-form",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Commands/ПечатьПисьма/Ext/CommandModule.bsl"
+          ],
+          "note": "Строгая цель - модуль формы ПечатьПисьма; команда печати допустима как соседняя точка входа."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие журнала электронной почты и формы печати письма в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие журнала электронной почты и формы печати письма в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие журнала электронной почты и формы печати письма в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие журнала электронной почты и формы печати письма в ЗУП." }
+      },
+      "note": "Проверяет natural phrase -> compound form name ПечатьПисьма."
+    },
+    {
+      "id": "cnh02",
+      "query": "просмотр вложенного письма форма журнала электронной почты",
+      "intent": "compound-form-name",
+      "domain": "email",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "email-attachment-view-form",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма/Ext/Form.xml"
+          ],
+          "note": "Строгая цель - модуль формы ПросмотрВложенногоПисьма."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить форму просмотра вложенного письма в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить форму просмотра вложенного письма в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить форму просмотра вложенного письма в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить форму просмотра вложенного письма в ЗУП." }
+      },
+      "note": "Проверяет compound form name с соседними словами просмотр/вложенное/письмо."
+    },
+    {
+      "id": "cnh03",
+      "query": "адрес реестра МЧД ФНС константа менеджер",
+      "intent": "compound-constant-manager",
+      "domain": "mchd",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "mchd-registry-address-constant",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonForms/АдресРеестраМЧД"
+          ],
+          "note": "Строгая цель - менеджер константы АдресРеестраМЧД."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие константы АдресРеестраМЧД в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие константы АдресРеестраМЧД в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие константы АдресРеестраМЧД в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить наличие константы АдресРеестраМЧД в ЗУП." }
+      },
+      "note": "Проверяет аббревиатуру МЧД и compound constant manager."
+    },
+    {
+      "id": "cnh04",
+      "query": "сохраненное состояние контрагента по ИНН КПП клиент сервер",
+      "intent": "compound-common-module",
+      "domain": "counterparty-check",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "saved-counterparty-state",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/ПроверкаКонтрагентовФНС"
+          ],
+          "note": "Строгая цель - клиент-серверный модуль проверки контрагентов."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить модуль проверки контрагентов в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить модуль проверки контрагентов в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить модуль проверки контрагентов в УНФ." },
+        "demo-zup-1c": { "status": "not-applicable", "reason": "В ЗУП нет source-inspected цели сохраненного состояния контрагента по ИНН/КПП." }
+      },
+      "note": "Проверяет compound common module ПроверкаКонтрагентовКлиентСервер."
+    },
+    {
+      "id": "cnh05",
+      "query": "передача дел в архив менеджер печатная опись",
+      "intent": "compound-document-manager",
+      "domain": "archive",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "archive-transfer-manager-module",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Templates/ПФ_MXL_Опись"
+          ],
+          "note": "Строгая цель - manager module документа ПередачаДелВАрхив."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить документ передачи дел в архив в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить документ передачи дел в архив в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить документ передачи дел в архив в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить документ передачи дел в архив в ЗУП." }
+      },
+      "note": "Проверяет различение manager module для compound document name."
+    },
+    {
+      "id": "cnh06",
+      "query": "передача дел в архив объект проверка подписей",
+      "intent": "compound-document-object",
+      "domain": "archive",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "archive-transfer-object-module",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Forms/ФормаРезультатаПроверки"
+          ],
+          "note": "Строгая цель - object module документа ПередачаДелВАрхив."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить object module передачи дел в архив в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить object module передачи дел в архив в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить object module передачи дел в архив в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить object module передачи дел в архив в ЗУП." }
+      },
+      "note": "Проверяет различение object module для того же compound document name."
+    },
+    {
+      "id": "cnh07",
+      "query": "форма подписи сообщения ЭДО проверка подписи",
+      "intent": "compound-document-form",
+      "domain": "edi",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "edi-message-signature-form",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/СообщениеЭДО/Forms/Подписи/Ext/Form/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "Documents/СообщениеЭДО/Commands/Подписи/Ext/CommandModule.bsl"
+          ],
+          "note": "Строгая цель - форма Подписи документа СообщениеЭДО."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить форму подписей сообщения ЭДО в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить форму подписей сообщения ЭДО в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить форму подписей сообщения ЭДО в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить форму подписей сообщения ЭДО в ЗУП." }
+      },
+      "note": "Проверяет object name + area name compound intent."
+    },
+    {
+      "id": "cnh08",
+      "query": "команда печать письма из журнала электронная почта",
+      "intent": "compound-command-name",
+      "domain": "email",
+      "kind": "positive",
+      "controlClass": "compound-positive",
+      "failureClass": "email-print-command",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Commands/ПечатьПисьма/Ext/CommandModule.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма"
+          ],
+          "note": "Строгая цель - command module ПечатьПисьма."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить команду печати письма в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить команду печати письма в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить команду печати письма в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить команду печати письма в ЗУП." }
+      },
+      "note": "Проверяет compound command name отдельно от формы."
+    },
+    {
+      "id": "cnh09",
+      "query": "настройка электронной почты учетная запись smtp",
+      "intent": "negative-control",
+      "domain": "email",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма",
+            "DocumentJournals/ЭлектроннаяПочта/Forms/ПросмотрВложенногоПисьма"
+          ],
+          "note": "Широкий запрос настройки почты не должен вытеснять более релевантные настройки точными формами писем."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control настройки почты в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control настройки почты в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control настройки почты в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control настройки почты в ЗУП." }
+      },
+      "note": "Negative control для broad email/settings."
+    },
+    {
+      "id": "cnh10",
+      "query": "ЭДО обмен документами общий модуль интеграции",
+      "intent": "negative-control",
+      "domain": "edi",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Documents/СообщениеЭДО/Forms/Подписи"
+          ],
+          "note": "Широкий ЭДО-интеграционный запрос не должен forced-rank форму подписей сообщения."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control ЭДО в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control ЭДО в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control ЭДО в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control ЭДО в ЗУП." }
+      },
+      "note": "Negative control для broad EDI."
+    },
+    {
+      "id": "cnh11",
+      "query": "МЧД проверка полномочий подписи доверенность форма результата",
+      "intent": "negative-control",
+      "domain": "mchd",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl"
+          ],
+          "note": "Запрос проверки полномочий не должен подменяться адресом реестра МЧД."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control МЧД в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control МЧД в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control МЧД в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control МЧД в ЗУП." }
+      },
+      "note": "Negative control для broad MCHD/signature."
+    },
+    {
+      "id": "cnh12",
+      "query": "архив сертификаты хранилище настройка подписи",
+      "intent": "negative-control",
+      "domain": "archive",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Documents/ПередачаДелВАрхив/Ext/ManagerModule.bsl",
+            "Documents/ПередачаДелВАрхив/Ext/ObjectModule.bsl"
+          ],
+          "note": "Широкий архивный запрос не должен forced-rank документ передачи дел."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control архива в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control архива в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control архива в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control архива в ЗУП." }
+      },
+      "note": "Negative control для archive/settings/signature."
+    },
+    {
+      "id": "cnh13",
+      "query": "карточка контрагента реквизиты dossier состояние проверки",
+      "intent": "negative-control",
+      "domain": "counterparty-check",
+      "kind": "negative-control",
+      "controlClass": "negative-control",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПроверкаКонтрагентовКлиентСервер/Ext/Module.bsl"
+          ],
+          "note": "Широкий запрос карточки/досье контрагента не должен forced-rank сохраненное состояние проверки."
+        },
+        "demo-bp30-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control контрагента в БП." },
+        "demo-ut-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control контрагента в УТ." },
+        "demo-unf-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control контрагента в УНФ." },
+        "demo-zup-1c": { "status": "needs-inspection", "note": "Нужно проверить negative control контрагента в ЗУП." }
+      },
+      "note": "Negative control для broad counterparty/state."
+    }
+  ]
+}

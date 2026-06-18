@@ -389,6 +389,105 @@ test('validates acceptable path prefixes and reports stale alternates', () => {
   assert.equal(validation.unreachable[0].prefixes[0].labelKind, 'acceptable');
 });
 
+test('loads compound-name holdout with reachable demo-do30 labels and separate negative controls', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'compound-1c-name-holdout.json'));
+  const validation = validateLabels(dataset, path.join(repoRoot, 'examples', 'demo-do30-1c'), {
+    matrixFixture: 'demo-do30-1c',
+  });
+  const collection = collectionDatasetForFixture(dataset, 'demo-do30-1c');
+  const positives = collection.queries.filter((query) => query.kind !== 'negative-control');
+  const negatives = collection.queries.filter((query) => query.kind === 'negative-control');
+
+  assert.equal(dataset.dataset, 'compound-1c-name-holdout');
+  assert.equal(dataset.matrix, 'universal-1c-search');
+  assert.equal(dataset.labelsAreProductionRules, false);
+  assert.equal(positives.length, 8);
+  assert.equal(negatives.length, 5);
+  assert.equal(validation.fixtureKey, 'demo-do30-1c');
+  assert.equal(validation.unreachablePrefixCount, 0);
+  assert.equal(validation.issueCount, 0);
+  assert.ok(dataset.queries.every((query) => query.intent && query.domain && query.kind && query.controlClass && query.note));
+  assert.ok(positives.every((query) => query.targetStatus === 'applicable'));
+  assert.ok(positives.every((query) => query.expectedPathPrefixes.length > 0));
+});
+
+test('compound-name holdout validation fails stale strict and acceptable labels', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'compound-1c-name-holdout.json'));
+  const broken = structuredClone(dataset);
+  const target = broken.queries.find((query) => query.id === 'cnh01').targets['demo-do30-1c'];
+  target.expectedPathPrefixes = ['DocumentJournals/ЭлектроннаяПочта/Forms/НетТакойФормы'];
+  target.acceptablePathPrefixes = ['DocumentJournals/ЭлектроннаяПочта/Commands/НетТакойКоманды'];
+
+  const validation = validateLabels(broken, path.join(repoRoot, 'examples', 'demo-do30-1c'), {
+    matrixFixture: 'demo-do30-1c',
+  });
+
+  assert.equal(validation.unreachablePrefixCount, 2);
+  assert.deepEqual(
+    validation.unreachable[0].prefixes.map((prefix) => prefix.labelKind),
+    ['strict', 'acceptable'],
+  );
+});
+
+test('compound-name holdout scores positive misses separately from negative-control failures', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'compound-1c-name-holdout.json'));
+  const collection = collectionDatasetForFixture(dataset, 'demo-do30-1c');
+  const results = [
+    { id: 'cnh01', top10: [{ path: 'DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl' }] },
+    { id: 'cnh02', top10: [{ path: 'DocumentJournals/ЭлектроннаяПочта/Forms/ФормаСписка/Ext/Form/Module.bsl' }] },
+    { id: 'cnh09', top10: [{ path: 'DocumentJournals/ЭлектроннаяПочта/Forms/ПечатьПисьма/Ext/Form/Module.bsl' }] },
+  ];
+
+  const summary = score(dataset, normalizeResults(results, collection), {
+    backendLabel: 'unit',
+    matrixFixture: 'demo-do30-1c',
+  });
+
+  assert.equal(summary.metrics.queryCount, 8);
+  assert.equal(summary.metrics.strict.hitAt10Count, 1);
+  assert.equal(summary.perQuery.find((row) => row.id === 'cnh02').firstStrictRank, null);
+  assert.equal(summary.negativeControls.queryCount, 5);
+  assert.equal(summary.negativeControls.failCount, 1);
+  assert.equal(summary.negativeControls.failures[0].id, 'cnh09');
+});
+
+test('enforces compound-name holdout positive and negative-control thresholds', () => {
+  const summary = {
+    dataset: 'compound-1c-name-holdout',
+    metrics: {
+      queryCount: 8,
+      hitAt10Count: 7,
+      strict: {
+        hitAt10Count: 7,
+      },
+    },
+    negativeControls: {
+      passCount: 4,
+      queryCount: 5,
+    },
+    run: {
+      rawSummary: {
+        toolErrors: 0,
+        missingColbertErrors: 0,
+      },
+    },
+    perQuery: [],
+  };
+
+  assert.throws(
+    () => enforceAcceptance(summary, { strictPositiveHitAt10Threshold: 8 }),
+    /Strict positive Hit@10 count 7 is below acceptance threshold 8/,
+  );
+  assert.throws(
+    () => enforceAcceptance(summary, { negativeControlPassThreshold: 5 }),
+    /Negative-control pass count 4 is below acceptance threshold 5/,
+  );
+  assert.doesNotThrow(() => enforceAcceptance(summary, {
+    strictPositiveHitAt10Threshold: 7,
+    negativeControlPassThreshold: 4,
+  }));
+});
+
 test('scores strict and acceptable hits separately without counting alternates as strict hits', () => {
   const dataset = {
     dataset: 'unit',

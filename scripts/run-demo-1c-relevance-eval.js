@@ -933,6 +933,8 @@ function enforceAcceptance(summary, options = {}) {
   const acceptanceThreshold = Number(options.acceptanceThreshold ?? summary.run?.acceptanceThreshold);
   const strictHitAt1Threshold = Number(options.strictHitAt1Threshold ?? summary.run?.strictHitAt1Threshold);
   const strictHitAt5Threshold = Number(options.strictHitAt5Threshold ?? summary.run?.strictHitAt5Threshold);
+  const strictPositiveHitAt10Threshold = Number(options.strictPositiveHitAt10Threshold ?? summary.run?.strictPositiveHitAt10Threshold);
+  const negativeControlPassThreshold = Number(options.negativeControlPassThreshold ?? summary.run?.negativeControlPassThreshold);
   const rawSummary = summary.run?.rawSummary || {};
   const toolErrors = Number(rawSummary.toolErrors || 0);
   const missingColbertErrors = Number(rawSummary.missingColbertErrors || 0);
@@ -970,6 +972,20 @@ function enforceAcceptance(summary, options = {}) {
     Number(summary.metrics.strict?.hitAt5Count ?? summary.metrics.hitAt5Count) < strictHitAt5Threshold) {
     throw new Error(
       `Strict Hit@5 count ${summary.metrics.strict?.hitAt5Count ?? summary.metrics.hitAt5Count} is below acceptance threshold ${strictHitAt5Threshold}.`,
+    );
+  }
+  if (Number.isFinite(strictPositiveHitAt10Threshold) &&
+    !options.allowBelowAcceptanceThreshold &&
+    Number(summary.metrics.strict?.hitAt10Count ?? summary.metrics.hitAt10Count) < strictPositiveHitAt10Threshold) {
+    throw new Error(
+      `Strict positive Hit@10 count ${summary.metrics.strict?.hitAt10Count ?? summary.metrics.hitAt10Count} is below acceptance threshold ${strictPositiveHitAt10Threshold}.`,
+    );
+  }
+  if (Number.isFinite(negativeControlPassThreshold) &&
+    !options.allowNegativeControlFailures &&
+    Number(summary.negativeControls?.passCount ?? 0) < negativeControlPassThreshold) {
+    throw new Error(
+      `Negative-control pass count ${summary.negativeControls?.passCount ?? 0} is below acceptance threshold ${negativeControlPassThreshold}.`,
     );
   }
   if (!options.allowToolErrors && toolErrors > 0) {
@@ -1202,6 +1218,8 @@ function main() {
     acceptanceThreshold: args.acceptanceThreshold ? Number(args.acceptanceThreshold) : undefined,
     strictHitAt1Threshold: args.strictHitAt1Threshold ? Number(args.strictHitAt1Threshold) : undefined,
     strictHitAt5Threshold: args.strictHitAt5Threshold ? Number(args.strictHitAt5Threshold) : undefined,
+    strictPositiveHitAt10Threshold: args.strictPositiveHitAt10Threshold ? Number(args.strictPositiveHitAt10Threshold) : undefined,
+    negativeControlPassThreshold: args.negativeControlPassThreshold ? Number(args.negativeControlPassThreshold) : undefined,
     startedAt: rawResults.startedAt,
     finishedAt: rawResults.finishedAt,
     rawSummary: rawResults.summary,
@@ -1267,7 +1285,8 @@ function main() {
       strictHitAt1Threshold: args.strictHitAt1Threshold,
       strictHitAt5Threshold: args.strictHitAt5Threshold,
       allowBelowAcceptanceThreshold: Boolean(args.allowBelowAcceptanceThreshold),
-      allowToolErrors: Boolean(args.allowToolErrors),
+      allowNegativeControlFailures: Boolean(args.allowNegativeControlFailures),
+	      allowToolErrors: Boolean(args.allowToolErrors),
 	      allowMissingColbertErrors: Boolean(args.allowMissingColbertErrors),
 	      allowNoBaselineImprovement: Boolean(args.allowNoBaselineImprovement),
 	      allowIncompleteMatrixLabels: Boolean(args.allowIncompleteMatrixLabels),
