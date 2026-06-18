@@ -7,6 +7,13 @@ import {
     sanitizeError,
 } from './actionLog';
 import { buildProgressSummary, CodebaseStatus } from './operationsView';
+import {
+    buildSearchRequestBody,
+    formatRetrievalContext,
+    getResultDiagnostics,
+    RankingProfile,
+    RetrievalContext,
+} from './searchDiagnostics';
 
 type ApiSuccess<T> = { ok: true; data: T };
 type ApiFailure = { ok: false; error: string; data?: unknown };
@@ -51,6 +58,7 @@ interface DaemonStatus {
     retrievalConfiguration?: {
         retrievalProfile?: string;
         retrievalMode?: string;
+        retrievalSchemaVersion?: number;
         bgeM3Mode?: string;
         usesBgeM3Sparse?: boolean;
         usesColbert?: boolean;
@@ -89,10 +97,14 @@ interface SearchResult {
     endLine: number;
     score: number;
     content: string;
+    metadata?: Record<string, unknown>;
 }
 
-interface SearchData {
+interface SearchData extends RetrievalContext {
     results?: SearchResult[];
+    rankingProfile?: RankingProfile;
+    indexingStatus?: string;
+    oneCIndexScope?: unknown;
 }
 
 const tokenKey = 'claude-context-dashboard-token';
@@ -105,7 +117,10 @@ const state = {
     message: '',
     error: '',
     searchQuery: '',
+    extensionFilterText: '',
+    rankingProfile: 'auto' as RankingProfile,
     searchResults: [] as SearchResult[],
+    searchContext: undefined as SearchData | undefined,
     actionLog: [] as ActionLogEntry[],
     busy: false,
     refreshInFlight: false,
@@ -286,13 +301,16 @@ async function search(): Promise<void> {
     try {
         const data = await actionRecorder.record('search', () => api<SearchData>('/search', {
             method: 'POST',
-            body: JSON.stringify({
+            body: JSON.stringify(buildSearchRequestBody({
                 path: state.selectedPath,
                 query: state.searchQuery,
                 limit: 10,
-            }),
+                extensionFilterText: state.extensionFilterText,
+                rankingProfile: state.rankingProfile,
+            })),
         }), { targetPath: state.selectedPath });
         state.searchResults = data.results || [];
+        state.searchContext = data;
         state.message = `Найдено результатов: ${state.searchResults.length}`;
     } catch (error) {
         state.error = sanitizeError(error);
@@ -318,6 +336,21 @@ async function copyDiagnostics(): Promise<void> {
             await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
         }, { targetPath: state.selectedPath || undefined });
         state.message = 'Диагностика скопирована.';
+    } catch (error) {
+        state.error = sanitizeError(error);
+    } finally {
+        render();
+    }
+}
+
+async function copySearchText(value: string, successMessage: string): Promise<void> {
+    state.error = '';
+    try {
+        if (!navigator.clipboard?.writeText) {
+            throw new Error('Буфер обмена недоступен в текущем браузере.');
+        }
+        await navigator.clipboard.writeText(value);
+        state.message = successMessage;
     } catch (error) {
         state.error = sanitizeError(error);
     } finally {
@@ -384,18 +417,22 @@ function render(): void {
                 ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
                 ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
                 ${operatorLogSection(state.actionLog)}
-                <section class="search">
-                    <input id="query" type="search" placeholder="Поиск по коду" value="${escapeHtml(state.searchQuery)}" />
-                    <button id="search" class="primary" ${state.busy ? 'disabled' : ''}>Искать</button>
-                </section>
+                ${searchSection()}
                 <section class="results">
-                    ${state.searchResults.length === 0 ? '<p class="empty">Результатов пока нет.</p>' : state.searchResults.map((result) => `
+                    ${state.searchResults.length === 0 ? '<p class="empty">Результатов пока нет.</p>' : state.searchResults.map((result, index) => `
                         <article class="result">
                             <header>
-                                <strong>${escapeHtml(result.relativePath)}</strong>
-                                <span>${escapeHtml(result.language || 'unknown')} · ${result.startLine}-${result.endLine} · ${result.score.toFixed(3)}</span>
+                                <div>
+                                    <strong>${escapeHtml(result.relativePath)}</strong>
+                                    <span>${escapeHtml(result.language || 'unknown')} · ${result.startLine}-${result.endLine} · ${result.score.toFixed(3)}</span>
+                                </div>
+                                <div class="result-actions">
+                                    <button class="copy-location" data-result-index="${index}">Копировать путь</button>
+                                    <button class="copy-snippet" data-result-index="${index}">Копировать фрагмент</button>
+                                </div>
                             </header>
                             <pre>${escapeHtml(result.content)}</pre>
+                            ${resultDetails(result)}
                         </article>
                     `).join('')}
                 </section>
@@ -405,6 +442,42 @@ function render(): void {
 
     bind();
     restoreFocus(focusSnapshot);
+}
+
+function searchSection(): string {
+    const context = state.searchContext || {
+        ...state.status?.retrievalConfiguration,
+        ...selectedRetrievalContext(state.selectedStatus),
+    };
+    const contextItems = formatRetrievalContext(context);
+
+    return `
+        <section class="search-panel" aria-label="Поиск по коду">
+            <div class="search">
+                <input id="query" type="search" placeholder="Поиск по коду" value="${escapeHtml(state.searchQuery)}" />
+                <button id="search" class="primary" ${state.busy ? 'disabled' : ''}>Искать</button>
+            </div>
+            <div class="search-options">
+                <label class="field compact">
+                    <span>Расширения</span>
+                    <input id="extension-filter" type="text" placeholder=".bsl, .xml" value="${escapeHtml(state.extensionFilterText)}" />
+                </label>
+                <label class="field compact">
+                    <span>Ranking profile</span>
+                    <select id="ranking-profile" ${state.busy ? 'disabled' : ''}>
+                        ${rankingOption('auto', 'auto')}
+                        ${rankingOption('generic', 'generic')}
+                        ${rankingOption('one-c', 'one-c')}
+                    </select>
+                </label>
+            </div>
+            <div class="retrieval-context">
+                ${contextItems.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}
+                <span>Ранжирование: ${escapeHtml(state.searchContext?.rankingProfile || state.rankingProfile)}</span>
+                ${state.searchContext?.indexingStatus ? `<span>Статус: ${escapeHtml(state.searchContext.indexingStatus)}</span>` : ''}
+            </div>
+        </section>
+    `;
 }
 
 function bind(): void {
@@ -426,16 +499,75 @@ function bind(): void {
     document.querySelector<HTMLInputElement>('#query')?.addEventListener('input', (event) => {
         state.searchQuery = (event.target as HTMLInputElement).value;
     });
+    document.querySelector<HTMLInputElement>('#extension-filter')?.addEventListener('input', (event) => {
+        state.extensionFilterText = (event.target as HTMLInputElement).value;
+    });
+    document.querySelector<HTMLSelectElement>('#ranking-profile')?.addEventListener('change', (event) => {
+        state.rankingProfile = (event.target as HTMLSelectElement).value as RankingProfile;
+    });
     document.querySelector('#search')?.addEventListener('click', () => void search());
     document.querySelector('#copy-diagnostics')?.addEventListener('click', () => void copyDiagnostics());
+    document.querySelectorAll<HTMLButtonElement>('.copy-location').forEach((button) => {
+        button.addEventListener('click', () => {
+            const result = state.searchResults[Number(button.dataset.resultIndex)];
+            void copySearchText(result ? resultLocation(result) : '', 'Путь скопирован.');
+        });
+    });
+    document.querySelectorAll<HTMLButtonElement>('.copy-snippet').forEach((button) => {
+        button.addEventListener('click', () => {
+            const result = state.searchResults[Number(button.dataset.resultIndex)];
+            void copySearchText(result?.content || '', 'Фрагмент скопирован.');
+        });
+    });
     document.querySelectorAll<HTMLButtonElement>('.codebase').forEach((button) => {
         button.addEventListener('click', () => {
             state.selectedPath = button.dataset.path || '';
             state.selectedStatus = undefined;
+            state.searchResults = [];
+            state.searchContext = undefined;
+            state.message = '';
+            state.error = '';
             void refresh({ forceRender: true });
             render();
         });
     });
+}
+
+function rankingOption(value: RankingProfile, label: string): string {
+    return `<option value="${value}" ${state.rankingProfile === value ? 'selected' : ''}>${label}</option>`;
+}
+
+function selectedRetrievalContext(status: CodebaseStatus | undefined): RetrievalContext {
+    const raw = status as (CodebaseStatus & RetrievalContext) | undefined;
+    return {
+        retrievalProfile: raw?.retrievalProfile,
+        retrievalMode: raw?.retrievalMode,
+        retrievalSchemaVersion: raw?.retrievalSchemaVersion,
+        oneCIndexScopeProfile: raw?.oneCIndexScopeProfile,
+    };
+}
+
+function resultDetails(result: SearchResult): string {
+    const diagnostics = getResultDiagnostics(result);
+    if (diagnostics.length === 0) {
+        return '';
+    }
+
+    return `
+        <details class="result-details">
+            <summary>Диагностика результата</summary>
+            <dl>
+                ${diagnostics.map(([key, value]) => `
+                    <dt>${escapeHtml(key)}</dt>
+                    <dd>${escapeHtml(value)}</dd>
+                `).join('')}
+            </dl>
+        </details>
+    `;
+}
+
+function resultLocation(result: SearchResult): string {
+    return `${result.relativePath}:${result.startLine}`;
 }
 
 function operatorLogSection(entries: ActionLogEntry[]): string {

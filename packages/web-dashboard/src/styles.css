@@ -16,7 +16,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
     font: inherit;
 }
 
@@ -108,6 +109,20 @@ input {
     padding: 0 11px;
     color: #18221f;
     background: #ffffff;
+}
+
+select {
+    width: 100%;
+    border: 1px solid #b9c5bf;
+    border-radius: 6px;
+    min-height: 40px;
+    padding: 0 11px;
+    color: #18221f;
+    background: #ffffff;
+}
+
+.field.compact {
+    color: #40504a;
 }
 
 .codebase-list {
@@ -202,9 +217,39 @@ p {
 }
 
 .actions,
-.search {
+.search,
+.result-actions {
     display: flex;
     gap: 10px;
+}
+
+.search-panel {
+    background: #ffffff;
+    border: 1px solid #d7ded9;
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+}
+
+.search-options {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(160px, 220px);
+    gap: 12px;
+}
+
+.retrieval-context {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.retrieval-context span {
+    border: 1px solid #d7ded9;
+    border-radius: 999px;
+    color: #40504a;
+    font-size: 12px;
+    padding: 5px 8px;
 }
 
 .operations {
@@ -469,6 +514,23 @@ h3 {
     border-bottom: 1px solid #e4e9e5;
 }
 
+.result header > div:first-child {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.result-actions {
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.result-actions button {
+    min-height: 32px;
+    padding: 0 10px;
+}
+
 .result header strong,
 .result header span {
     overflow-wrap: anywhere;
@@ -485,6 +547,33 @@ pre {
     overflow-wrap: anywhere;
     background: #f9faf8;
     color: #283330;
+}
+
+.result-details {
+    border-top: 1px solid #e4e9e5;
+    padding: 10px 14px 12px;
+}
+
+.result-details summary {
+    color: #40504a;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.result-details dl {
+    display: grid;
+    gap: 6px 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
+    margin: 10px 0 0;
+}
+
+.result-details dt {
+    color: #66756f;
+}
+
+.result-details dd {
+    margin: 0;
+    overflow-wrap: anywhere;
 }
 
 .empty {
@@ -522,7 +611,9 @@ pre {
     }
 
     .operations-grid,
-    .counter-grid {
+    .counter-grid,
+    .search-options,
+    .result-details dl {
         grid-template-columns: 1fr;
     }
 
@@ -544,7 +635,8 @@ pre {
     }
 
     .actions,
-    .search {
+    .search,
+    .result-actions {
         flex-wrap: wrap;
     }
 }

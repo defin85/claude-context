@@ -126,6 +126,37 @@ test('dashboard API maps mutation routes to existing handlers and preserves requ
     ]);
 });
 
+test('dashboard API forwards search filters and ranking profile', async () => {
+    const { adapter, calls } = createAdapter();
+
+    const response = await adapter.handle({
+        method: 'POST',
+        path: '/api/search',
+        query: new URLSearchParams(),
+        body: {
+            path: '/repo/a',
+            query: 'foo',
+            limit: 7,
+            extensionFilter: ['.bsl', '.xml'],
+            rankingProfile: 'one-c',
+        },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(calls, [
+        {
+            name: 'search',
+            args: {
+                path: '/repo/a',
+                query: 'foo',
+                limit: 7,
+                extensionFilter: ['.bsl', '.xml'],
+                rankingProfile: 'one-c',
+            },
+        },
+    ]);
+});
+
 test('dashboard API rejects missing bodies, missing path query, and unknown routes', async () => {
     const { adapter } = createAdapter();
 
@@ -218,6 +249,27 @@ test('dashboard API normalizes disallowed path and not-indexed handler errors', 
             data: { code: 'not_indexed' },
         },
     });
+});
+
+test('dashboard API does not start indexing for not-indexed search errors', async () => {
+    const { adapter, calls } = createAdapter({
+        searchResult: {
+            isError: true,
+            text: "Codebase '/repo/a' is not indexed.",
+            structuredContent: { code: 'not_indexed' },
+        },
+    });
+
+    await adapter.handle({
+        method: 'POST',
+        path: '/api/search',
+        query: new URLSearchParams(),
+        body: { path: '/repo/a', query: 'symbol' },
+    });
+
+    assert.deepEqual(calls, [
+        { name: 'search', args: { path: '/repo/a', query: 'symbol' } },
+    ]);
 });
 
 test('dashboard API converts handler exceptions to typed errors', async () => {
