@@ -196,6 +196,33 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
             (call[1]?.headers as Record<string, string> | undefined)?.connection === 'close'
         ))).toBe(true);
     });
+
+    it('retries transient fetch failures for idempotent Qdrant upserts', async () => {
+        const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>()
+            .mockRejectedValueOnce(new TypeError('fetch failed'))
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ result: { operation_id: 1, status: 'completed' } }),
+            } as Response);
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+
+        await expect(db.upsertBgeM3('chunks', [{
+            id: 'chunk-1',
+            vector: [0.1, 0.2],
+            sparseVector: { indices: [1], values: [0.5] },
+            colbertVectors: [[0.1, 0.2]],
+            content: 'content',
+            relativePath: 'file.ts',
+            startLine: 1,
+            endLine: 2,
+            fileExtension: '.ts',
+            metadata: { retrievalMode: 'bge_m3_full' },
+        }])).resolves.toBeUndefined();
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls.every((call) => String(call[0]).includes('/collections/chunks/points?wait=true'))).toBe(true);
+    });
 });
 
 describe('QdrantVectorDatabase payload projection', () => {

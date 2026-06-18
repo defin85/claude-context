@@ -1,4 +1,5 @@
 import './styles.css';
+import { buildProgressSummary, CodebaseStatus } from './operationsView';
 
 type ApiSuccess<T> = { ok: true; data: T };
 type ApiFailure = { ok: false; error: string; data?: unknown };
@@ -13,8 +14,8 @@ interface DaemonStatus {
         endpointUrl: string;
         knownCodebases?: Array<{ path: string; status: string }>;
         workload?: {
-            indexing?: { activeCount?: number; queuedCount?: number };
-            search?: { activeCount?: number; queuedCount?: number };
+            indexing?: WorkloadLane;
+            search?: WorkloadLane;
         };
     }>;
     accelerator?: {
@@ -22,6 +23,16 @@ interface DaemonStatus {
         active?: boolean;
         effectiveEmbeddingConcurrency?: number;
         effectiveInsertConcurrency?: number;
+        submittedBatches?: number;
+        completedBatches?: number;
+        failedBatches?: number;
+        retriedBatches?: number;
+        queuedBatches?: number;
+        runningEmbeddingBatches?: number;
+        queuedInsertBatches?: number;
+        runningInsertBatches?: number;
+        completedInsertBatches?: number;
+        failedInsertBatches?: number;
         adaptivePressureScore?: number;
         adaptiveThrottleReason?: string;
         fallbackReason?: string;
@@ -37,6 +48,26 @@ interface DaemonStatus {
         usesBgeM3Sparse?: boolean;
         usesColbert?: boolean;
     };
+}
+
+interface WorkloadJob {
+    id: string;
+    type: string;
+    codebasePath: string;
+    priority: number;
+    enqueuedAt: string;
+    startedAt?: string;
+    readyAt?: string;
+    cancelRequestedAt?: string;
+    queuePosition?: number;
+}
+
+interface WorkloadLane {
+    maxConcurrency?: number;
+    activeCount?: number;
+    queuedCount?: number;
+    activeJobs?: WorkloadJob[];
+    queuedJobs?: WorkloadJob[];
 }
 
 interface CodebaseSummary {
@@ -61,6 +92,7 @@ const tokenKey = 'claude-context-dashboard-token';
 const state = {
     token: sessionStorage.getItem(tokenKey) || '',
     status: undefined as DaemonStatus | undefined,
+    selectedStatus: undefined as CodebaseStatus | undefined,
     codebases: [] as CodebaseSummary[],
     selectedPath: '',
     message: '',
@@ -129,12 +161,14 @@ async function refresh(options: { showBusy?: boolean; showMessage?: boolean; for
             api<CodebaseSummary[]>('/codebases'),
         ]);
         const selectedPath = state.selectedPath || codebases[0]?.path || '';
-        const nextFingerprint = JSON.stringify({ status, codebases, selectedPath });
+        const selectedStatus = selectedPath ? await loadSelectedStatus(selectedPath) : undefined;
+        const nextFingerprint = JSON.stringify({ status, codebases, selectedPath, selectedStatus });
         const shouldRender = options.forceRender || nextFingerprint !== lastRefreshFingerprint;
 
         state.status = status;
         state.codebases = codebases;
         state.selectedPath = selectedPath;
+        state.selectedStatus = selectedStatus;
         lastRefreshFingerprint = nextFingerprint;
         if (options.showMessage) {
             state.message = `Обновлено: ${new Date().toLocaleTimeString()}`;
@@ -156,8 +190,16 @@ async function refresh(options: { showBusy?: boolean; showMessage?: boolean; for
     }
 }
 
-async function runAction(action: 'index' | 'clear' | 'cancel'): Promise<void> {
-    if (!state.selectedPath) {
+async function loadSelectedStatus(path: string): Promise<CodebaseStatus | undefined> {
+    try {
+        return await api<CodebaseStatus>(`/codebases/status?path=${encodeURIComponent(path)}`);
+    } catch {
+        return undefined;
+    }
+}
+
+async function runAction(action: 'index' | 'clear' | 'cancel', path = state.selectedPath, cancelKind = 'выбранную'): Promise<void> {
+    if (!path) {
         state.error = 'Выберите кодовую базу.';
         render();
         return;
@@ -169,8 +211,8 @@ async function runAction(action: 'index' | 'clear' | 'cancel'): Promise<void> {
             ? '/codebases/clear'
             : '/codebases/cancel';
     if (
-        (action === 'clear' && !window.confirm(`Очистить индекс для ${state.selectedPath}?`))
-        || (action === 'cancel' && !window.confirm(`Отменить индексацию для ${state.selectedPath}?`))
+        (action === 'clear' && !window.confirm(`Очистить индекс для ${path}?`))
+        || (action === 'cancel' && !window.confirm(`Отменить ${cancelKind} индексацию для ${path}?`))
     ) {
         return;
     }
@@ -182,9 +224,9 @@ async function runAction(action: 'index' | 'clear' | 'cancel'): Promise<void> {
         await api(route, {
             method: 'POST',
             body: JSON.stringify({
-                path: state.selectedPath,
+                path,
                 ...(action === 'index' ? { splitter: 'ast' } : {}),
-                ...(action === 'cancel' ? { reason: 'Cancelled from web dashboard.' } : {}),
+                ...(action === 'cancel' ? { reason: `Cancelled ${cancelKind} indexing from web dashboard.` } : {}),
             }),
         });
         state.message = action === 'index'
@@ -231,10 +273,13 @@ async function search(): Promise<void> {
 }
 
 function render(): void {
+    const focusSnapshot = captureFocus();
     const runtimes = state.status?.runtimes || [];
     const primaryRuntime = runtimes[0];
-    const indexingCount = runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.activeCount || 0), 0);
-    const queueCount = runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.queuedCount || 0), 0);
+    const activeIndexingJobs = collectIndexingJobs(runtimes, 'activeJobs');
+    const queuedIndexingJobs = collectIndexingJobs(runtimes, 'queuedJobs');
+    const indexingCount = activeIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.activeCount || 0), 0);
+    const queueCount = queuedIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.queuedCount || 0), 0);
     const retrievalLabel = formatRetrieval(state.status?.retrievalConfiguration);
 
     root.innerHTML = `
@@ -268,7 +313,7 @@ function render(): void {
                     ${metric('Runtimes', String(runtimes.length), primaryRuntime?.healthy === false ? 'attention' : '')}
                     ${metric('Indexing', String(indexingCount), indexingCount > 0 ? 'working' : '')}
                     ${metric('Queued', String(queueCount), queueCount > 0 ? 'attention' : '')}
-                    ${metric('Pressure', String(state.status?.accelerator?.adaptivePressureScore ?? 0), '')}
+                    ${metric('Pressure', formatOptionalNumber(state.status?.accelerator?.adaptivePressureScore), '')}
                 </section>
                 <section class="toolbar">
                     <div>
@@ -282,6 +327,7 @@ function render(): void {
                         <button id="clear" class="danger" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Очистить</button>
                     </div>
                 </section>
+                ${operationsSection(activeIndexingJobs, queuedIndexingJobs, state.selectedStatus, state.status?.accelerator)}
                 ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
                 ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
                 <section class="search">
@@ -304,6 +350,7 @@ function render(): void {
     `;
 
     bind();
+    restoreFocus(focusSnapshot);
 }
 
 function bind(): void {
@@ -317,6 +364,11 @@ function bind(): void {
     document.querySelector('#index')?.addEventListener('click', () => void runAction('index'));
     document.querySelector('#clear')?.addEventListener('click', () => void runAction('clear'));
     document.querySelector('#cancel')?.addEventListener('click', () => void runAction('cancel'));
+    document.querySelectorAll<HTMLButtonElement>('.cancel-job').forEach((button) => {
+        button.addEventListener('click', () => {
+            void runAction('cancel', button.dataset.path || '', button.dataset.kind || 'выбранную');
+        });
+    });
     document.querySelector<HTMLInputElement>('#query')?.addEventListener('input', (event) => {
         state.searchQuery = (event.target as HTMLInputElement).value;
     });
@@ -324,6 +376,8 @@ function bind(): void {
     document.querySelectorAll<HTMLButtonElement>('.codebase').forEach((button) => {
         button.addEventListener('click', () => {
             state.selectedPath = button.dataset.path || '';
+            state.selectedStatus = undefined;
+            void refresh({ forceRender: true });
             render();
         });
     });
@@ -338,6 +392,35 @@ function metric(label: string, value: string, tone: string): string {
     `;
 }
 
+function captureFocus(): { id: string; start: number | null; end: number | null } | undefined {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) || !root.contains(active) || !active.id) {
+        return undefined;
+    }
+
+    return {
+        id: active.id,
+        start: active.selectionStart,
+        end: active.selectionEnd,
+    };
+}
+
+function restoreFocus(snapshot: { id: string; start: number | null; end: number | null } | undefined): void {
+    if (!snapshot) {
+        return;
+    }
+
+    const next = document.getElementById(snapshot.id);
+    if (!(next instanceof HTMLInputElement)) {
+        return;
+    }
+
+    next.focus({ preventScroll: true });
+    if (snapshot.start !== null && snapshot.end !== null) {
+        next.setSelectionRange(snapshot.start, snapshot.end);
+    }
+}
+
 function shortPath(value: string): string {
     const parts = value.split('/').filter(Boolean);
     return parts.slice(-2).join('/') || value;
@@ -350,6 +433,166 @@ function escapeHtml(value: string): string {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+}
+
+function collectIndexingJobs(
+    runtimes: NonNullable<DaemonStatus['runtimes']>,
+    field: 'activeJobs' | 'queuedJobs',
+): WorkloadJob[] {
+    return runtimes
+        .filter((runtime) => runtime.healthy)
+        .flatMap((runtime) => runtime.workload?.indexing?.[field] || []);
+}
+
+function operationsSection(
+    activeJobs: WorkloadJob[],
+    queuedJobs: WorkloadJob[],
+    selectedStatus: CodebaseStatus | undefined,
+    accelerator: DaemonStatus['accelerator'],
+): string {
+    return `
+        <section class="operations" aria-label="Операции индексации">
+            <div class="section-heading">
+                <div>
+                    <h2>Операции индексации</h2>
+                    <p>Активные задания, очередь и прогресс выбранной кодовой базы.</p>
+                </div>
+                <span class="pill">${escapeHtml(String(activeJobs.length))} активно · ${escapeHtml(String(queuedJobs.length))} в очереди</span>
+            </div>
+            <div class="operations-grid">
+                ${jobPanel('Активные', activeJobs, 'active')}
+                ${jobPanel('В очереди', queuedJobs, 'queued')}
+            </div>
+            <div class="operations-grid">
+                ${progressPanel(selectedStatus)}
+                ${acceleratorPanel(accelerator)}
+            </div>
+        </section>
+    `;
+}
+
+function jobPanel(title: string, jobs: WorkloadJob[], kind: 'active' | 'queued'): string {
+    const emptyText = kind === 'active'
+        ? 'Активной индексации сейчас нет.'
+        : 'Очередь индексации пуста.';
+    const kindLabel = kind === 'active' ? 'активную' : 'ожидающую';
+
+    return `
+        <article class="operation-panel">
+            <h3>${escapeHtml(title)}</h3>
+            ${jobs.length === 0 ? `<p class="empty small">${escapeHtml(emptyText)}</p>` : `
+                <div class="job-list">
+                    ${jobs.map((job) => `
+                        <div class="job-row">
+                            <div class="job-main">
+                                <strong title="${escapeHtml(job.codebasePath)}">${escapeHtml(shortPath(job.codebasePath))}</strong>
+                                <span>${escapeHtml(job.codebasePath)}</span>
+                                <small>${escapeHtml(jobMeta(job, kind))}</small>
+                            </div>
+                            <button class="danger cancel-job" data-path="${escapeHtml(job.codebasePath)}" data-kind="${escapeHtml(kindLabel)}" ${state.busy ? 'disabled' : ''}>Отменить</button>
+                        </div>
+                    `).join('')}
+                </div>
+            `}
+        </article>
+    `;
+}
+
+function progressPanel(status: CodebaseStatus | undefined): string {
+    const summary = status ? buildProgressSummary(status) : undefined;
+    const hasProgress = typeof summary?.percentage === 'number';
+
+    return `
+        <article class="operation-panel">
+            <h3>Выбранная база</h3>
+            ${summary ? `
+                <div class="progress-summary">
+                    <div>
+                        <strong>${escapeHtml(hasProgress ? `${summary.percentage}%` : 'Статус')}</strong>
+                        <span>${escapeHtml(summary.phase)}</span>
+                        ${summary.countText ? `<small>${escapeHtml(summary.countText)}</small>` : ''}
+                    </div>
+                    ${hasProgress ? `<div class="progress-track"><span style="width: ${summary.percentage}%"></span></div>` : ''}
+                    ${summary.statsText ? `<p>${escapeHtml(summary.statsText)}</p>` : ''}
+                    ${summary.updatedText ? `<p>${escapeHtml(summary.updatedText)}</p>` : ''}
+                </div>
+            ` : '<p class="empty small">Статус выбранной кодовой базы пока недоступен.</p>'}
+        </article>
+    `;
+}
+
+function acceleratorPanel(accelerator: DaemonStatus['accelerator']): string {
+    const counters = [
+        ['Отправлено', accelerator?.submittedBatches],
+        ['Готово', accelerator?.completedBatches],
+        ['Ошибки', accelerator?.failedBatches],
+        ['Повторы', accelerator?.retriedBatches],
+        ['Очередь', accelerator?.queuedBatches],
+        ['Векторизация', accelerator?.runningEmbeddingBatches],
+        ['Запись в очереди', accelerator?.queuedInsertBatches],
+        ['Запись', accelerator?.runningInsertBatches],
+        ['Записано', accelerator?.completedInsertBatches],
+        ['Ошибки записи', accelerator?.failedInsertBatches],
+    ].filter(([, value]) => typeof value === 'number') as Array<[string, number]>;
+
+    return `
+        <article class="operation-panel">
+            <h3>Пакеты ускорителя</h3>
+            ${counters.length === 0 ? '<p class="empty small">Счётчики пакетов недоступны.</p>' : `
+                <div class="counter-grid">
+                    ${counters.map(([label, value]) => `
+                        <div class="counter">
+                            <span>${escapeHtml(label)}</span>
+                            <strong>${escapeHtml(String(value))}</strong>
+                        </div>
+                    `).join('')}
+                </div>
+            `}
+            ${accelerator?.adaptiveThrottleReason ? `<p>${escapeHtml(accelerator.adaptiveThrottleReason)}</p>` : ''}
+            ${accelerator?.fallbackReason ? `<p>${escapeHtml(accelerator.fallbackReason)}</p>` : ''}
+        </article>
+    `;
+}
+
+function jobMeta(job: WorkloadJob, kind: 'active' | 'queued'): string {
+    const parts = [
+        job.type,
+        `приоритет ${job.priority}`,
+    ];
+    if (kind === 'active' && job.startedAt) {
+        parts.push(`работает ${formatElapsed(job.startedAt)}`);
+    }
+    if (kind === 'queued') {
+        if (typeof job.queuePosition === 'number') {
+            parts.push(`позиция ${job.queuePosition}`);
+        }
+        parts.push(`ждёт ${formatElapsed(job.enqueuedAt)}`);
+    }
+    if (job.cancelRequestedAt) {
+        parts.push('отмена запрошена');
+    }
+    return parts.join(' · ');
+}
+
+function formatOptionalNumber(value: number | undefined): string {
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : '—';
+}
+
+function formatElapsed(isoValue: string): string {
+    const startedAt = Date.parse(isoValue);
+    if (!Number.isFinite(startedAt)) {
+        return 'неизвестно';
+    }
+    const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    if (seconds < 60) {
+        return `${seconds} с`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) {
+        return `${minutes} мин`;
+    }
+    const hours = Math.floor(minutes / 60);
+    return `${hours} ч ${minutes % 60} мин`;
 }
 
 function formatRetrieval(config: DaemonStatus['retrievalConfiguration']): string {

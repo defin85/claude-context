@@ -207,6 +207,157 @@ p {
     gap: 10px;
 }
 
+.operations {
+    display: grid;
+    gap: 12px;
+}
+
+.section-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+h2,
+h3 {
+    margin: 0;
+}
+
+h2 {
+    font-size: 18px;
+}
+
+h3 {
+    font-size: 15px;
+}
+
+.pill {
+    border: 1px solid #c9d3ce;
+    border-radius: 999px;
+    color: #40504a;
+    background: #ffffff;
+    font-size: 13px;
+    line-height: 1;
+    padding: 8px 10px;
+    white-space: nowrap;
+}
+
+.operations-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.operation-panel {
+    background: #ffffff;
+    border: 1px solid #d7ded9;
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    min-height: 124px;
+    padding: 14px;
+}
+
+.job-list {
+    display: grid;
+    gap: 10px;
+}
+
+.job-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    border: 1px solid #e1e7e3;
+    border-radius: 6px;
+    min-height: 76px;
+    padding: 10px;
+}
+
+.job-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.job-main strong,
+.job-main span,
+.job-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.job-main span,
+.job-main small {
+    color: #66756f;
+}
+
+.progress-summary {
+    display: grid;
+    gap: 10px;
+}
+
+.progress-summary strong,
+.progress-summary span,
+.progress-summary small {
+    display: block;
+}
+
+.progress-summary strong {
+    font-size: 24px;
+}
+
+.progress-summary span,
+.progress-summary small {
+    color: #66756f;
+}
+
+.progress-track {
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e4ebe7;
+}
+
+.progress-track span {
+    display: block;
+    height: 100%;
+    background: #176b5f;
+}
+
+.counter-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.counter {
+    border: 1px solid #e1e7e3;
+    border-radius: 6px;
+    min-height: 56px;
+    padding: 8px;
+}
+
+.counter span,
+.counter strong {
+    display: block;
+}
+
+.counter span {
+    color: #66756f;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.counter strong {
+    margin-top: 4px;
+    font-size: 20px;
+}
+
 .notice {
     border: 1px solid #d7ded9;
     border-left: 4px solid #176b5f;
@@ -272,6 +423,13 @@ pre {
     padding: 22px;
 }
 
+.empty.small {
+    align-content: center;
+    display: grid;
+    min-height: 76px;
+    padding: 14px;
+}
+
 @media (max-width: 860px) {
     .shell {
         grid-template-columns: 1fr;
@@ -286,9 +444,19 @@ pre {
     }
 
     .toolbar,
+    .section-heading,
     .result header {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .operations-grid,
+    .counter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .job-row {
+        grid-template-columns: 1fr;
     }
 
     .actions,

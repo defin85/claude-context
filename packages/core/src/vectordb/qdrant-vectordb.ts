@@ -250,24 +250,28 @@ export class QdrantVectorDatabase implements VectorDatabase {
         if (documents.length === 0) {
             return;
         }
-        await this.fetchJson(`/collections/${encodeURIComponent(collectionName)}/points?wait=true`, {
-            method: 'PUT',
-            body: JSON.stringify({
-                points: documents.map((document) => ({
-                    id: stableUuid(document.id),
-                    vector: toQdrantVectorPayload(document),
-                    payload: {
-                        id: document.id,
-                        content: document.content,
-                        relativePath: document.relativePath,
-                        startLine: document.startLine,
-                        endLine: document.endLine,
-                        fileExtension: document.fileExtension,
-                        metadata: document.metadata || {},
-                    },
-                })),
-            }),
-        });
+        await this.fetchJson(
+            `/collections/${encodeURIComponent(collectionName)}/points?wait=true`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({
+                    points: documents.map((document) => ({
+                        id: stableUuid(document.id),
+                        vector: toQdrantVectorPayload(document),
+                        payload: {
+                            id: document.id,
+                            content: document.content,
+                            relativePath: document.relativePath,
+                            startLine: document.startLine,
+                            endLine: document.endLine,
+                            fileExtension: document.fileExtension,
+                            metadata: document.metadata || {},
+                        },
+                    })),
+                }),
+            },
+            { retryTransientFetchFailures: true },
+        );
     }
 
     private pointToDocument(point: any): VectorDocument {
@@ -311,19 +315,36 @@ export class QdrantVectorDatabase implements VectorDatabase {
         return undefined;
     }
 
-    private async fetchJson(pathname: string, init: RequestInit = {}): Promise<any> {
-        const response = await fetch(`${this.baseUrl}${pathname}`, {
-            ...init,
-            headers: {
-                ...this.headers,
-                ...(init.headers || {}),
-                'connection': 'close',
-            },
-        });
-        if (!response.ok) {
-            throw new Error(`Qdrant request failed: ${response.status} ${await response.text()}`);
+    private async fetchJson(
+        pathname: string,
+        init: RequestInit = {},
+        options: { retryTransientFetchFailures?: boolean } = {},
+    ): Promise<any> {
+        const attempts = options.retryTransientFetchFailures ? 3 : 1;
+        let lastError: unknown;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            try {
+                const response = await fetch(`${this.baseUrl}${pathname}`, {
+                    ...init,
+                    headers: {
+                        ...this.headers,
+                        ...(init.headers || {}),
+                        'connection': 'close',
+                    },
+                });
+                if (!response.ok) {
+                    throw new Error(`Qdrant request failed: ${response.status} ${await response.text()}`);
+                }
+                return response.json();
+            } catch (error) {
+                lastError = error;
+                if (attempt >= attempts - 1 || !isTransientFetchFailure(error)) {
+                    throw error;
+                }
+            }
         }
-        return response.json();
+
+        throw lastError;
     }
 
     private withoutContentType(): Record<string, string> {
@@ -331,6 +352,18 @@ export class QdrantVectorDatabase implements VectorDatabase {
         delete headers['content-type'];
         return headers;
     }
+}
+
+function isTransientFetchFailure(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+    const message = error.message.toLowerCase();
+    return message.includes('fetch failed')
+        || message.includes('connection reset')
+        || message.includes('socket hang up')
+        || message.includes('econnreset')
+        || message.includes('econnrefused');
 }
 
 function toQdrantVectorPayload(document: VectorDocument): Record<string, unknown> {
