@@ -4,6 +4,7 @@
 
 - `node --test scripts/run-demo-1c-relevance-eval.test.js` - passed, 33 tests.
 - `node --test scripts/run-demo-1c-relevance-eval.test.js` - passed after finish-to-100 closure, 35 tests.
+- `node --test scripts/run-demo-1c-relevance-eval.test.js` - passed after default demo-do30 baseline hardening, 36 tests.
 - `pnpm --filter @zilliz/claude-context-core test -- context.code-symbol-retrieval.test.ts` - passed, 42 tests.
 - `pnpm build:core` - passed.
 - `systemctl --user restart claude-context-mcp.service` - daemon restarted and reported `active`.
@@ -28,6 +29,7 @@
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-demo-do30/comparison.json`
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-finish-harden-compound-demo-do30/label-validation.json`
   - Result: strict Top1 `23/30`, strict Top5 `26/30`, strict Top10 `26/30`, query-level regressions `0`, improvements `4`, strict Top1 gate `21`, strict Top5 gate `24`, MCP tool errors `0`, missing ColBERT vector errors `0`.
+  - Default runner hardening: `scripts/run-demo-do30-1c-live-mcp-eval.js` now fails fast when neither an explicit `--baseline` nor the preserved tuned baseline artifact is available, so non-regression acceptance cannot silently run without query-level comparison.
 
 - Compound-name holdout live evaluation:
   - `.artifacts/hybrid-code-symbol-retrieval/2026-06-18-harden-compound-holdout-rerun/summary.json`

@@ -27,7 +27,15 @@ const defaults = [
   '--strict-hit-at5-threshold', '24',
   '--baseline-mode', 'non-regression',
 ];
-if (fs.existsSync(finalTunedBaseline)) {
+
+if (!hasOption('--baseline')) {
+  if (!fs.existsSync(finalTunedBaseline)) {
+    console.error(
+      `Required demo-do30 baseline artifact is missing: ${finalTunedBaseline}\n` +
+      'Run with --baseline <summary.json> or restore the preserved final tuned baseline before acceptance.',
+    );
+    process.exit(1);
+  }
   defaults.push('--baseline', finalTunedBaseline);
 }
 

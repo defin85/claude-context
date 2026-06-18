@@ -295,6 +295,14 @@ test('demo-do30 live runner defaults to the tuned strict top1 baseline threshold
   assert.match(runner, /'--strict-hit-at5-threshold', '24'/);
 });
 
+test('demo-do30 live runner requires the preserved tuned baseline by default', () => {
+  const runner = fs.readFileSync(path.join(repoRoot, 'scripts', 'run-demo-do30-1c-live-mcp-eval.js'), 'utf8');
+
+  assert.doesNotMatch(runner, /if \(fs\.existsSync\(finalTunedBaseline\)\)/);
+  assert.match(runner, /Required demo-do30 baseline artifact is missing/);
+  assert.match(runner, /'--baseline', finalTunedBaseline/);
+});
+
 test('enforces required residual assertions even when aggregate acceptance passes', () => {
   const summary = {
     metrics: {
