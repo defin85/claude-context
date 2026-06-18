@@ -103,3 +103,215 @@ The system SHALL improve the live Qdrant default ranking score on the `demo-1c` 
 - **THEN** the tuned report SHALL list every baseline Hit@10 query that regressed, including previous rank, tuned rank, top paths, and score diagnostics
 - **AND** regressions SHALL be reviewed in the final summary before the tuned ranking is accepted
 
+### Requirement: Universal 1C evaluation uses a multi-configuration query matrix
+The system SHALL provide a committed universal 1C search evaluation dataset that separates reusable query intent from fixture-specific expected paths.
+
+#### Scenario: Universal matrix rows define reusable intent
+- **WHEN** the universal 1C evaluation dataset is loaded
+- **THEN** each query row SHALL include an identifier, query text, intent, domain, kind, and per-configuration targets
+- **AND** query identifiers, domains, intents, and notes SHALL be evaluation metadata only
+
+#### Scenario: Per-configuration applicability is explicit
+- **WHEN** a universal query is evaluated for a fixture
+- **THEN** the target entry for that fixture SHALL declare `applicable`, `optional`, `not-applicable`, or `needs-inspection`
+- **AND** strict acceptance SHALL score only `applicable` targets
+- **AND** targets marked `needs-inspection` SHALL fail strict acceptance until source-inspected labels are supplied or the target is marked `not-applicable`
+
+#### Scenario: Universal matrix covers current real fixtures
+- **WHEN** the universal matrix is validated
+- **THEN** it SHALL include target entries for `examples/demo-do30-1c`, `examples/demo-bp30-1c`, `examples/demo-ut-1c`, and `examples/demo-unf-1c`
+- **AND** missing local fixture directories SHALL be reported clearly before live acceptance runs
+
+### Requirement: Universal 1C query set covers portable developer intents
+The system SHALL include universal query coverage for broad 1C developer navigation and domain-specific search tasks without requiring every query to apply to every configuration.
+
+#### Scenario: Metadata navigation intents are covered
+- **WHEN** the universal matrix is reviewed
+- **THEN** it SHALL include positive queries for list forms, item forms, document forms, document commands, reports, data processors, constants, information registers, accumulation registers, and accounting registers where applicable
+
+#### Scenario: Execution-code intents are covered
+- **WHEN** the universal matrix is reviewed
+- **THEN** it SHALL include positive queries for document posting, before-write validation, fill-on-base behavior, print forms, record-set modules, and exchange-plan registration where applicable
+
+#### Scenario: Shared platform and BSP intents are covered
+- **WHEN** the universal matrix is reviewed
+- **THEN** it SHALL include positive queries for users, roles, settings storage, attached files, email settings, email sending, full-text search, scheduled jobs, and event-log diagnostics where applicable
+
+#### Scenario: Domain intents are covered
+- **WHEN** the universal matrix is reviewed
+- **THEN** it SHALL include positive queries for EDI, signatures, MCHD, accounting, VAT, month closing, bank, cash, sales orders, purchase orders, stock balances, prices, inventory, reservations, work orders, production, money movement, and retail scenarios where applicable
+
+### Requirement: Universal matrix labels are validated before scoring
+The system SHALL validate every strict and acceptable path prefix for every applicable universal target before using matrix metrics as acceptance evidence.
+
+#### Scenario: Applicable labels are reachable
+- **WHEN** label validation runs for a universal matrix fixture target
+- **THEN** every strict expected prefix and acceptable prefix for `applicable` targets SHALL match at least one file under the fixture path
+- **AND** unreachable prefixes SHALL fail validation with the query ID, fixture name, label kind, and prefix
+
+#### Scenario: Optional labels are reported separately
+- **WHEN** label validation runs for `optional` targets
+- **THEN** reachable optional labels SHALL be reported
+- **AND** optional target failures SHALL NOT count as strict misses unless the target is promoted to `applicable`
+
+#### Scenario: Not-applicable targets are not scored
+- **WHEN** scoring runs for a target marked `not-applicable`
+- **THEN** that fixture/query pair SHALL be excluded from positive Hit@k denominators
+- **AND** the report SHALL preserve the not-applicable reason for audit
+
+### Requirement: Universal evaluation reports grouped quality and regressions
+The system SHALL score universal matrix results by fixture, domain, intent, control class, and query ID so portability failures remain visible.
+
+#### Scenario: Positive scoring reports grouped ranking metrics
+- **WHEN** saved or live results are scored against the universal matrix
+- **THEN** the report SHALL include strict Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, and first strict rank for applicable positive targets
+- **AND** it SHALL include acceptable Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, and first acceptable rank when acceptable labels exist
+- **AND** it SHALL group metrics by fixture, domain, and intent
+
+#### Scenario: Query-level regressions are visible
+- **WHEN** a universal run is compared with a baseline
+- **THEN** the comparison SHALL list query-level improvements and regressions by fixture
+- **AND** aggregate gains SHALL NOT hide regressions for previously passing fixture/query pairs
+
+#### Scenario: Live reports record backend context
+- **WHEN** universal live results are collected
+- **THEN** raw JSON, scored JSON, comparison JSON, and Markdown reports SHALL record codebase path, backend label, retrieval mode, ranking profile, index status, latency, MCP tool errors, and missing ColBERT vector errors where available
+
+### Requirement: Universal negative controls prevent generic-term overfitting
+The universal evaluation SHALL include negative controls that detect over-ranking caused by broad generic 1C terms.
+
+#### Scenario: Negative-control rows define prohibited behavior
+- **WHEN** a negative-control query is loaded
+- **THEN** it SHALL declare the broad query, control class, target fixtures, and prohibited over-ranking pattern
+- **AND** it SHALL define pass/fail criteria independent from positive strict Hit@k metrics
+
+#### Scenario: Negative-control failures are reported separately
+- **WHEN** universal results are scored
+- **THEN** negative-control pass/fail counts SHALL be reported separately from positive strict and acceptable hits
+- **AND** failed negative controls SHALL list the top paths that violated the prohibited pattern
+
+#### Scenario: Broad generic queries remain broad
+- **WHEN** negative-control queries use broad terms such as `форма`, `подпись`, `настройки`, `контрагент`, `почта`, `менеджер`, or `документ`
+- **THEN** scoring SHALL detect when an unrelated exact-looking candidate is forced above better-supported broad or semantic results solely by generic-term matching
+
+### Requirement: Universal acceptance preserves existing fixture baselines
+The universal evaluation SHALL complement existing single-fixture acceptance workflows without replacing their historical baselines.
+
+#### Scenario: Existing demo evaluations still run
+- **WHEN** universal evaluation support is validated
+- **THEN** the existing `examples/demo-1c` relevance workflow SHALL still run with its current accepted threshold and backend correctness checks
+- **AND** the existing `examples/demo-do30-1c` scenario workflow SHALL still run with its current strict and backend correctness checks
+
+#### Scenario: Universal thresholds are baseline-derived
+- **WHEN** universal matrix acceptance thresholds are documented
+- **THEN** they SHALL be derived from measured baseline reports
+- **AND** guessed aggregate thresholds SHALL NOT be used as hard completion gates before source-inspected labels and baseline artifacts exist
+
+#### Scenario: Multi-fixture acceptance requires portability evidence
+- **WHEN** a later ranking change uses the universal matrix as acceptance evidence
+- **THEN** it SHALL compare results across at least three of the four configured real fixtures
+- **AND** it SHALL report any fixture or domain where quality regressed even if aggregate quality improved
+
+### Requirement: Compound-name holdout evaluation prevents fixture overfitting
+The system SHALL provide evaluation coverage that distinguishes generic compound-name ranking improvements from tuning to known `demo-do30-1c` answers.
+
+#### Scenario: Holdout dataset is collected separately
+- **WHEN** compound-name ranking is evaluated
+- **THEN** the evaluation SHALL include committed holdout coverage separate from the original `demo-do30-1c` 30-query scenario dataset
+- **AND** the holdout coverage SHALL either extend the universal 1C matrix or use a universal-matrix-compatible shape with identifier, query text, intent, domain, kind, failure or control class, and per-fixture targets
+- **AND** each applicable target SHALL include strict expected path prefixes and optional acceptable path prefixes
+- **AND** the dataset SHALL mark labels as evaluation truth only, not production ranking rules
+
+#### Scenario: Holdout includes positive and negative controls
+- **WHEN** the holdout dataset is reviewed
+- **THEN** it SHALL include positive compound-name queries for forms, constants, modules, commands, document journals, manager modules, and object modules
+- **AND** it SHALL include negative controls where shared generic terms must not force an unrelated compound-name candidate to the top
+- **AND** negative-control failures SHALL be reported separately from strict positive misses
+
+#### Scenario: Holdout labels are validated before acceptance
+- **WHEN** the holdout evaluation is scored
+- **THEN** every strict and acceptable path prefix SHALL be checked against the target fixture path manifest
+- **AND** unreachable or ambiguous labels SHALL fail the acceptance workflow or be explicitly documented before thresholds are used
+
+### Requirement: Compound-name acceptance preserves tuned baselines
+The system SHALL improve compound-name scenario ranking without regressing current accepted 1C evaluation behavior.
+
+#### Scenario: Current demo-do30 tuned baseline is preserved
+- **WHEN** the live MCP acceptance runner evaluates `examples/demo-do30-1c`
+- **THEN** the tuned run SHALL compare by query ID against the current final tuned baseline with strict Top-1 `21/30`, strict Top-5 `24/30`, and strict Top-10 `24/30`
+- **AND** it SHALL have `0` MCP tool errors
+- **AND** it SHALL have `0` missing ColBERT vector errors
+- **AND** it SHALL report query-level improvements and regressions
+- **AND** it SHALL fail acceptance when any previously strict-hit query regresses unless that regression is explicitly accepted in the verification notes with source evidence
+
+#### Scenario: Holdout quality gate is enforced
+- **WHEN** the compound-name holdout live evaluation runs
+- **THEN** it SHALL record backend label, retrieval mode, ranking profile, index status, raw top results, latency, score output, and comparison output where applicable
+- **AND** it SHALL require `0` MCP tool errors
+- **AND** it SHALL require `0` missing ColBERT vector errors
+- **AND** it SHALL meet holdout strict-positive and negative-control thresholds fixed before the final acceptance run and documented in the change verification
+
+#### Scenario: Universal contour is supporting evidence until targets are inspected
+- **WHEN** compound-name ranking is accepted for this change
+- **THEN** universal matrix results for configured fixtures with source-inspected applicable targets SHALL be recorded as supporting evidence
+- **AND** configured fixture targets still marked `needs-inspection` SHALL NOT be used as hard completion gates for this change
+- **AND** any regression in a previously passing configured fixture/query pair SHALL be listed and reviewed before acceptance
+
+#### Scenario: Existing small demo acceptance still runs
+- **WHEN** compound-name ranking is validated
+- **THEN** the existing `examples/demo-1c` relevance workflow SHALL still run with explicit `rankingProfile=one-c`
+- **AND** it SHALL preserve the current accepted threshold and backend correctness checks
+- **AND** any small-demo regression SHALL be listed before the change is accepted
+
+### Requirement: Large 1C scenario ranking is evaluated separately from the small demo fixture
+The system SHALL provide a committed scenario-level evaluation workflow for the `examples/demo-do30-1c` fixture without merging its quality metrics into the existing small `examples/demo-1c` historical baseline.
+
+#### Scenario: Demo-do30 scenario dataset is collected
+- **WHEN** the large 1C scenario evaluation dataset is loaded
+- **THEN** it SHALL contain 30 source-inspected queries for `examples/demo-do30-1c`
+- **AND** each query SHALL include an identifier, query text, strict expected path prefixes, and optional acceptable alternate path prefixes
+- **AND** the dataset SHALL identify ambiguous or neighboring-context cases without making those alternates production ranking rules
+
+#### Scenario: Demo-do30 live results are collected
+- **WHEN** the large 1C live evaluation runner executes against an active MCP daemon and the indexed `examples/demo-do30-1c` codebase
+- **THEN** it SHALL run every query from the large 1C scenario dataset
+- **AND** it SHALL use `rankingProfile=one-c`
+- **AND** it SHALL save raw per-query top results with relative paths, line ranges, scores, result metadata, backend label, retrieval mode, ranking profile, index status, and latency where available
+- **AND** it SHALL save machine-readable and human-readable reports under `.artifacts/`
+
+#### Scenario: Demo-do30 scoring separates strict and acceptable hits
+- **WHEN** saved large 1C live results are scored
+- **THEN** the report SHALL include strict Hit@1, strict Hit@3, strict Hit@5, strict Hit@10, strict MRR@10, and per-query first strict relevant rank
+- **AND** it SHALL include acceptable Hit@1, acceptable Hit@3, acceptable Hit@5, acceptable Hit@10, acceptable MRR@10, and per-query first acceptable rank when acceptable alternates exist
+- **AND** it SHALL show which queries were strict misses but acceptable neighboring-context hits
+- **AND** acceptable hits SHALL NOT be counted as strict hits
+
+#### Scenario: Demo-do30 baseline is recorded before tuning
+- **WHEN** the current Qdrant default indexed `examples/demo-do30-1c` fixture is evaluated before ranking changes
+- **THEN** the baseline report SHALL record the current strict score of Top-1 `14/30` and Top-5 `20/30` or explicitly document any drift from that observed baseline
+- **AND** later tuned reports SHALL compare against that baseline by query ID
+- **AND** aggregate gains SHALL NOT hide per-query regressions from previously strict-hit queries
+
+### Requirement: Large 1C scenario acceptance gates tuned ranking quality
+The system SHALL require improved strict large-fixture quality while preserving existing small-fixture behavior before the scenario-ranking change is accepted.
+
+#### Scenario: Tuned demo-do30 live run reaches strict quality targets
+- **WHEN** `examples/demo-do30-1c` is indexed through the Qdrant default backend with BGE-M3 full retrieval
+- **AND** the live MCP acceptance runner executes the 30-query large 1C scenario dataset
+- **THEN** the tuned run SHALL have `0` MCP tool errors
+- **AND** it SHALL have `0` missing ColBERT vector errors
+- **AND** it SHALL reach strict Top-1 at least `18/30`
+- **AND** it SHALL reach strict Top-5 at least `24/30`
+- **AND** the acceptance runner SHALL fail when either strict threshold is not reached
+
+#### Scenario: Existing small demo acceptance does not regress
+- **WHEN** tuned ranking is validated for the large 1C scenario change
+- **THEN** the existing `examples/demo-1c` relevance workflow SHALL still be executed
+- **AND** the tuned run SHALL preserve its current accepted Hit@10 threshold and backend correctness conditions
+- **AND** any regression in the existing small demo report SHALL be listed before the change is accepted
+
+#### Scenario: Large scenario labels remain evaluation-only
+- **WHEN** production `search_code` processes a query from any codebase
+- **THEN** it SHALL NOT inspect large-scenario query IDs, strict expected path prefixes, acceptable path prefixes, failure classes, or dataset notes
+- **AND** the large scenario dataset SHALL be used only by evaluation, test, and reporting workflows
+

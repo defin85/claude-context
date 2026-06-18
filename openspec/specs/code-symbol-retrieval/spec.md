@@ -318,3 +318,158 @@ The system SHALL convert the `r05` print-command audit into a testable evaluatio
 - **WHEN** production `search_code` ranks print-related candidates
 - **THEN** it SHALL NOT read query IDs, expected path prefixes, residual labels, or print audit decisions to route, filter, boost, or rank results
 - **AND** print support SHALL remain based on generic command, form, report, module, layout, path, content, semantic, lexical, symbol, provider, and score evidence
+
+### Requirement: Production ranking remains independent from universal evaluation labels
+The production retrieval and ranking pipeline SHALL NOT use universal 1C evaluation metadata as routing, filtering, boosting, or ranking input.
+
+#### Scenario: Universal query metadata is evaluation-only
+- **WHEN** `search_code` processes any query
+- **THEN** it SHALL NOT inspect universal query IDs, domains, intents, target statuses, expected path prefixes, acceptable path prefixes, notes, or negative-control labels
+- **AND** those fields SHALL be loaded only by evaluation, validation, and reporting workflows
+
+#### Scenario: Fixture identity does not select production weights
+- **WHEN** `search_code` ranks results for `rankingProfile=one-c`
+- **THEN** it SHALL NOT choose production ranking weights based on fixture names such as `demo-do30-1c`, `demo-bp30-1c`, `demo-ut-1c`, or `demo-unf-1c`
+- **AND** ranking signals SHALL remain based on query text, path shape, metadata kind, code content, lexical evidence, semantic evidence, symbol/provider evidence, and score diagnostics
+
+#### Scenario: Universal acceptance does not require reindexing
+- **WHEN** universal evaluation support is added
+- **THEN** existing indexed collections SHALL remain searchable without reindexing
+- **AND** any later ranking-only changes validated by the universal matrix SHALL document when reindexing is not required
+
+### Requirement: One-C ranking changes are evaluated for portability
+Future `one-c` ranking changes SHALL be validated against generic 1C intent behavior across multiple configurations when they claim cross-configuration quality improvements.
+
+#### Scenario: Generic 1C intent evidence is required
+- **WHEN** a ranking change boosts a 1C object kind, metadata name, module kind, form kind, command kind, or domain intent
+- **THEN** the change SHALL include evidence that the signal is based on generic query, path, content, semantic, lexical, symbol, provider, or score evidence
+- **AND** it SHALL NOT rely on a single fixture's expected answer paths as production behavior
+
+#### Scenario: Multi-configuration regressions are reviewed
+- **WHEN** a ranking change is evaluated with the universal matrix
+- **THEN** the report SHALL show per-fixture and per-domain regressions
+- **AND** regressions in one fixture SHALL be reviewed explicitly before aggregate gains are accepted
+
+#### Scenario: Negative-control behavior protects broad search
+- **WHEN** a ranking change increases exact-looking metadata-name, object-kind, form-kind, or module-kind support
+- **THEN** universal negative controls SHALL verify that broad conceptual queries still keep better-supported broad or semantic results eligible
+- **AND** exact-symbol or provider-backed results SHALL NOT be suppressed solely to satisfy a universal positive label
+
+### Requirement: One-C ranking matches compound 1C metadata names without labels
+The system SHALL use generic compound-name matching for recognized 1C exported-configuration paths when `rankingProfile=one-c` or equivalent automatic 1C behavior is active.
+
+#### Scenario: Compound form name matches natural-language phrase
+- **WHEN** a query contains natural-language terms that correspond to a compound 1C form name such as `ПечатьПисьма`, `ПросмотрВложенногоПисьма`, or `Подписи`
+- **AND** candidate results include a recognized 1C form whose path kind, area kind, content, semantic score, lexical score, exact-symbol evidence, or provider evidence independently supports that compound-name intent beyond raw form-name token overlap
+- **THEN** the matching form candidate SHALL receive bounded compound-name ranking support
+- **AND** unrelated email, EDI, settings, or viewing forms SHALL NOT outrank it solely through shared generic domain words
+
+#### Scenario: Compound constant name matches registry-address intent
+- **WHEN** a query contains terms such as `адрес`, `реестр`, `МЧД`, `ФНС`, `константа`, or `менеджер`
+- **AND** candidate results include a constant manager module whose compound name and independent evidence from module kind, content, semantic score, lexical score, exact-symbol evidence, or provider evidence support that query
+- **THEN** the matching constant manager SHALL receive bounded ranking support
+- **AND** unrelated address-list, email-list, or exchange-manager candidates SHALL NOT outrank it solely through generic `адрес` or `менеджер` terms
+
+#### Scenario: Compound module name matches counterparty state intent
+- **WHEN** a query asks about saved counterparty state by INN and KPP
+- **AND** candidate results include a counterparty-checking client/server or server-call module whose compound name and independent content, semantic, lexical, exact-symbol, or provider evidence support that intent
+- **THEN** the matching counterparty-checking module SHALL receive bounded ranking support
+- **AND** unrelated counterparty overview, requisites-fill, dossier, or EDI state candidates SHALL NOT outrank it solely through shared `контрагент`, `состояние`, `ИНН`, or `КПП` terms
+
+#### Scenario: Object-module and manager-module terms are distinguished
+- **WHEN** a query names a 1C document and asks for its object module or manager module behavior
+- **THEN** candidates whose module kind matches the requested module kind and whose document name or content supports the requested workflow SHALL receive bounded support
+- **AND** the opposite module kind SHALL NOT outrank the matching module solely because it shares the same document object name
+
+### Requirement: Compound-name ranking resists overfitting
+The system SHALL keep compound-name ranking generic, bounded, and independent from evaluation datasets.
+
+#### Scenario: Production ranking does not inspect evaluation labels
+- **WHEN** production `search_code` ranks any result
+- **THEN** it SHALL NOT inspect scenario IDs, holdout IDs, expected path prefixes, acceptable path prefixes, failure classes, notes, or dataset files
+- **AND** compound-name support SHALL be derived from query text and candidate evidence only
+
+#### Scenario: Fixture identity does not select compound-name weights
+- **WHEN** production `search_code` ranks results with `rankingProfile=one-c`
+- **THEN** it SHALL NOT choose compound-name weights or routing based on fixture names such as `demo-do30-1c`, `demo-bp30-1c`, `demo-ut-1c`, `demo-unf-1c`, or `demo-zup-1c`
+- **AND** compound-name ranking SHALL remain based on query text, 1C path shape, metadata kind, module kind, content, lexical evidence, semantic evidence, exact-symbol evidence, provider evidence, and diagnostics
+
+#### Scenario: Broad conceptual queries keep subsystem results eligible
+- **WHEN** a query contains broad subsystem terms without concrete object, form, constant, command, manager-module, object-module, or compound-name intent
+- **THEN** broad common modules, manager modules, service modules, and subsystem modules SHALL remain eligible for top ranking
+- **AND** compound-name support SHALL NOT penalize them solely because they are broad files
+
+#### Scenario: Negative controls prevent exact-looking false positives
+- **WHEN** a query asks for a generic email, EDI, MCHD, archive, counterparty, state, settings, signature, or document concept
+- **AND** a candidate has an exact-looking compound name but lacks supporting query and candidate evidence for the requested workflow
+- **THEN** that candidate SHALL NOT receive enough compound-name support to outrank better-supported broad or semantic candidates
+- **AND** exact-symbol and provider-backed candidates SHALL remain protected when they are genuinely requested
+
+#### Scenario: Diagnostics expose compound-name evidence
+- **WHEN** compound-name support changes a result score
+- **THEN** result metadata SHALL expose a compact diagnostic score or reason for the compound-name component
+- **AND** diagnostics SHALL NOT include dense, sparse, or ColBERT vector payloads
+
+### Requirement: 1C scenario intent influences ranking without evaluation labels
+The system SHALL use bounded, generic 1C scenario-intent signals to rank concrete workflow files above broad neighboring files when candidate evidence supports the query.
+
+#### Scenario: Concrete object-kind intent can outrank broad subsystem modules
+- **WHEN** a query contains concrete 1C object-kind intent such as form, common form, document, report, constant, command, document journal, manager module, or object module
+- **AND** candidate results include both a broad common module and a file whose path, metadata object name, code text, semantic score, lexical score, exact-symbol evidence, or provider evidence supports that object-kind intent
+- **THEN** the concrete object-kind candidate SHALL receive bounded ranking support
+- **AND** the broad common module SHALL NOT outrank the concrete candidate solely because it contains more generic subsystem terms
+
+#### Scenario: Directional workflow terms influence matching forms and documents
+- **WHEN** a query contains directional workflow terms such as inbound, outgoing, incoming, исходящий, входящий, EDI, ЭДО, email, электронная почта, MCHD, МЧД, FNS, ФНС, SMS, or archive transfer
+- **THEN** candidates whose path or content matches the direction and workflow domain SHALL receive bounded ranking support
+- **AND** candidates from the same broad subsystem but the wrong direction SHALL NOT outrank the matching directional candidate solely through shared subsystem words
+
+#### Scenario: Generic term dominance is dampened when specific evidence exists
+- **WHEN** a query contains generic 1C terms such as обработка, состояние, проверка, подпись, настройка, форма, документ, or письмо together with more specific domain evidence
+- **THEN** ranking SHALL prevent the generic terms from dominating more specific matching candidates by themselves
+- **AND** exact-symbol, provider-backed, or strongly semantic generic-term matches SHALL remain eligible when they are the best supported candidate
+
+#### Scenario: Broad queries keep broad subsystem results eligible
+- **WHEN** a query does not express a concrete object-kind or directional workflow intent
+- **THEN** broad common modules, manager modules, service modules, and subsystem modules SHALL remain eligible for top ranking
+- **AND** the scenario-intent ranking layer SHALL NOT penalize them solely because they are broad files
+
+### Requirement: Observed large 1C failure classes are covered by generic ranking behavior
+The system SHALL include generic ranking behavior and tests for the failure classes found in the first `demo-do30-1c` quality probe.
+
+#### Scenario: FNS response handling can surface the FNS module
+- **WHEN** a query mentions FNS response handling with terms such as `NdsResponse`, `ФНС`, and counterparty state
+- **THEN** the FNS counterparty-checking module SHALL rank above unrelated queue-processing or generic object-processing modules when its candidate evidence is comparable
+
+#### Scenario: Saved counterparty state can surface server-call counterparty modules
+- **WHEN** a query asks where the current saved counterparty state by INN and KPP is stored or loaded
+- **THEN** counterparty-checking server-call modules SHALL rank above unrelated counterparty exchange modules when their candidate evidence is comparable
+
+#### Scenario: MCHD constants can surface constant manager modules
+- **WHEN** a query asks about a specific MCHD constant such as registry address or signature type
+- **THEN** the constant manager module or its exact settings form SHALL rank above generic signature-check result forms when their candidate evidence is comparable
+
+#### Scenario: Inbound and outbound EDI forms can surface viewing forms
+- **WHEN** a query asks about manual signature or MCHD checks in inbound or outbound EDI documents
+- **THEN** the matching inbound or outbound electronic-document viewing form SHALL remain eligible for top-5 ranking
+- **AND** broad MCHD modules SHALL NOT suppress it solely through shared MCHD terminology
+
+#### Scenario: Send assistant form intent can surface the form module
+- **WHEN** a query asks about the send assistant UI, its variant tree, or sendability checks
+- **THEN** `CommonForms` send-assistant form modules SHALL rank above common helper modules when the query expresses form or UI intent
+
+#### Scenario: Email print and save workflows can surface journal forms
+- **WHEN** a query asks about printing or saving email from the email journal
+- **THEN** the relevant email journal form SHALL remain eligible for top-5 ranking
+- **AND** account setup forms SHALL NOT outrank it solely through shared email terms
+
+#### Scenario: SMS document workflow can distinguish service and document contexts
+- **WHEN** a query asks about SMS sending implementation through a provider service
+- **THEN** SMS service modules SHALL be allowed as acceptable top results
+- **AND** when a query asks about SMS notification document status, limits, or document lifecycle, the SMS notification document manager or form SHALL receive bounded ranking support
+
+#### Scenario: Archive-transfer workflow can distinguish manager and object contexts
+- **WHEN** a query asks about archive-transfer print registers, signature checks, or 1C Archive integration
+- **THEN** the archive-transfer manager or object module matching that action SHALL receive bounded ranking support
+- **AND** generic certificate or storage-object forms SHALL NOT outrank it solely through shared archive or signature words
+
