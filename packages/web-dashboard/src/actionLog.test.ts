@@ -29,6 +29,23 @@ test('action recorder stores success duration and trims oldest entries', async (
     assert.equal(entries[1].targetPath, '/repo/b');
 });
 
+test('action recorder can store a caught sanitized failure without running an operation', () => {
+    const entries: ActionLogEntry[] = [];
+    const recorder = createActionRecorder({
+        entries,
+        now: () => 5000,
+    });
+
+    recorder.recordFailure('refresh', new Error('token=raw-secret failed'), { targetPath: '/repo/demo' });
+
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].action, 'refresh');
+    assert.equal(entries[0].status, 'failure');
+    assert.equal(entries[0].targetPath, '/repo/demo');
+    assert.equal(entries[0].durationMs, 0);
+    assert.equal(entries[0].error, 'token=[redacted] failed');
+});
+
 test('redaction removes secret-looking fields from strings and diagnostics', () => {
     const text = 'OPENAI_API_KEY=sk-live-abc Authorization: Bearer token-123 milvusToken: secret-value';
     const redacted = redactSecrets(text);

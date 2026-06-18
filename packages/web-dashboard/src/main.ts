@@ -201,6 +201,9 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
         }
     } catch (error) {
         state.error = sanitizeError(error);
+        if (!rethrowErrors) {
+            actionRecorder.recordFailure('refresh', error, { targetPath: state.selectedPath || undefined });
+        }
         render();
         if (rethrowErrors) {
             throw error;
@@ -219,7 +222,8 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
 async function loadSelectedStatus(path: string): Promise<CodebaseStatus | undefined> {
     try {
         return await api<CodebaseStatus>(`/codebases/status?path=${encodeURIComponent(path)}`);
-    } catch {
+    } catch (error) {
+        actionRecorder.recordFailure('refresh', error, { targetPath: path });
         return undefined;
     }
 }

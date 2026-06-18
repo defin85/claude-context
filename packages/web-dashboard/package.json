@@ -9,7 +9,7 @@
         "preview": "vite preview --host 127.0.0.1",
         "typecheck": "tsc --noEmit",
         "lint": "tsc --noEmit",
-        "test": "tsc --noEmit",
+        "test": "tsx src/actionLog.test.ts && tsx src/operationsView.test.ts && tsc --noEmit",
         "clean": "rimraf dist"
     },
     "devDependencies": {

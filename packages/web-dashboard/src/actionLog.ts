@@ -13,6 +13,7 @@ export interface ActionLogEntry {
 
 export interface ActionRecorder {
     record<T>(action: DashboardAction, run: () => Promise<T>, options?: { targetPath?: string }): Promise<T>;
+    recordFailure(action: DashboardAction, error: unknown, options?: { targetPath?: string }): void;
 }
 
 export interface DiagnosticsPayload {
@@ -65,6 +66,18 @@ export function createActionRecorder(options: {
                 }, maxEntries);
                 throw error;
             }
+        },
+        recordFailure(action: DashboardAction, error: unknown, recordOptions: { targetPath?: string } = {}): void {
+            const timestamp = now();
+            appendEntry(options.entries, {
+                id: createEntryId(action, timestamp),
+                timestamp: new Date(timestamp).toISOString(),
+                action,
+                status: 'failure',
+                targetPath: recordOptions.targetPath,
+                durationMs: 0,
+                error: sanitizeError(error),
+            }, maxEntries);
         },
     };
 }
