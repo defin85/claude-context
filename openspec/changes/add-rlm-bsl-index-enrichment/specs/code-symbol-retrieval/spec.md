@@ -12,6 +12,7 @@ The system SHALL use stored RLM BSL enrichment metadata as a code-symbol ranking
 - **WHEN** the current indexed collection contains compatible RLM BSL enrichment metadata
 - **THEN** ranking SHALL use the stored enrichment fields without requiring a search-time `rlm-tools-bsl` subprocess query
 - **AND** the search-time RLM provider SHALL remain available only as fallback behavior for unenriched indexes or explicitly configured experimental runs
+- **AND** the default search path SHALL decide whether to call the search-time provider from collection-level enrichment compatibility metadata before dispatching provider queries
 
 #### Scenario: Enrichment metadata does not replace semantic retrieval
 - **WHEN** stored RLM BSL enrichment metadata is present

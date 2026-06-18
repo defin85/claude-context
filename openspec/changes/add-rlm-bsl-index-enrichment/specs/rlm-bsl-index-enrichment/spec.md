@@ -74,8 +74,13 @@ The system SHALL provide explicit configuration for RLM BSL enrichment mode.
 
 #### Scenario: Required mode fails indexing without valid RLM data
 - **WHEN** RLM enrichment is configured as required and the provider is missing, stale, busy, unsupported, invalid, or returns an error
-- **THEN** indexing SHALL fail before inserting an index that claims to be RLM-enriched
+- **THEN** indexing SHALL fail before dropping an existing collection, creating a replacement collection, or inserting an index that claims to be RLM-enriched
 - **AND** the failure message SHALL identify the provider status and codebase path
+
+#### Scenario: Provider-specific statuses are normalized
+- **WHEN** the RLM snapshot/export transport returns a provider-specific status such as `missing_index`
+- **THEN** `claude-context` SHALL map it to the stable enrichment status vocabulary used by indexing and required-mode branching
+- **AND** it SHALL preserve the raw provider status in diagnostics
 
 #### Scenario: Disabled mode preserves current indexing behavior
 - **WHEN** RLM enrichment is disabled or no enrichment transport is configured
@@ -95,10 +100,28 @@ The system SHALL record collection-level metadata that identifies whether an ind
 - **WHEN** indexing completes with valid RLM BSL enrichment
 - **THEN** the collection metadata SHALL include enrichment provider, enrichment schema version, provider schema version when available, source root, provider status, and source build or fingerprint diagnostics when available
 
+#### Scenario: Search can read collection enrichment compatibility
+- **WHEN** searching an existing collection
+- **THEN** the vector backend SHALL expose enough collection-level compatibility metadata for search to determine whether stored RLM BSL enrichment is expected
+- **AND** search SHALL NOT need to infer collection enrichment solely from the first returned chunk
+
 #### Scenario: Unenriched collection remains searchable
 - **WHEN** a collection was built before RLM enrichment existed or was built with enrichment disabled or unavailable in optional mode
 - **THEN** search SHALL remain available
 - **AND** the collection metadata or diagnostics SHALL allow callers to distinguish the missing enrichment from an enriched index
+
+### Requirement: Incremental reindexing preserves enrichment consistency
+The system SHALL keep full indexing, incremental reindexing, and background synchronization consistent with the configured RLM BSL enrichment mode.
+
+#### Scenario: Required incremental update fails before mutating chunks
+- **WHEN** an enriched collection is updated through incremental reindexing with enrichment mode `required`
+- **AND** a valid compatible RLM snapshot is unavailable
+- **THEN** the update SHALL fail before deleting old chunks or inserting replacement chunks
+
+#### Scenario: Optional incremental update reports mixed or unavailable enrichment
+- **WHEN** optional enrichment is unavailable during incremental reindexing of a previously enriched collection
+- **THEN** the update MAY continue without RLM-derived metadata for changed chunks
+- **AND** collection diagnostics SHALL report that the collection is not uniformly enriched
 
 ### Requirement: Enriched indexing is validated on 1C fixtures
 The system SHALL include tests and evaluation evidence that RLM-enriched indexing improves deterministic 1C navigation without relying on evaluation labels in production indexing.

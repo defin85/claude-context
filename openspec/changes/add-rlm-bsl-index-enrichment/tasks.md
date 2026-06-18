@@ -8,6 +8,7 @@
 - [ ] 1.6 Add TypeScript types for the normalized RLM BSL enrichment snapshot, file entries, object metadata, symbols, synonyms, capabilities, provider status, and diagnostics.
 - [ ] 1.7 Add schema validation and normalization helpers that reject invalid JSON, unknown required fields, unbounded arrays, and unsupported provider statuses with clear diagnostics.
 - [ ] 1.8 Add path normalization helpers for equal-root and nested-root RLM source roots, including Cyrillic paths and paths containing spaces.
+- [ ] 1.9 Normalize provider-specific RLM statuses such as `missing_index` into the stable `claude-context` enrichment status vocabulary while preserving the raw status in diagnostics.
 
 ## 2. Core Enrichment Pipeline
 
@@ -19,6 +20,8 @@
 - [ ] 2.6 Preserve existing indexing behavior when enrichment is disabled or unavailable in optional mode.
 - [ ] 2.7 Fail indexing before vector insertion when enrichment is required and the provider is missing, stale, busy, unsupported, invalid, or errors.
 - [ ] 2.8 Ensure no-RLM mode works when `rlm-tools-bsl` is not installed, no RLM command is configured, no RLM project is registered, or no RLM index exists.
+- [ ] 2.9 In required mode, validate the RLM snapshot before dropping existing collections or creating replacement collections during forced reindex.
+- [ ] 2.10 Extend incremental reindex/background sync so changed chunks use a compatible enrichment snapshot, or fail before chunk deletion/insertion in required mode.
 
 ## 3. Collection Metadata and MCP Status
 
@@ -27,6 +30,7 @@
 - [ ] 3.3 Expose enrichment status in indexing status, daemon diagnostics, or MCP structured output without leaking unrelated absolute paths or secrets.
 - [ ] 3.4 Add environment/config documentation for enrichment command, args JSON, mode, limits, timeout, and source-root translation.
 - [ ] 3.5 Document the supported no-RLM mode and the quality/diagnostic difference between disabled, optional unavailable, and required enrichment.
+- [ ] 3.6 Add collection metadata read/write coverage for every vector backend used by search gating; do not rely on per-result chunk metadata to decide whether to call the search-time RLM provider.
 
 ## 4. Search Ranking Integration
 
@@ -47,6 +51,8 @@
 - [ ] 5.7 Add vector database payload tests proving nested `metadata.bsl` fields round-trip through Qdrant and existing test adapters.
 - [ ] 5.8 Add search ranking tests proving stored RLM enrichment boosts exact BSL symbols and object/module/form queries without invoking the search-time provider.
 - [ ] 5.9 Add backward-compatibility tests proving old indexes without enrichment retain current semantic plus lexical behavior.
+- [ ] 5.10 Add required-mode force-reindex tests proving an existing collection is not dropped when the RLM snapshot is unavailable or invalid.
+- [ ] 5.11 Add incremental reindex tests for enriched collections in required and optional modes.
 
 ## 6. Evaluation and Live Validation
 

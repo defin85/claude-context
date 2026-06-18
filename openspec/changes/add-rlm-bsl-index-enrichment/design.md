@@ -42,6 +42,8 @@ The interface should support:
 - per-chunk enrichment by normalized `relativePath` plus `startLine`/`endLine`;
 - compact job diagnostics for indexing status and collection metadata.
 
+In `required` mode, availability and snapshot validation MUST happen before dropping or creating vector collections. This prevents a forced reindex from deleting a previously usable collection and then failing because RLM enrichment is unavailable.
+
 Rationale:
 - Enrichment belongs near chunk preparation because that is where both codebase-relative paths and chunk line ranges are available.
 - A generic interface avoids hard-coding RLM into the core indexing loop and leaves room for future language-neutral enrichers.
@@ -76,6 +78,8 @@ The RLM export response SHOULD include:
 - source freshness fields such as build time, git commit, dirty-state/fingerprint, file counts, or RLM status values when available;
 - `files[]`, each with `relativePath`, object name/kind, module kind/name, bounded synonyms, and `symbols[]`;
 - `symbols[]` with name, declaration kind, export flag, parameters when available, and start/end line.
+
+`claude-context` SHOULD normalize RLM provider status values into its own stable status vocabulary while preserving the raw RLM status in diagnostics. For example, an RLM `missing_index` response should map to the `missing` enrichment status rather than leaking a provider-specific status into core required-mode branching.
 
 Rationale:
 - RLM owns its SQLite schema and can evolve it without forcing `claude-context` schema knowledge.
@@ -133,6 +137,8 @@ The indexer SHOULD record collection-level enrichment metadata in the existing c
 - `bslEnrichmentSourceBuiltAt`;
 - `bslEnrichmentSnapshotHash` or equivalent fingerprint when available.
 
+Search-time code MUST be able to read the stored compatibility metadata before deciding whether to call a search-time RLM provider. If a vector backend cannot read mutable collection metadata reliably, the implementation SHOULD store the enrichment compatibility fields in the collection description created before insertion and add adapter tests for that backend.
+
 Rationale:
 - Existing collections remain searchable, but search needs to know whether stored RLM fields are expected.
 - Evaluation reports can compare enriched and unenriched runs without guessing from individual result metadata.
@@ -141,6 +147,8 @@ Rationale:
 ### Decision: Use stored enrichment before search-time RLM candidates
 
 For enriched indexes, ranking SHOULD use stored `metadata.bsl` fields before invoking or considering the search-time `rlm-tools-bsl` provider. The search-time provider remains a fallback for indexes without enrichment metadata or for explicitly configured experimental runs.
+
+The provider decision SHOULD be made at collection scope, not per individual result. A compatible enriched collection should skip the default search-time RLM provider unless an explicit experimental override is configured; otherwise searches can pay subprocess latency and mix two structural truth sources even when stored enrichment is present.
 
 Rationale:
 - Stored metadata is local to the vector payload, has no subprocess latency, and is tied to the exact indexed chunk.
@@ -165,6 +173,8 @@ Rationale:
 - indexing proceeds with existing splitters, embeddings, vector writes, and 1C indexing scope profiles;
 - search uses BGE-M3 semantic retrieval, stored `relativePath` and `content`, no-reindex lexical fallback, and existing path-derived 1C ranking signals;
 - status and diagnostics report enrichment as disabled or unavailable without treating that as an error.
+
+Incremental reindexing and background synchronization must preserve the same contract as full indexing. For enriched collections, changed chunks SHOULD be enriched from a fresh compatible snapshot for that incremental run; in `required` mode the update MUST fail before deleting or inserting changed chunks if the enrichment snapshot is unavailable or invalid. Optional mode may continue without enrichment only if the collection-level status is updated so diagnostics do not present the collection as fully enriched.
 
 Rationale:
 - `claude-context` is a general code search tool, not a hard dependency wrapper around RLM.
