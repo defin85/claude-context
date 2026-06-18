@@ -4,6 +4,8 @@
 
 For 1C/BSL codebases, `rlm-tools-bsl` already owns BSL-specific structure: exported configuration path parsing, method declarations, line ranges, object names, object synonyms, file paths, metadata references, and index status. The existing `RlmToolsBslSubprocessProvider` consumes RLM at search time, but the local service is not currently configured to use it, and even when configured it adds subprocess latency and runtime coupling to every search.
 
+The local `rlm-tools-bsl` worktree currently has a query-only JSON provider shape for `provider query`. That API is useful for the existing search-time adapter, but it is not enough for index-time enrichment because enrichment needs a whole-codebase snapshot grouped by file and line ranges. This change therefore includes an explicit external dependency: add or verify a query-only RLM snapshot/export API before wiring `claude-context` enrichment to live RLM data.
+
 Index-time enrichment moves the useful bounded subset of RLM structure into the `claude-context` index itself. Search can then use stored object/module/symbol metadata without invoking RLM for every query, while direct RLM tools remain available for deep BSL exploration.
 
 ## Goals / Non-Goals
@@ -11,14 +13,17 @@ Index-time enrichment moves the useful bounded subset of RLM structure into the 
 **Goals:**
 - Add a generic index enrichment extension point that can enrich chunks before vector insertion.
 - Add `rlm-tools-bsl` as the first enrichment provider for 1C/BSL codebases.
+- Add or verify a whole-codebase RLM snapshot/export JSON API suitable for index-time enrichment.
 - Load a structured RLM snapshot once per indexing job, verify its status and source root, and map it to `claude-context` relative paths.
 - Store a compact, bounded BSL metadata envelope on each matching chunk.
 - Record collection-level enrichment status so searches, diagnostics, and evaluation reports can distinguish enriched and unenriched indexes.
 - Use stored enrichment metadata as the primary 1C structural ranking signal when present.
 - Keep existing search-time RLM provider behavior available as a fallback for old indexes or exploratory configurations.
+- Keep `claude-context` fully usable without `rlm-tools-bsl`.
 
 **Non-Goals:**
 - Do not make `search_code` build, update, or drop RLM indexes.
+- Do not use the per-query RLM provider API as a substitute for a whole-codebase enrichment snapshot.
 - Do not import the full RLM database or duplicate RLM parsing/indexing logic in TypeScript.
 - Do not store unbounded call graphs, full object rows, or full symbol lists in every vector payload.
 - Do not change BGE-M3 dense-only or BGE-M3 full embedding semantics.
@@ -48,10 +53,12 @@ Alternative considered: call RLM from the splitter. Rejected because splitters s
 The RLM integration SHOULD load one bounded structured snapshot per indexing job. The preferred transport is a JSON command or endpoint that exports file/object/symbol metadata for the codebase:
 
 ```bash
-rlm-bsl-index provider export --path {codebasePath} --json
+rlm-bsl-index provider export {codebasePath} --json
 ```
 
 The implementation may use another machine-readable transport if it returns the same normalized schema. The snapshot MUST be query-only from the `claude-context` perspective and MUST NOT trigger RLM build, update, or drop operations.
+
+The existing per-query transport, for example `rlm-bsl-index provider query <path> <query> --json`, SHALL NOT be treated as sufficient for index enrichment. It can prove provider JSON mechanics and can remain a search-time fallback, but it does not expose a complete file-to-symbol map.
 
 Rationale:
 - One snapshot avoids subprocess overhead per chunk and makes indexing behavior deterministic.
@@ -59,6 +66,23 @@ Rationale:
 - Per-query RLM lookup remains useful as fallback, but it is not the target indexing architecture.
 
 Alternative considered: keep only the existing search-time provider. Rejected as the primary path because it does not improve index payloads, adds search latency, and cannot be used by vector database filters or payload-aware ranking without runtime RLM availability.
+
+### Decision: Add the snapshot/export API to RLM rather than reading RLM SQLite directly
+
+If the installed `rlm-tools-bsl` does not already expose a whole-codebase JSON export, the first implementation step SHOULD add one to `rlm-tools-bsl`. `claude-context` should consume a stable JSON contract instead of opening `bsl_index.db` directly.
+
+The RLM export response SHOULD include:
+- `schemaVersion`, `provider`, `status`, `sourceRoot`, `capabilities`, and diagnostics;
+- source freshness fields such as build time, git commit, dirty-state/fingerprint, file counts, or RLM status values when available;
+- `files[]`, each with `relativePath`, object name/kind, module kind/name, bounded synonyms, and `symbols[]`;
+- `symbols[]` with name, declaration kind, export flag, parameters when available, and start/end line.
+
+Rationale:
+- RLM owns its SQLite schema and can evolve it without forcing `claude-context` schema knowledge.
+- A JSON export can reuse existing RLM status checks, path resolution, and query-only guardrails.
+- The same export contract can later be served by CLI, MCP, or daemon transport.
+
+Alternative considered: read `bsl_index.db` directly from `claude-context`. Rejected for v1 because it couples TypeScript indexing to RLM internal table names and migration behavior.
 
 ### Decision: Store a compact BSL enrichment envelope
 
@@ -125,7 +149,7 @@ Rationale:
 ### Decision: Enrichment mode is explicit
 
 Configuration SHOULD support:
-- `off`: never use RLM enrichment;
+- `off`: never use RLM enrichment and do not require `rlm-tools-bsl` to be installed;
 - `optional`: attempt enrichment, record unavailable/stale/error status, and continue indexing;
 - `required`: fail indexing when RLM enrichment is missing, stale, unsupported, or invalid.
 
@@ -135,6 +159,18 @@ Rationale:
 - Local development and generic repositories should not fail because RLM is absent.
 - Acceptance runs for large 1C matrices need a fail-closed option to prove enriched indexing was actually used.
 
+### Decision: No-RLM mode remains a first-class path
+
+`claude-context` SHALL keep a supported mode where no RLM command, project, index, or Python package is available. In this mode:
+- indexing proceeds with existing splitters, embeddings, vector writes, and 1C indexing scope profiles;
+- search uses BGE-M3 semantic retrieval, stored `relativePath` and `content`, no-reindex lexical fallback, and existing path-derived 1C ranking signals;
+- status and diagnostics report enrichment as disabled or unavailable without treating that as an error.
+
+Rationale:
+- `claude-context` is a general code search tool, not a hard dependency wrapper around RLM.
+- CI and non-1C users must not need local 1C/RLM tooling.
+- This provides a stable fallback if RLM snapshot export is unavailable or too stale for a run.
+
 ## Risks / Trade-offs
 
 - [Risk] RLM snapshot can be stale relative to the source tree. -> Mitigation: require provider status/fingerprint diagnostics, record source build metadata, and support `required` mode for acceptance.
@@ -143,22 +179,26 @@ Rationale:
 - [Risk] Ranking can over-trust wrong structural metadata. -> Mitigation: use enrichment as bounded ranking evidence, preserve semantic retrieval, and expose diagnostics.
 - [Risk] Direct RLM search may look better than integrated search for exact structural queries. -> Mitigation: keep direct RLM tools for inspection, while `search_code` optimizes mixed semantic plus structural navigation.
 - [Risk] Enrichment schema changes can break old indexes. -> Mitigation: version `bsl.enrichmentSchemaVersion` and collection-level compatibility metadata; old indexes keep fallback ranking.
+- [Risk] Implementing RLM export and `claude-context` enrichment in one pass can blur ownership boundaries. -> Mitigation: keep RLM export as a documented JSON contract and test `claude-context` against fixtures before requiring a live RLM runtime.
+- [Risk] No-RLM mode could silently be lower quality while appearing equivalent. -> Mitigation: diagnostics and evaluation reports must state enrichment status explicitly.
 
 ## Migration Plan
 
-1. Add typed enrichment schema and pure path/line mapping helpers with fixture tests.
-2. Add an optional RLM snapshot loader behind environment/configuration flags.
-3. Enrich chunk metadata before `VectorDocument` creation and store collection compatibility metadata.
-4. Update ranking to read stored `metadata.bsl` fields and report enrichment diagnostics.
-5. Add MCP/index status reporting for enrichment mode and outcome.
-6. Validate on small fixtures first, then on `examples/demo-1c` and `examples/demo-bp30-1c`.
-7. Keep rollout optional until live 1C evaluation proves no regression versus current Qdrant BGE-M3 full behavior.
+1. Add or verify the RLM `provider export` snapshot API and its tests in `rlm-tools-bsl`.
+2. Add typed enrichment schema and pure path/line mapping helpers in `claude-context` with fixture tests.
+3. Add an optional RLM snapshot loader behind environment/configuration flags.
+4. Enrich chunk metadata before `VectorDocument` creation and store collection compatibility metadata.
+5. Update ranking to read stored `metadata.bsl` fields and report enrichment diagnostics.
+6. Add MCP/index status reporting for enrichment mode and outcome.
+7. Validate no-RLM mode, optional mode, and required mode on small fixtures.
+8. Validate live RLM enrichment on `examples/demo-1c` and `examples/demo-bp30-1c`.
+9. Keep rollout optional until live 1C evaluation proves no regression versus current Qdrant BGE-M3 full behavior.
 
 Rollback is disabling enrichment mode and reindexing without the RLM metadata. Existing enriched collections remain searchable because the added metadata is optional payload data.
 
 ## Open Questions
 
-- Does the installed `rlm-tools-bsl` already expose a full snapshot/export JSON command, or do we need to add it to the RLM project first?
+- What exact `provider export` command shape should RLM expose: positional `provider export <path> --json`, named `--path`, or both for consistency with `provider query`?
 - Which freshness proof should be authoritative: git commit, file hashes, RLM build timestamp plus file counts, or a provider-level source fingerprint?
 - Should stored `symbols` include only declarations overlapping the chunk, or also the nearest enclosing declaration for chunks inside long methods?
 - Which RLM metadata categories beyond methods/objects/files should be included in v1: object synonyms, subsystem membership, form names, commands, or metadata references?

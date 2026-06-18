@@ -1,5 +1,23 @@
 ## ADDED Requirements
 
+### Requirement: RLM exposes a whole-codebase snapshot export for enrichment
+The `rlm-tools-bsl` integration SHALL provide a machine-readable whole-codebase snapshot/export API before live RLM data is used for `claude-context` index enrichment.
+
+#### Scenario: Snapshot export returns file-level structure
+- **WHEN** `claude-context` invokes the configured RLM snapshot/export transport for a BSL/1C codebase
+- **THEN** the response SHALL include provider identity, schema version, provider status, source root, capabilities, diagnostics, and file entries grouped by relative path
+- **AND** each file entry SHALL include available object metadata, module metadata, bounded synonyms, and method/procedure symbols with line ranges when present
+
+#### Scenario: Per-query provider lookup is not accepted as enrichment snapshot
+- **WHEN** only a per-query RLM provider lookup such as `provider query <path> <query> --json` is available
+- **THEN** `claude-context` SHALL NOT treat that transport as sufficient for index-time enrichment
+- **AND** it SHALL either run without RLM enrichment, fail in required mode, or use fixture data in tests
+
+#### Scenario: Snapshot export remains query-only
+- **WHEN** RLM snapshot/export is requested for enrichment
+- **THEN** the RLM transport SHALL NOT build, update, drop, migrate, or otherwise mutate RLM indexes
+- **AND** missing, stale, busy, unsupported, and error states SHALL be represented as structured status or diagnostics
+
 ### Requirement: Indexing loads RLM BSL enrichment snapshots
 The system SHALL support an index-time RLM BSL enrichment provider that loads a structured `rlm-tools-bsl` snapshot for a codebase before vector documents are inserted.
 
@@ -63,6 +81,12 @@ The system SHALL provide explicit configuration for RLM BSL enrichment mode.
 - **WHEN** RLM enrichment is disabled or no enrichment transport is configured
 - **THEN** indexing SHALL behave as it did before this change
 - **AND** existing non-BSL codebases SHALL NOT require `rlm-tools-bsl`
+
+#### Scenario: No-RLM mode is supported explicitly
+- **WHEN** `rlm-tools-bsl` is not installed, no RLM project is registered, or no RLM index exists
+- **AND** enrichment mode is disabled or optional
+- **THEN** `claude-context` SHALL index the codebase using existing traversal, splitting, embedding, vector insertion, and 1C scope-profile behavior
+- **AND** the absence of RLM SHALL be reported as disabled or unavailable enrichment rather than as an indexing failure
 
 ### Requirement: Collection metadata records enrichment compatibility
 The system SHALL record collection-level metadata that identifies whether an index contains RLM BSL enrichment.

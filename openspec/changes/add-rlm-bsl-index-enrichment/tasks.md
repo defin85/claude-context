@@ -1,10 +1,13 @@
 ## 1. RLM Snapshot Contract
 
 - [ ] 1.1 Audit the installed `rlm-tools-bsl` CLI/MCP capabilities and record whether a machine-readable whole-codebase snapshot/export transport already exists.
-- [ ] 1.2 If no suitable transport exists, define the required external RLM JSON export shape and document the dependency on adding it to `rlm-tools-bsl`.
-- [ ] 1.3 Add TypeScript types for the normalized RLM BSL enrichment snapshot, file entries, object metadata, symbols, synonyms, capabilities, provider status, and diagnostics.
-- [ ] 1.4 Add schema validation and normalization helpers that reject invalid JSON, unknown required fields, unbounded arrays, and unsupported provider statuses with clear diagnostics.
-- [ ] 1.5 Add path normalization helpers for equal-root and nested-root RLM source roots, including Cyrillic paths and paths containing spaces.
+- [ ] 1.2 Confirm that the existing per-query `provider query` API is not used as the index enrichment transport except as a search-time fallback.
+- [ ] 1.3 Add or update `rlm-tools-bsl` with a query-only `provider export` snapshot API that returns provider metadata, source status, file entries, object/module metadata, bounded synonyms, and symbols grouped by relative path.
+- [ ] 1.4 Add RLM-side tests proving `provider export` emits JSON-only stdout, does not mutate indexes, reports missing/stale/busy/error statuses, and handles Cyrillic paths with spaces.
+- [ ] 1.5 Document the RLM `provider export` command, response schema, status values, limits, freshness fields, and non-mutation guarantees.
+- [ ] 1.6 Add TypeScript types for the normalized RLM BSL enrichment snapshot, file entries, object metadata, symbols, synonyms, capabilities, provider status, and diagnostics.
+- [ ] 1.7 Add schema validation and normalization helpers that reject invalid JSON, unknown required fields, unbounded arrays, and unsupported provider statuses with clear diagnostics.
+- [ ] 1.8 Add path normalization helpers for equal-root and nested-root RLM source roots, including Cyrillic paths and paths containing spaces.
 
 ## 2. Core Enrichment Pipeline
 
@@ -15,6 +18,7 @@
 - [ ] 2.5 Bound per-chunk enrichment payloads by limiting symbols, synonyms, string lengths, and unsupported large RLM structures.
 - [ ] 2.6 Preserve existing indexing behavior when enrichment is disabled or unavailable in optional mode.
 - [ ] 2.7 Fail indexing before vector insertion when enrichment is required and the provider is missing, stale, busy, unsupported, invalid, or errors.
+- [ ] 2.8 Ensure no-RLM mode works when `rlm-tools-bsl` is not installed, no RLM command is configured, no RLM project is registered, or no RLM index exists.
 
 ## 3. Collection Metadata and MCP Status
 
@@ -22,6 +26,7 @@
 - [ ] 3.2 Ensure existing Qdrant, Milvus, Milvus REST, and LanceDB adapters preserve and return enriched chunk metadata without dropping nested `metadata.bsl` fields.
 - [ ] 3.3 Expose enrichment status in indexing status, daemon diagnostics, or MCP structured output without leaking unrelated absolute paths or secrets.
 - [ ] 3.4 Add environment/config documentation for enrichment command, args JSON, mode, limits, timeout, and source-root translation.
+- [ ] 3.5 Document the supported no-RLM mode and the quality/diagnostic difference between disabled, optional unavailable, and required enrichment.
 
 ## 4. Search Ranking Integration
 
@@ -38,9 +43,10 @@
 - [ ] 5.3 Add chunk enrichment tests proving only overlapping symbols attach to the matching chunk and non-overlapping file symbols do not become declaration matches.
 - [ ] 5.4 Add optional-mode tests proving indexing continues without enrichment and records diagnostics.
 - [ ] 5.5 Add required-mode tests proving indexing fails before vector insertion when enrichment is unavailable or invalid.
-- [ ] 5.6 Add vector database payload tests proving nested `metadata.bsl` fields round-trip through Qdrant and existing test adapters.
-- [ ] 5.7 Add search ranking tests proving stored RLM enrichment boosts exact BSL symbols and object/module/form queries without invoking the search-time provider.
-- [ ] 5.8 Add backward-compatibility tests proving old indexes without enrichment retain current semantic plus lexical behavior.
+- [ ] 5.6 Add no-RLM tests proving indexing and search work without an installed or configured `rlm-tools-bsl`.
+- [ ] 5.7 Add vector database payload tests proving nested `metadata.bsl` fields round-trip through Qdrant and existing test adapters.
+- [ ] 5.8 Add search ranking tests proving stored RLM enrichment boosts exact BSL symbols and object/module/form queries without invoking the search-time provider.
+- [ ] 5.9 Add backward-compatibility tests proving old indexes without enrichment retain current semantic plus lexical behavior.
 
 ## 6. Evaluation and Live Validation
 
