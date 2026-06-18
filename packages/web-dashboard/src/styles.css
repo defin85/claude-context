@@ -293,6 +293,11 @@ h3 {
     white-space: nowrap;
 }
 
+.pill.attention {
+    border-color: #d1a53b;
+    color: #8d6421;
+}
+
 .operations-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -474,6 +479,102 @@ h3 {
     font-size: 20px;
 }
 
+.worker-telemetry {
+    display: grid;
+    gap: 12px;
+}
+
+.worker-summary,
+.vram-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.worker-panels {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 12px;
+}
+
+.telemetry-metric {
+    background: #ffffff;
+    border: 1px solid #d7ded9;
+    border-radius: 6px;
+    min-height: 64px;
+    padding: 9px 10px;
+}
+
+.telemetry-metric span,
+.telemetry-metric strong {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.telemetry-metric span {
+    color: #66756f;
+    font-size: 12px;
+}
+
+.telemetry-metric strong {
+    margin-top: 5px;
+    font-size: 16px;
+}
+
+.endpoint-list {
+    display: grid;
+    gap: 8px;
+}
+
+.endpoint-row {
+    border: 1px solid #e1e7e3;
+    border-left: 4px solid #176b5f;
+    border-radius: 6px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    min-height: 70px;
+    padding: 10px;
+}
+
+.endpoint-row.rejected {
+    border-left-color: #b65d4b;
+}
+
+.endpoint-row div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.endpoint-row strong,
+.endpoint-row span,
+.endpoint-row small {
+    overflow-wrap: anywhere;
+}
+
+.endpoint-row span,
+.endpoint-row small {
+    color: #66756f;
+}
+
+.worker-alerts {
+    background: #fffaf0;
+    border: 1px solid #d9b45d;
+    border-left: 4px solid #d1a53b;
+    border-radius: 6px;
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+}
+
+.worker-alerts p {
+    color: #654817;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
 .notice {
     border: 1px solid #d7ded9;
     border-left: 4px solid #176b5f;
@@ -611,7 +712,10 @@ pre {
     }
 
     .operations-grid,
+    .worker-panels,
     .counter-grid,
+    .worker-summary,
+    .vram-grid,
     .search-options,
     .result-details dl {
         grid-template-columns: 1fr;

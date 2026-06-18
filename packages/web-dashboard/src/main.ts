@@ -14,6 +14,11 @@ import {
     RankingProfile,
     RetrievalContext,
 } from './searchDiagnostics';
+import {
+    buildWorkerTelemetryView,
+    ManagedBgeM3Workers,
+    WorkerEndpointHealth,
+} from './workerTelemetry';
 
 type ApiSuccess<T> = { ok: true; data: T };
 type ApiFailure = { ok: false; error: string; data?: unknown };
@@ -35,6 +40,11 @@ interface DaemonStatus {
     accelerator?: {
         mode?: string;
         active?: boolean;
+        activeWorkers?: number;
+        rejectedWorkers?: number;
+        workerPool?: WorkerEndpointHealth[];
+        workerEndpoints?: WorkerEndpointHealth[];
+        workerHealth?: WorkerEndpointHealth[];
         effectiveEmbeddingConcurrency?: number;
         effectiveInsertConcurrency?: number;
         submittedBatches?: number;
@@ -51,6 +61,7 @@ interface DaemonStatus {
         adaptiveThrottleReason?: string;
         fallbackReason?: string;
     };
+    managedBgeM3Workers?: ManagedBgeM3Workers | null;
     workerPlanningPolicy?: {
         owner?: string;
         agentDirective?: string;
@@ -414,6 +425,7 @@ function render(): void {
                     </div>
                 </section>
                 ${operationsSection(activeIndexingJobs, queuedIndexingJobs, state.selectedStatus, state.status?.accelerator)}
+                ${workerTelemetrySection(state.status)}
                 ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
                 ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
                 ${operatorLogSection(state.actionLog)}
@@ -728,6 +740,79 @@ function operationsSection(
                 ${acceleratorPanel(accelerator)}
             </div>
         </section>
+    `;
+}
+
+function workerTelemetrySection(status: DaemonStatus | undefined): string {
+    const view = buildWorkerTelemetryView(status);
+
+    return `
+        <section class="worker-telemetry" aria-label="Телеметрия воркеров BGE-M3">
+            <div class="section-heading">
+                <div>
+                    <h2>BGE-M3 воркеры</h2>
+                    <p>Состояние пула, здоровье endpoint и план VRAM. Раздел только показывает данные.</p>
+                </div>
+                <span class="pill ${view.degraded ? 'attention' : ''}">${escapeHtml(view.available ? (view.degraded ? 'требует внимания' : 'доступно') : 'нет данных')}</span>
+            </div>
+            ${!view.available ? '<p class="empty small">Данные managed BGE-M3 workers сейчас недоступны.</p>' : `
+                ${view.alerts.length > 0 ? `
+                    <div class="worker-alerts">
+                        ${view.alerts.map((alert) => `<p>${escapeHtml(alert)}</p>`).join('')}
+                    </div>
+                ` : ''}
+                <div class="worker-summary">
+                    ${view.summary.map(([label, value]) => telemetryMetric(label, value)).join('')}
+                </div>
+                <div class="worker-panels">
+                    <article class="operation-panel">
+                        <h3>Здоровье endpoint</h3>
+                        ${view.endpoints.length === 0 ? '<p class="empty small">Нет строк здоровья endpoint.</p>' : `
+                            <div class="endpoint-list">
+                                ${view.endpoints.map((endpoint) => endpointRow(endpoint)).join('')}
+                            </div>
+                        `}
+                    </article>
+                    <article class="operation-panel">
+                        <h3>План VRAM</h3>
+                        <div class="vram-grid">
+                            ${view.vram.map(([label, value]) => telemetryMetric(label, value)).join('')}
+                        </div>
+                    </article>
+                </div>
+            `}
+        </section>
+    `;
+}
+
+function telemetryMetric(label: string, value: string): string {
+    return `
+        <div class="telemetry-metric">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `;
+}
+
+function endpointRow(endpoint: WorkerEndpointHealth): string {
+    const rejected = endpoint.poolState === 'rejected' || Boolean(endpoint.rejectedReason);
+    const health = endpoint.health || endpoint.poolState || 'unknown';
+    const details = [
+        `в работе ${formatOptionalNumber(endpoint.inFlight)}`,
+        `попытки восстановления ${formatOptionalNumber(endpoint.recoveryAttempts)}`,
+        endpoint.rejectedFailureReason ? `причина ${endpoint.rejectedFailureReason}` : '',
+        endpoint.rejectedRetrySafe !== undefined ? `безопасный повтор ${String(endpoint.rejectedRetrySafe)}` : '',
+    ].filter(Boolean).join(' · ');
+
+    return `
+        <div class="endpoint-row ${rejected ? 'rejected' : ''}">
+            <div>
+                <strong>${escapeHtml(endpoint.endpoint)}</strong>
+                <span>${escapeHtml(details || 'нет дополнительных счётчиков')}</span>
+                ${endpoint.rejectedReason ? `<small>${escapeHtml(endpoint.rejectedReason)}</small>` : ''}
+            </div>
+            <span class="status-label ${rejected ? 'failure' : 'success'}">${escapeHtml(health)}</span>
+        </div>
     `;
 }
 
