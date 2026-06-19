@@ -282,6 +282,7 @@ export class Context {
     private codeSymbolProviders: CodeSymbolProvider[];
     private explicitCodebaseIndexEnricher?: CodebaseIndexEnricher;
     private defaultRlmBslEnrichment?: RlmBslEnrichmentConfig;
+    private rlmBslEnrichmentRuntimeStatus = new Map<string, Record<string, unknown>>();
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -1082,6 +1083,12 @@ export class Context {
         return lines.join("\n");
     }
 
+    public getRlmBslEnrichmentRuntimeStatus(codebasePath: string): Record<string, unknown> | undefined {
+        const collectionName = this.getCollectionName(codebasePath);
+        const status = this.rlmBslEnrichmentRuntimeStatus.get(collectionName);
+        return status ? { ...status } : undefined;
+    }
+
     private parseRetrievalCollectionDescription(description: string): Partial<RetrievalSchemaMetadata> {
         const metadata: Partial<RetrievalSchemaMetadata> = {};
         for (const line of description.split(/\r?\n/)) {
@@ -1104,9 +1111,8 @@ export class Context {
         return metadata;
     }
 
-    private collectionHasAvailableRlmBslEnrichment(description: string): boolean {
-        let provider = "";
-        let status = "";
+    private parseCollectionDescriptionFields(description: string): Record<string, string> {
+        const fields: Record<string, string> = {};
         for (const line of description.split(/\r?\n/)) {
             const separatorIndex = line.indexOf(":");
             if (separatorIndex < 0) {
@@ -1114,13 +1120,71 @@ export class Context {
             }
             const key = line.slice(0, separatorIndex).trim();
             const value = line.slice(separatorIndex + 1).trim();
-            if (key === "enrichmentProvider") {
-                provider = value;
-            } else if (key === "enrichmentStatus") {
-                status = value;
+            if (key.length > 0) {
+                fields[key] = value;
             }
         }
+        return fields;
+    }
+
+    private collectionDescriptionHasAvailableRlmBslEnrichment(description: string): boolean {
+        let provider = "";
+        let status = "";
+        const fields = this.parseCollectionDescriptionFields(description);
+        provider = fields.enrichmentProvider || "";
+        status = fields.enrichmentStatus || "";
         return provider === "rlm-tools-bsl" && status === "available";
+    }
+
+    private collectionHasAvailableRlmBslEnrichment(collectionName: string, description: string): boolean {
+        const runtimeStatus = this.rlmBslEnrichmentRuntimeStatus.get(collectionName);
+        if (runtimeStatus) {
+            return runtimeStatus.provider === "rlm-tools-bsl" && runtimeStatus.status === "available";
+        }
+        return this.collectionDescriptionHasAvailableRlmBslEnrichment(description);
+    }
+
+    private async recordRlmBslEnrichmentRuntimeStatus(
+        codebasePath: string,
+        session: CodebaseSessionState,
+        source: "full" | "incremental",
+    ): Promise<void> {
+        const collectionName = this.getCollectionName(codebasePath);
+        const hasConfiguredEnricher = Boolean(this.explicitCodebaseIndexEnricher)
+            || Boolean(session.rlmBslEnrichment && session.rlmBslEnrichment.mode !== "disabled");
+        if (!hasConfiguredEnricher) {
+            this.rlmBslEnrichmentRuntimeStatus.delete(collectionName);
+            return;
+        }
+
+        if (session.enrichmentCompatibility) {
+            this.rlmBslEnrichmentRuntimeStatus.set(collectionName, {
+                provider: session.enrichmentCompatibility.provider,
+                status: session.enrichmentCompatibility.status,
+                rawStatus: session.enrichmentCompatibility.rawStatus,
+                providerSchemaVersion: session.enrichmentCompatibility.providerSchemaVersion,
+                sourceFingerprint: session.enrichmentCompatibility.sourceFingerprint,
+            });
+            return;
+        }
+
+        if (session.enrichmentOutcome === "unavailable") {
+            let status = "unavailable";
+            if (source === "incremental") {
+                const description = await this.vectorDatabase.getCollectionDescription(collectionName).catch(() => "");
+                if (this.collectionDescriptionHasAvailableRlmBslEnrichment(description)) {
+                    status = "mixed";
+                }
+            }
+            this.rlmBslEnrichmentRuntimeStatus.set(collectionName, {
+                provider: "rlm-tools-bsl",
+                status,
+                diagnostics: session.enrichmentDiagnostics,
+            });
+            return;
+        }
+
+        this.rlmBslEnrichmentRuntimeStatus.delete(collectionName);
     }
 
     private async validateExistingCollection(collectionName: string, codebasePath: string, requestedMode: RetrievalMode): Promise<void> {
@@ -1270,6 +1334,7 @@ export class Context {
         session.enrichmentOutcome = enrichmentSession.status;
         session.enrichmentDiagnostics = enrichmentSession.diagnostics;
         await this.prepareCollection(codebasePath, forceReindex);
+        await this.recordRlmBslEnrichmentRuntimeStatus(codebasePath, session, "full");
         throwIfOperationAborted(abortSignal);
 
         this.resetAcceleratorSnapshotForPreIndexStart(codebasePath, {
@@ -1515,6 +1580,7 @@ export class Context {
         session.enrichmentCompatibility = enrichmentSession.getCompatibilityProof?.();
         session.enrichmentOutcome = enrichmentSession.status;
         session.enrichmentDiagnostics = enrichmentSession.diagnostics;
+        await this.recordRlmBslEnrichmentRuntimeStatus(codebasePath, session, "incremental");
         throwIfOperationAborted(abortSignal);
 
         let processedChanges = 0;
@@ -1653,7 +1719,7 @@ export class Context {
         }
 
         const collectionDescription = await this.vectorDatabase.getCollectionDescription(collectionName).catch(() => "");
-        const codeSymbolProviders = this.collectionHasAvailableRlmBslEnrichment(collectionDescription)
+        const codeSymbolProviders = this.collectionHasAvailableRlmBslEnrichment(collectionName, collectionDescription)
             ? []
             : this.codeSymbolProviders;
         const codeSymbolRetrievalPromise = this.getCodeSymbolRetrievalEnabled()

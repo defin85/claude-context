@@ -5,6 +5,12 @@ import { Context } from './context';
 import { Embedding, EmbeddingVector } from './embedding';
 import { CodeChunk, Splitter } from './splitter';
 import {
+    CodeSymbolProvider,
+    CodeSymbolProviderAvailability,
+    CodeSymbolProviderCandidate,
+    CodeSymbolProviderQuery,
+} from './code-symbol-retrieval';
+import {
     HybridSearchOptions,
     HybridSearchRequest,
     HybridSearchResult,
@@ -92,6 +98,26 @@ class TestVectorDatabase implements VectorDatabase {
     async getCollectionDescription(): Promise<string> { return this.collectionDescription; }
     async checkCollectionLimit(): Promise<boolean> { return true; }
     async getCollectionRowCount(): Promise<number> { return this.documents.length; }
+}
+
+class FakeProvider implements CodeSymbolProvider {
+    readonly providerName = 'rlm-tools-bsl';
+    readonly availability: CodeSymbolProviderAvailability = {
+        providerName: this.providerName,
+        status: 'available',
+    };
+    readonly candidates: CodeSymbolProviderCandidate[] = [];
+    calls = 0;
+
+    async getAvailability(): Promise<CodeSymbolProviderAvailability> {
+        this.calls++;
+        return this.availability;
+    }
+
+    async queryCandidates(_query: CodeSymbolProviderQuery): Promise<CodeSymbolProviderCandidate[]> {
+        this.calls++;
+        return this.candidates;
+    }
 }
 
 describe('Context RLM BSL index enrichment', () => {
@@ -199,6 +225,43 @@ describe('Context RLM BSL index enrichment', () => {
         await expect(context.reindexByChange(project))
             .rejects.toThrow(/RLM BSL enrichment is required/);
         expect(vectorDatabase.deleteCount).toBe(0);
+    });
+
+    it('keeps search-time provider enabled after optional incremental reindex loses enrichment', async () => {
+        const project = await makeProject();
+        const vectorDatabase = new TestVectorDatabase(true);
+        vectorDatabase.queryRows = [{ id: 'old-chunk-1' }];
+        const provider = new FakeProvider();
+        let loadCount = 0;
+        const context = new Context({
+            embedding: new TestEmbedding(),
+            vectorDatabase,
+            codeSplitter: new TwoChunkSplitter(),
+            codeSymbolProviders: [provider],
+            codebaseIndexEnricher: new RlmBslIndexEnricher({
+                mode: 'optional',
+                snapshotLoader: () => {
+                    loadCount++;
+                    if (loadCount === 1) {
+                        return makeSnapshot(project);
+                    }
+                    throw new Error('provider unavailable during sync');
+                },
+            }),
+        });
+
+        await context.indexCodebase(project, undefined, true);
+        expect(vectorDatabase.collectionDescription).toContain('enrichmentStatus:available');
+        await fs.appendFile(path.join(project, 'CommonModules', 'СкладскойЖурнал', 'Ext', 'Module.bsl'), '\nПроцедура Новая()\nКонецПроцедуры\n');
+
+        await context.reindexByChange(project);
+        expect(context.getRlmBslEnrichmentRuntimeStatus(project)).toEqual(expect.objectContaining({
+            provider: 'rlm-tools-bsl',
+            status: 'mixed',
+        }));
+        await context.semanticSearch(project, 'Целевая', 3);
+
+        expect(provider.calls).toBeGreaterThan(0);
     });
 
     it('enriches added and modified chunks during incremental reindex', async () => {

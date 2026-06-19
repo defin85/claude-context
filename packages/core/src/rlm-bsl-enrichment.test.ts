@@ -4,6 +4,7 @@ import {
     normalizeRlmBslProviderStatus,
     normalizeRlmBslSnapshot,
     parseRlmBslSnapshotJson,
+    RlmBslIndexEnricher,
     translateRlmBslSnapshotPath,
 } from './rlm-bsl-enrichment';
 
@@ -190,6 +191,25 @@ describe('rlm bsl enrichment snapshot contract', () => {
             sourceRoot: '/repo/Проект с пробелом/cf',
             sourceFingerprint: 'fingerprint-1',
         });
+    });
+
+    it('includes codebase path and provider status in required-mode failures', async () => {
+        const codebasePath = '/repo/Проект с пробелом';
+        await expect(new RlmBslIndexEnricher({
+            mode: 'required',
+            snapshotLoader: () => {
+                throw new Error('provider crashed');
+            },
+        }).prepare(codebasePath)).rejects.toThrow(/\/repo\/Проект с пробелом/);
+
+        await expect(new RlmBslIndexEnricher({
+            mode: 'required',
+            snapshotLoader: () => ({
+                ...makeSnapshot(),
+                sourceRoot: codebasePath,
+                status: 'missing_index',
+            }),
+        }).prepare(codebasePath)).rejects.toThrow(/provider status is missing \(raw: missing_index\).*\/repo\/Проект с пробелом/);
     });
 });
 

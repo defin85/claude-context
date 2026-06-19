@@ -414,6 +414,10 @@ export class ToolHandlers {
                     ? normalizeCodebasePath(fields.enrichmentSourceRoot) === normalizeCodebasePath(codebasePath)
                     : undefined;
             }
+            const runtimeStatus = this.context.getRlmBslEnrichmentRuntimeStatus(codebasePath);
+            if (runtimeStatus) {
+                Object.assign(status, runtimeStatus);
+            }
         } catch (error) {
             status.diagnostics = { collectionMetadata: `unavailable: ${getErrorMessage(error)}` };
         }

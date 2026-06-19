@@ -271,7 +271,7 @@ export class RlmBslIndexEnricher implements CodebaseIndexEnricher {
                 : normalizeRlmBslSnapshot(raw, { codebasePath, limits: this.limits });
         } catch (error) {
             if (this.mode === 'required') {
-                throw new Error(`RLM BSL enrichment is required but snapshot loading failed: ${error instanceof Error ? error.message : String(error)}`);
+                throw new Error(`RLM BSL enrichment is required for '${codebasePath}' but snapshot loading failed: ${error instanceof Error ? error.message : String(error)}`);
             }
             return new UnavailableCodebaseIndexEnrichmentSession({
                 reason: 'snapshot loading failed',
@@ -281,7 +281,7 @@ export class RlmBslIndexEnricher implements CodebaseIndexEnricher {
 
         if (snapshot.status !== 'available') {
             if (this.mode === 'required') {
-                throw new Error(`RLM BSL enrichment is required but provider status is ${snapshot.status}.`);
+                throw new Error(`RLM BSL enrichment is required but provider status is ${snapshot.status} (raw: ${snapshot.rawStatus}) for '${codebasePath}'.`);
             }
             return new UnavailableCodebaseIndexEnrichmentSession({
                 reason: 'provider unavailable',
