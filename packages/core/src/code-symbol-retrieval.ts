@@ -292,7 +292,8 @@ export function fuseCodeSearchResults(
     ) => {
         const key = resultKey(result);
         const existing = byKey.get(key);
-        const exactSymbolBoost = scoreExactSymbol(tokens, result.content);
+        const storedBslSignal = scoreStoredBslMetadata(tokens, result.metadata);
+        const exactSymbolBoost = Math.max(scoreExactSymbol(tokens, result.content), storedBslSignal.exactSymbolBoost);
         const pathBoost = scorePath(tokens, result.relativePath, result.metadata);
         const oneCSignals = scoreOneCPathSignals(tokens, result.relativePath, result.content, result.metadata, rankingProfile);
         const compoundNameSignal = scoreOneCCompoundNameSignal(
@@ -329,6 +330,7 @@ export function fuseCodeSearchResults(
             metadata: {
                 ...mergedMetadata,
                 retrievalSources,
+                ...(storedBslSignal.symbolName ? { storedBslSymbolName: storedBslSignal.symbolName } : {}),
             },
             _semanticScore: Math.max(existing?._semanticScore ?? 0, semanticScore),
             _lexicalScore: Math.max(existing?._lexicalScore ?? 0, lexicalScore),
@@ -632,6 +634,20 @@ async function fetchNoReindexLexicalCandidates(
         }
     }
 
+    const storedBslRows = await vectorDatabase.query(collectionName, undefined, outputFields, maxCandidates).catch(() => [] as Record<string, any>[]);
+    for (const row of storedBslRows) {
+        if (rowsByKey.size >= maxCandidates) {
+            break;
+        }
+        if (!rowMatchesFilterExpr(row, filterExpr)) {
+            continue;
+        }
+        const document = rowToVectorDocument(row);
+        if (scoreStoredBslMetadata(tokens, document.metadata).exactSymbolBoost > 0) {
+            rowsByKey.set(rowKey(row), row);
+        }
+    }
+
     if (rowsByKey.size === 0) {
         const rows = await vectorDatabase.query(collectionName, undefined, outputFields, maxCandidates);
         for (const row of rows) {
@@ -645,10 +661,14 @@ async function fetchNoReindexLexicalCandidates(
     return [...rowsByKey.values()]
         .map((row) => {
             const document = rowToVectorDocument(row);
+            const storedBslScore = scoreStoredBslMetadata(tokens, document.metadata).exactSymbolBoost > 0 ? 4 : 0;
+            const lexicalScore = scoreLexicalDocument(tokens, document);
             return {
                 document,
-                lexicalScore: scoreLexicalDocument(tokens, document),
-                sources: ['lexical'],
+                lexicalScore: Math.max(lexicalScore, storedBslScore),
+                sources: storedBslScore > 0
+                    ? unique(['stored_rlm_bsl', ...(lexicalScore > 0 ? ['lexical'] : [])])
+                    : ['lexical'],
             };
         })
         .filter((candidate) => candidate.lexicalScore > 0)
@@ -802,6 +822,28 @@ function scoreExactSymbol(tokens: CodeSymbolQueryTokens, content: string): numbe
     }
     const normalizedContent = normalizeText(content);
     return tokens.exactTerms.some((term) => normalizedContent.includes(normalizeText(term))) ? 6 : 0;
+}
+
+function scoreStoredBslMetadata(tokens: CodeSymbolQueryTokens, metadata?: Record<string, any>): { exactSymbolBoost: number; symbolName?: string } {
+    const symbols = Array.isArray(metadata?.bsl?.symbols) ? metadata.bsl.symbols : [];
+    for (const symbol of symbols) {
+        if (!symbol || typeof symbol.name !== 'string') {
+            continue;
+        }
+        const normalizedSymbol = normalizeText(symbol.name);
+        const matched = unique([...tokens.exactTerms, ...tokens.identifierTerms]).some((term) => {
+            const normalizedTerm = normalizeText(term);
+            return normalizedTerm.length > 0 && (
+                normalizedSymbol === normalizedTerm ||
+                normalizedSymbol.includes(normalizedTerm) ||
+                normalizedTerm.includes(normalizedSymbol)
+            );
+        });
+        if (matched) {
+            return { exactSymbolBoost: 6, symbolName: symbol.name };
+        }
+    }
+    return { exactSymbolBoost: 0 };
 }
 
 function scorePath(tokens: CodeSymbolQueryTokens, relativePath: string, metadata?: Record<string, any>): number {

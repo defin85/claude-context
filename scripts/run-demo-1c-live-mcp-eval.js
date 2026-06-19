@@ -132,6 +132,24 @@ function summarizeTopResults(results) {
   }));
 }
 
+function summarizeRlmBslEnrichment(indexStatus) {
+  const enrichment = indexStatus?.structuredContent?.rlmBslEnrichment;
+  if (!enrichment || typeof enrichment !== 'object') {
+    return undefined;
+  }
+  const diagnostics = enrichment.diagnostics && typeof enrichment.diagnostics === 'object'
+    ? enrichment.diagnostics
+    : {};
+  return {
+    mode: enrichment.mode,
+    configured: enrichment.configured,
+    commandConfigured: enrichment.commandConfigured,
+    provider: enrichment.provider || diagnostics.provider || diagnostics.enrichmentProvider || 'rlm-tools-bsl',
+    status: enrichment.status || diagnostics.status || diagnostics.enrichmentStatus,
+    sourceFingerprint: enrichment.sourceFingerprint || diagnostics.sourceFingerprint || diagnostics.enrichmentSourceFingerprint,
+  };
+}
+
 async function collectResults(clientConfig, dataset, options) {
   const results = [];
   let toolErrors = 0;
@@ -242,6 +260,7 @@ async function main() {
       text: textFromResult(indexStatus),
       structuredContent: indexStatus.structuredContent,
     },
+    rlmBslEnrichment: summarizeRlmBslEnrichment(indexStatus),
     caseCount: collectionDataset.queries.length,
     summary: {
       toolErrors: collected.errors.toolErrors,
@@ -272,6 +291,7 @@ async function main() {
     finishedAt,
     rawSummary: rawReport.summary,
     indexStatus: rawReport.indexStatus,
+    rlmBslEnrichment: rawReport.rlmBslEnrichment,
     matrixFixture,
     includeOptionalTargets: Boolean(args.includeOptionalTargets),
     labelValidation: {

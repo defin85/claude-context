@@ -67,7 +67,25 @@ export class CodebaseConfigManager {
             ...(config.retrievalProfile && { retrievalProfile: config.retrievalProfile }),
             ...(config.retrievalMode && { retrievalMode: config.retrievalMode }),
             ...(typeof config.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: config.retrievalSchemaVersion }),
-            ...(config.oneCIndexScopeProfile && { oneCIndexScopeProfile: config.oneCIndexScopeProfile })
+            ...(config.oneCIndexScopeProfile && { oneCIndexScopeProfile: config.oneCIndexScopeProfile }),
+            ...(config.rlmBslEnrichment && { rlmBslEnrichment: this.normalizeRlmBslEnrichmentConfig(config.rlmBslEnrichment) })
+        };
+    }
+
+    private normalizeRlmBslEnrichmentConfig(config: NonNullable<CodebaseSessionConfig['rlmBslEnrichment']>): NonNullable<CodebaseSessionConfig['rlmBslEnrichment']> {
+        const mode = config.mode;
+        if (mode !== 'disabled' && mode !== 'optional' && mode !== 'required') {
+            return { mode: 'disabled' };
+        }
+        if (mode === 'disabled') {
+            return { mode };
+        }
+        return {
+            mode,
+            ...(config.command ? { command: config.command } : {}),
+            ...(config.args && config.args.every((arg) => typeof arg === 'string') ? { args: [...config.args] } : {}),
+            ...(typeof config.timeoutMs === 'number' && Number.isFinite(config.timeoutMs) && config.timeoutMs > 0 ? { timeoutMs: config.timeoutMs } : {}),
+            ...(config.limits ? { limits: { ...config.limits } } : {})
         };
     }
 
@@ -119,7 +137,8 @@ export class CodebaseConfigManager {
             ...(normalizedConfig.retrievalProfile && { retrievalProfile: normalizedConfig.retrievalProfile }),
             ...(normalizedConfig.retrievalMode && { retrievalMode: normalizedConfig.retrievalMode }),
             ...(typeof normalizedConfig.retrievalSchemaVersion === 'number' && { retrievalSchemaVersion: normalizedConfig.retrievalSchemaVersion }),
-            ...(normalizedConfig.oneCIndexScopeProfile && { oneCIndexScopeProfile: normalizedConfig.oneCIndexScopeProfile })
+            ...(normalizedConfig.oneCIndexScopeProfile && { oneCIndexScopeProfile: normalizedConfig.oneCIndexScopeProfile }),
+            ...(normalizedConfig.rlmBslEnrichment && { rlmBslEnrichment: normalizedConfig.rlmBslEnrichment })
         };
 
         await fs.promises.writeFile(tempPath, JSON.stringify(payload, null, 2));

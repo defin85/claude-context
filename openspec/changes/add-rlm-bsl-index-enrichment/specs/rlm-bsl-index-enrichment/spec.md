@@ -5,8 +5,13 @@ The `rlm-tools-bsl` integration SHALL provide a machine-readable whole-codebase 
 
 #### Scenario: Snapshot export returns file-level structure
 - **WHEN** `claude-context` invokes the configured RLM snapshot/export transport for a BSL/1C codebase
-- **THEN** the response SHALL include provider identity, schema version, provider status, source root, capabilities, diagnostics, and file entries grouped by relative path
+- **THEN** the response SHALL include provider identity, schema version, provider status, source root, provider-level source fingerprint, capabilities, diagnostics, and file entries grouped by relative path
 - **AND** each file entry SHALL include available object metadata, module metadata, bounded synonyms, and method/procedure symbols with line ranges when present
+
+#### Scenario: Positional provider export is the compatibility command
+- **WHEN** `claude-context` configures the default RLM snapshot/export subprocess transport
+- **THEN** the compatibility command shape SHALL be `rlm-bsl-index provider export <path> --json`
+- **AND** a named `--path` alias MAY be supported by RLM but SHALL NOT be required by `claude-context`
 
 #### Scenario: Per-query provider lookup is not accepted as enrichment snapshot
 - **WHEN** only a per-query RLM provider lookup such as `provider query <path> <query> --json` is available
@@ -48,6 +53,11 @@ The system SHALL store compact RLM-derived BSL metadata on indexed chunks whose 
 - **THEN** that symbol SHALL NOT be recorded as an overlapping declaration for the chunk
 - **AND** the implementation MAY record a bounded file-level object or module context separately from declaration-level symbol context
 
+#### Scenario: Enclosing method declarations are attached to inner chunks
+- **WHEN** an RLM method or procedure line range contains a chunk whose start line is inside the declaration body
+- **THEN** that declaration MAY be recorded as chunk symbol metadata
+- **AND** a nearest preceding declaration whose line range does not contain the chunk SHALL NOT be attached as a symbol match
+
 ### Requirement: RLM source roots are mapped to indexed relative paths
 The system SHALL map RLM snapshot paths to the relative paths used by the `claude-context` index.
 
@@ -81,6 +91,11 @@ The system SHALL provide explicit configuration for RLM BSL enrichment mode.
 - **WHEN** the RLM snapshot/export transport returns a provider-specific status such as `missing_index`
 - **THEN** `claude-context` SHALL map it to the stable enrichment status vocabulary used by indexing and required-mode branching
 - **AND** it SHALL preserve the raw provider status in diagnostics
+
+#### Scenario: Source fingerprint is authoritative for compatibility
+- **WHEN** an RLM snapshot/export transport returns `available`
+- **THEN** `claude-context` SHALL record the provider-level source fingerprint as the authoritative source compatibility proof when present
+- **AND** build time, git commit, dirty-state, file counts, and raw RLM status values SHALL remain diagnostics rather than replacing the provider-level fingerprint
 
 #### Scenario: Disabled mode preserves current indexing behavior
 - **WHEN** RLM enrichment is disabled or no enrichment transport is configured

@@ -60,6 +60,15 @@ import {
     RetrievalProfile,
     ResolvedRetrievalProfile,
 } from "./retrieval-profile";
+import {
+    CodebaseIndexEnricher,
+    CodebaseIndexEnrichmentSession,
+    DisabledCodebaseIndexEnricher,
+    RlmBslEnrichmentConfig,
+    RlmBslCompatibilityProof,
+    createRlmBslIndexEnricher,
+    normalizeRlmBslEnrichmentConfig,
+} from "./rlm-bsl-enrichment";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 
@@ -174,6 +183,8 @@ export interface ContextConfig {
     collectionNameOverride?: string;
     acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
     codeSymbolProviders?: CodeSymbolProvider[];
+    codebaseIndexEnricher?: CodebaseIndexEnricher;
+    rlmBslEnrichment?: RlmBslEnrichmentConfig;
     retrievalProfile?: RetrievalProfile;
 }
 
@@ -184,6 +195,7 @@ export interface CodebaseSessionConfig {
     retrievalMode?: RetrievalMode;
     retrievalSchemaVersion?: number;
     oneCIndexScopeProfile?: OneCIndexScopeProfile;
+    rlmBslEnrichment?: RlmBslEnrichmentConfig;
 }
 
 export interface SemanticSearchOptions {
@@ -194,6 +206,7 @@ interface ProcessFileListOptions {
     abortSignal?: AbortSignal;
     allowAcceleration?: boolean;
     isBackgroundSync?: boolean;
+    enrichmentSession?: CodebaseIndexEnrichmentSession;
     preIndexTraversal?: PreIndexTraversalResult;
     onBatchProgress?: (
         snapshot: IndexingAcceleratorSnapshot,
@@ -209,6 +222,10 @@ interface CodebaseSessionState {
     retrievalMode?: RetrievalMode;
     retrievalSchemaVersion?: number;
     oneCIndexScopeProfile?: OneCIndexScopeProfile;
+    rlmBslEnrichment?: RlmBslEnrichmentConfig;
+    enrichmentOutcome?: CodebaseIndexEnrichmentSession['status'];
+    enrichmentDiagnostics?: Record<string, unknown>;
+    enrichmentCompatibility?: RlmBslCompatibilityProof;
     fileIgnorePatterns: string[];
     effectiveExtensions: string[];
     effectiveIgnorePatterns: string[];
@@ -263,6 +280,8 @@ export class Context {
     private lastAcceleratorSnapshot?: IndexingAcceleratorSnapshot;
     private acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
     private codeSymbolProviders: CodeSymbolProvider[];
+    private explicitCodebaseIndexEnricher?: CodebaseIndexEnricher;
+    private defaultRlmBslEnrichment?: RlmBslEnrichmentConfig;
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -316,6 +335,9 @@ export class Context {
         this.defaultRetrievalProfile = config.retrievalProfile;
         this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
         this.codeSymbolProviders = config.codeSymbolProviders || this.createCodeSymbolProvidersFromEnv();
+        this.explicitCodebaseIndexEnricher = config.codebaseIndexEnricher;
+        this.defaultRlmBslEnrichment = normalizeRlmBslEnrichmentConfig(config.rlmBslEnrichment)
+            || this.createRlmBslEnrichmentConfigFromEnv();
 
         console.log(
             `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
@@ -581,6 +603,9 @@ export class Context {
         session.retrievalMode = config.retrievalMode;
         session.retrievalSchemaVersion = config.retrievalSchemaVersion;
         session.oneCIndexScopeProfile = config.oneCIndexScopeProfile;
+        session.rlmBslEnrichment = normalizeRlmBslEnrichmentConfig(
+            config.rlmBslEnrichment || this.defaultRlmBslEnrichment,
+        );
         this.updateSessionEffectiveState(session);
 
         console.log(
@@ -607,6 +632,7 @@ export class Context {
             retrievalMode: resolvedRetrieval.retrievalMode,
             retrievalSchemaVersion: resolvedRetrieval.retrievalSchemaVersion,
             ...(session.oneCIndexScopeProfile ? { oneCIndexScopeProfile: session.oneCIndexScopeProfile } : {}),
+            ...(session.rlmBslEnrichment ? { rlmBslEnrichment: normalizeRlmBslEnrichmentConfig(session.rlmBslEnrichment) } : {}),
         };
     }
 
@@ -832,6 +858,41 @@ export class Context {
         ];
     }
 
+    private createRlmBslEnrichmentConfigFromEnv(): RlmBslEnrichmentConfig | undefined {
+        const mode = envManager.get("RLM_BSL_ENRICHMENT_MODE");
+        if (!mode || mode === "disabled") {
+            return undefined;
+        }
+        if (mode !== "optional" && mode !== "required") {
+            console.warn(`[Context] ⚠️  RLM_BSL_ENRICHMENT_MODE must be disabled, optional, or required. Ignoring '${mode}'.`);
+            return undefined;
+        }
+
+        return normalizeRlmBslEnrichmentConfig({
+            mode,
+            command: envManager.get("RLM_BSL_ENRICHMENT_COMMAND") || envManager.get("RLM_TOOLS_BSL_COMMAND"),
+            args: this.parseJsonStringArrayEnv("RLM_BSL_ENRICHMENT_ARGS_JSON"),
+            timeoutMs: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_TIMEOUT_MS", 5000),
+            limits: {
+                maxFiles: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_FILES", 100000),
+                maxSymbolsPerFile: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_SYMBOLS_PER_FILE", 500),
+                maxSynonymsPerFile: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_SYNONYMS_PER_FILE", 50),
+                maxStringLength: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_STRING_LENGTH", 1024),
+                maxDiagnosticsBytes: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_DIAGNOSTICS_BYTES", 16384),
+            },
+        });
+    }
+
+    private getCodebaseIndexEnricherForSession(session: CodebaseSessionState): CodebaseIndexEnricher {
+        if (this.explicitCodebaseIndexEnricher) {
+            return this.explicitCodebaseIndexEnricher;
+        }
+        if (!session.rlmBslEnrichment || session.rlmBslEnrichment.mode === "disabled") {
+            return new DisabledCodebaseIndexEnricher();
+        }
+        return createRlmBslIndexEnricher(session.rlmBslEnrichment);
+    }
+
     private getCodeSymbolRetrievalEnabled(): boolean {
         const raw = envManager.get("CODE_SYMBOL_RETRIEVAL");
         return raw === undefined || raw === null || raw.toLowerCase() !== "false";
@@ -987,12 +1048,38 @@ export class Context {
     }
 
     private getRetrievalCollectionDescription(codebasePath: string, retrieval: ResolvedRetrievalProfile): string {
-        return [
+        const session = this.codebaseSessions.get(codebasePath);
+        const enrichment = session?.enrichmentCompatibility;
+        const lines = [
             `codebasePath:${codebasePath}`,
             `retrievalProfile:${retrieval.retrievalProfile}`,
             `retrievalMode:${retrieval.retrievalMode}`,
             `retrievalSchemaVersion:${retrieval.retrievalSchemaVersion}`,
-        ].join("\n");
+        ];
+        if (enrichment) {
+            lines.push(
+                `enrichmentProvider:${enrichment.provider}`,
+                `enrichmentProviderSchemaVersion:${enrichment.providerSchemaVersion}`,
+                `enrichmentStatus:${enrichment.status}`,
+                `enrichmentRawStatus:${enrichment.rawStatus}`,
+                `enrichmentSourceRoot:${enrichment.sourceRoot}`,
+                `enrichmentSourceFingerprint:${enrichment.sourceFingerprint}`,
+            );
+        } else if (session?.enrichmentOutcome === 'unavailable') {
+            const rawStatus = session.enrichmentDiagnostics?.rawStatus;
+            const normalizedStatus = session.enrichmentDiagnostics?.status;
+            lines.push(
+                `enrichmentProvider:rlm-tools-bsl`,
+                `enrichmentStatus:unavailable`,
+            );
+            if (typeof normalizedStatus === "string") {
+                lines.push(`enrichmentNormalizedStatus:${normalizedStatus}`);
+            }
+            if (typeof rawStatus === "string") {
+                lines.push(`enrichmentRawStatus:${rawStatus}`);
+            }
+        }
+        return lines.join("\n");
     }
 
     private parseRetrievalCollectionDescription(description: string): Partial<RetrievalSchemaMetadata> {
@@ -1015,6 +1102,25 @@ export class Context {
             }
         }
         return metadata;
+    }
+
+    private collectionHasAvailableRlmBslEnrichment(description: string): boolean {
+        let provider = "";
+        let status = "";
+        for (const line of description.split(/\r?\n/)) {
+            const separatorIndex = line.indexOf(":");
+            if (separatorIndex < 0) {
+                continue;
+            }
+            const key = line.slice(0, separatorIndex).trim();
+            const value = line.slice(separatorIndex + 1).trim();
+            if (key === "enrichmentProvider") {
+                provider = value;
+            } else if (key === "enrichmentStatus") {
+                status = value;
+            }
+        }
+        return provider === "rlm-tools-bsl" && status === "available";
     }
 
     private async validateExistingCollection(collectionName: string, codebasePath: string, requestedMode: RetrievalMode): Promise<void> {
@@ -1159,6 +1265,10 @@ export class Context {
         console.log(
             `Debug2: Preparing vector collection for codebase${forceReindex ? " (FORCE REINDEX)" : ""}`,
         );
+        const enrichmentSession = await this.getCodebaseIndexEnricherForSession(session).prepare(codebasePath);
+        session.enrichmentCompatibility = enrichmentSession.getCompatibilityProof?.();
+        session.enrichmentOutcome = enrichmentSession.status;
+        session.enrichmentDiagnostics = enrichmentSession.diagnostics;
         await this.prepareCollection(codebasePath, forceReindex);
         throwIfOperationAborted(abortSignal);
 
@@ -1285,6 +1395,7 @@ export class Context {
                 abortSignal,
                 allowAcceleration: forceReindex || codeFiles.length > 0,
                 isBackgroundSync: false,
+                enrichmentSession,
                 preIndexTraversal,
                 onBatchProgress: (snapshot, state) => {
                     if (snapshot.submittedBatches <= 0) {
@@ -1400,6 +1511,12 @@ export class Context {
             `[Context] 🔄 Found changes: ${added.length} added, ${removed.length} removed, ${modified.length} modified.`,
         );
 
+        const enrichmentSession = await this.getCodebaseIndexEnricherForSession(session).prepare(codebasePath);
+        session.enrichmentCompatibility = enrichmentSession.getCompatibilityProof?.();
+        session.enrichmentOutcome = enrichmentSession.status;
+        session.enrichmentDiagnostics = enrichmentSession.diagnostics;
+        throwIfOperationAborted(abortSignal);
+
         let processedChanges = 0;
         const updateProgress = (phase: string) => {
             processedChanges++;
@@ -1448,6 +1565,7 @@ export class Context {
                     abortSignal,
                     allowAcceleration: false,
                     isBackgroundSync: true,
+                    enrichmentSession,
                 },
             );
         }
@@ -1534,6 +1652,10 @@ export class Context {
             return [];
         }
 
+        const collectionDescription = await this.vectorDatabase.getCollectionDescription(collectionName).catch(() => "");
+        const codeSymbolProviders = this.collectionHasAvailableRlmBslEnrichment(collectionDescription)
+            ? []
+            : this.codeSymbolProviders;
         const codeSymbolRetrievalPromise = this.getCodeSymbolRetrievalEnabled()
             ? collectCodeSymbolCandidates(
                 this.vectorDatabase,
@@ -1541,7 +1663,7 @@ export class Context {
                 codebasePath,
                 query,
                 this.getCodeSymbolRetrievalOptions(topK),
-                this.codeSymbolProviders,
+                codeSymbolProviders,
                 filterExpr,
             )
             : Promise.resolve({
@@ -1602,7 +1724,7 @@ export class Context {
                 endLine: result.document.endLine,
                 language: result.document.metadata.language || "unknown",
                 score: result.score,
-                metadata: result.metadata,
+                metadata: result.metadata || result.document.metadata,
             }));
             const codeSymbolRetrieval = await codeSymbolRetrievalPromise;
             return fuseCodeSearchResults(
@@ -2123,6 +2245,7 @@ export class Context {
         codeChunkLimit: number;
     }> {
         const abortSignal = options.abortSignal;
+        const enrichmentSession = options.enrichmentSession;
         const processRetrievalMode = this.getResolvedRetrievalProfile(codebasePath).retrievalMode;
         const isHybrid = processRetrievalMode === "hybrid_bm25" || processRetrievalMode === "bge_m3_full";
         const CODE_CHUNK_LIMIT = getCodeChunkLimit();
@@ -2432,18 +2555,19 @@ export class Context {
                             chunkSequence,
                             documentIdOccurrences,
                         );
-                        const payloadExceedReason = getPayloadLimitExceedReason(chunkBuffer, indexedChunk);
+                        const enrichedChunk = this.applyCodebaseEnrichment(indexedChunk, codebasePath, enrichmentSession);
+                        const payloadExceedReason = getPayloadLimitExceedReason(chunkBuffer, enrichedChunk);
                         if (chunkBuffer.length > 0 && payloadExceedReason) {
                             throwIfOperationAborted(abortSignal);
                             throwIfAcceleratedBatchFailed();
                             await submitCurrentBatch(false, payloadExceedReason);
                             pendingPayloadSplitReason = payloadExceedReason;
                         }
-                        chunkBuffer.push({ chunk: indexedChunk, codebasePath });
+                        chunkBuffer.push({ chunk: enrichedChunk, codebasePath });
                         chunkSequence++;
                         totalChunks++;
                         const singleChunkPayloadReason = chunkBuffer.length === 1
-                            ? getSingleChunkPayloadReason(indexedChunk)
+                            ? getSingleChunkPayloadReason(enrichedChunk)
                             : undefined;
                         if (singleChunkPayloadReason) {
                             throwIfOperationAborted(abortSignal);
@@ -2577,6 +2701,24 @@ export class Context {
                 documentId,
                 chunkIndex,
                 duplicateOrdinal,
+            },
+        };
+    }
+
+    private applyCodebaseEnrichment(
+        chunk: CodeChunk,
+        codebasePath: string,
+        enrichmentSession?: CodebaseIndexEnrichmentSession,
+    ): CodeChunk {
+        const enrichment = enrichmentSession?.enrichChunk(chunk, codebasePath);
+        if (!enrichment) {
+            return chunk;
+        }
+        return {
+            ...chunk,
+            metadata: {
+                ...chunk.metadata,
+                bsl: enrichment,
             },
         };
     }

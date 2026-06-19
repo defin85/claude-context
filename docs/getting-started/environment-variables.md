@@ -138,9 +138,36 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | `RLM_TOOLS_BSL_ARGS_JSON` | JSON argv template for provider search. Supports `{codebasePath}`, `{query}`, and `{limit}` placeholders; argv arrays are used without shell interpolation. | `["symbol-search","--json","--path","{codebasePath}","--query","{query}","--limit","{limit}"]` |
 | `RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON` | JSON argv template that returns structured provider status such as `available`, `stale`, `missing`, or `busy`. Required before `rlm-tools-bsl` candidates are used. | None |
 | `RLM_TOOLS_BSL_ROOT` | Optional source root used to translate provider absolute paths into indexed relative paths. | None |
+| `RLM_BSL_ENRICHMENT_MODE` | Index-time RLM BSL enrichment mode: `disabled`, `optional`, or `required`. Optional unavailable keeps indexing without enrichment; required fails before collection replacement or vector insertion. | `disabled` |
+| `RLM_BSL_ENRICHMENT_COMMAND` | Subprocess command for the RLM BSL snapshot export. Falls back to `RLM_TOOLS_BSL_COMMAND` when unset. | None |
+| `RLM_BSL_ENRICHMENT_ARGS_JSON` | JSON argv template for snapshot export. Supports `{codebasePath}` and is executed without shell interpolation. | `["provider","export","{codebasePath}","--json"]` |
+| `RLM_BSL_ENRICHMENT_TIMEOUT_MS` | Timeout for one snapshot export call during indexing. | `5000` |
+| `RLM_BSL_ENRICHMENT_MAX_FILES` | Maximum files accepted from the RLM snapshot. | `100000` |
+| `RLM_BSL_ENRICHMENT_MAX_SYMBOLS_PER_FILE` | Maximum declarations accepted per file. | `500` |
+| `RLM_BSL_ENRICHMENT_MAX_SYNONYMS_PER_FILE` | Maximum synonyms accepted per file. | `50` |
+| `RLM_BSL_ENRICHMENT_MAX_STRING_LENGTH` | Maximum length for provider strings stored in chunk metadata. | `1024` |
+| `RLM_BSL_ENRICHMENT_MAX_DIAGNOSTICS_BYTES` | Maximum normalized diagnostics payload retained from the provider. | `16384` |
 | `SPLITTER_TYPE` | Code splitter type: `ast`, `langchain` | `ast` |
 | `CUSTOM_EXTENSIONS` | Additional file extensions to include (comma-separated, e.g., `.vue,.svelte,.astro`) | None |
 | `CUSTOM_IGNORE_PATTERNS` | Additional ignore patterns (comma-separated, e.g., `temp/**,*.backup,private/**`) | None |
+
+### RLM BSL Index Enrichment
+
+Index-time RLM BSL enrichment reads a whole-codebase snapshot from
+`rlm-bsl-index provider export <path> --json` and stores bounded structural
+metadata in `metadata.bsl` on matching chunks. The export is query-only:
+`claude-context` does not build, migrate, update, or lock the RLM index.
+
+Use `disabled` when no RLM installation is present. Use `optional` when better
+1C ranking is desired but indexing must continue if the RLM index is missing,
+stale, busy, or invalid. Use `required` only when enriched metadata is part of
+the indexing contract; this mode fails before dropping an existing forced
+reindex collection if the snapshot is unavailable or incompatible.
+
+Only non-secret settings and compatibility fields are persisted per codebase:
+mode, command, argv template, timeout, limits, provider status, schema version,
+and source fingerprint. Command environment, tokens, credentials, and raw
+process environment are not stored or exposed in MCP status.
 
 ### 1C Exported Configuration Scope Profiles
 

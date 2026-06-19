@@ -153,6 +153,38 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
         });
     });
 
+    it('preserves nested BSL enrichment metadata when inserting documents', async () => {
+        const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async () => ({
+            ok: true,
+            json: async () => ({ result: { operation_id: 1, status: 'completed' } }),
+        } as Response));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+        const bslMetadata = {
+            provider: 'rlm-tools-bsl',
+            status: 'available',
+            objectName: 'СкладскойЖурнал',
+            symbols: [{ name: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', startLine: 10, endLine: 18 }],
+        };
+
+        await db.insertBgeM3('chunks', [{
+            id: 'chunk-1',
+            vector: [0.1, 0.2],
+            content: 'Возврат Параметры;',
+            relativePath: 'CommonModules/СкладскойЖурнал/Ext/Module.bsl',
+            startLine: 10,
+            endLine: 18,
+            fileExtension: '.bsl',
+            metadata: {
+                language: 'bsl',
+                bsl: bslMetadata,
+            },
+        }]);
+
+        const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+        expect(body.points[0].payload.metadata.bsl).toEqual(bslMetadata);
+    });
+
     it('declares parallel-safe idempotent upsert write capabilities', () => {
         const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
 
@@ -234,7 +266,15 @@ describe('QdrantVectorDatabase payload projection', () => {
     });
 
     it('maps metadata_json projection to metadata payload for code-symbol retrieval compatibility', async () => {
-        const metadata = { language: 'bsl', retrievalMode: 'bge_m3_full' };
+        const metadata = {
+            language: 'bsl',
+            retrievalMode: 'bge_m3_full',
+            bsl: {
+                provider: 'rlm-tools-bsl',
+                status: 'available',
+                symbols: [{ name: 'Печать', startLine: 10, endLine: 20 }],
+            },
+        };
         const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async () => ({
             ok: true,
             json: async () => ({
@@ -308,5 +348,64 @@ describe('QdrantVectorDatabase collection compatibility metadata', () => {
 
         await expect(db.getCollectionDescription('bge_m3_code_chunks_f390eec0')).resolves.toContain('retrievalMode:bge_m3_full');
         await expect(db.getCollectionDescription('bge_m3_code_chunks_f390eec0')).resolves.toContain('retrievalSchemaVersion:1');
+    });
+
+    it('reads stored collection metadata before falling back to Qdrant vector schema', async () => {
+        const description = [
+            'retrievalMode:bge_m3_full',
+            'retrievalSchemaVersion:1',
+            'enrichmentProvider:rlm-tools-bsl',
+            'enrichmentStatus:available',
+            'enrichmentSourceFingerprint:fingerprint-1',
+        ].join('\n');
+        const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/points/scroll')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        result: {
+                            points: [{
+                                payload: {
+                                    id: '__claude_context_metadata__:bge_m3_code_chunks_f390eec0',
+                                    _claudeContextMetadata: {
+                                        description,
+                                        mode: 'bge_m3',
+                                        dimension: 1024,
+                                    },
+                                },
+                            }],
+                        },
+                    }),
+                } as Response;
+            }
+            return {
+                ok: true,
+                json: async () => ({
+                    result: {
+                        config: {
+                            params: {
+                                vectors: {
+                                    dense: { size: 1024 },
+                                    colbert: { size: 1024 },
+                                },
+                                sparse_vectors: {
+                                    sparse: {},
+                                },
+                            },
+                        },
+                    },
+                }),
+            } as Response;
+        });
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const db = new QdrantVectorDatabase({ url: 'http://qdrant.local' });
+
+        await expect(db.getCollectionDescription('bge_m3_code_chunks_f390eec0')).resolves.toBe(description);
+        const scrollBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+        expect(scrollBody.filter.must[0]).toEqual({
+            key: 'id',
+            match: { value: '__claude_context_metadata__:bge_m3_code_chunks_f390eec0' },
+        });
     });
 });

@@ -390,6 +390,53 @@ export class ToolHandlers {
         return 'full';
     }
 
+    private async getRlmBslEnrichmentStatus(codebasePath: string, config: CodebaseSessionConfig | null): Promise<Record<string, unknown> | undefined> {
+        const mode = config?.rlmBslEnrichment?.mode || 'disabled';
+        const status: Record<string, unknown> = {
+            mode,
+            configured: mode !== 'disabled',
+            commandConfigured: Boolean(config?.rlmBslEnrichment?.command)
+        };
+
+        try {
+            const collectionName = this.context.getCollectionName(codebasePath);
+            const description = await this.context.getVectorDatabase().getCollectionDescription(collectionName);
+            const fields = this.parseCollectionDescriptionFields(description);
+            if (fields.enrichmentProvider === 'rlm-tools-bsl') {
+                status.provider = fields.enrichmentProvider;
+                status.status = fields.enrichmentStatus;
+                status.rawStatus = fields.enrichmentRawStatus;
+                status.providerSchemaVersion = fields.enrichmentProviderSchemaVersion
+                    ? Number(fields.enrichmentProviderSchemaVersion)
+                    : undefined;
+                status.sourceFingerprint = fields.enrichmentSourceFingerprint;
+                status.sourceRootMatchesCodebase = fields.enrichmentSourceRoot
+                    ? normalizeCodebasePath(fields.enrichmentSourceRoot) === normalizeCodebasePath(codebasePath)
+                    : undefined;
+            }
+        } catch (error) {
+            status.diagnostics = { collectionMetadata: `unavailable: ${getErrorMessage(error)}` };
+        }
+
+        return status;
+    }
+
+    private parseCollectionDescriptionFields(description: string): Record<string, string> {
+        const result: Record<string, string> = {};
+        for (const part of description.split(/[;\n]/)) {
+            const separator = part.indexOf(':');
+            if (separator <= 0) {
+                continue;
+            }
+            const key = part.slice(0, separator).trim();
+            const value = part.slice(separator + 1).trim();
+            if (key && value) {
+                result[key] = value;
+            }
+        }
+        return result;
+    }
+
     private createReducedOneCScopeWarning(profile: OneCIndexScopeProfile | undefined): string | undefined {
         if (!isReducedOneCIndexScopeProfile(profile)) {
             return undefined;
@@ -921,6 +968,9 @@ export class ToolHandlers {
             const retrievalInfo = configuredSessionConfig.retrievalProfile
                 ? `\nUsing retrieval performance profile: ${configuredSessionConfig.retrievalProfile} (${configuredSessionConfig.retrievalMode}, schema v${configuredSessionConfig.retrievalSchemaVersion})`
                 : `\nUsing retrieval mode: ${configuredSessionConfig.retrievalMode} (schema v${configuredSessionConfig.retrievalSchemaVersion})`;
+            const enrichmentInfo = configuredSessionConfig.rlmBslEnrichment?.mode && configuredSessionConfig.rlmBslEnrichment.mode !== 'disabled'
+                ? `\nUsing RLM BSL enrichment mode: ${configuredSessionConfig.rlmBslEnrichment.mode}`
+                : '';
 
             const queueInfo = queuedIndexingJob.startedImmediately
                 ? `\nIndexing started immediately.`
@@ -929,7 +979,7 @@ export class ToolHandlers {
             return {
                 content: [{
                     type: "text",
-                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${scopeInfo}${retrievalInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
+                    text: `Started background indexing for codebase '${absolutePath}' using ${splitterType.toUpperCase()} splitter.${pathInfo}${extensionInfo}${ignoreInfo}${scopeInfo}${retrievalInfo}${enrichmentInfo}${queueInfo}\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes.`
                 }],
                 structuredContent: {
                     path: absolutePath,
@@ -941,6 +991,12 @@ export class ToolHandlers {
                     retrievalProfile: configuredSessionConfig.retrievalProfile,
                     retrievalMode: configuredSessionConfig.retrievalMode,
                     retrievalSchemaVersion: configuredSessionConfig.retrievalSchemaVersion,
+                    rlmBslEnrichment: configuredSessionConfig.rlmBslEnrichment
+                        ? {
+                            mode: configuredSessionConfig.rlmBslEnrichment.mode,
+                            commandConfigured: Boolean(configuredSessionConfig.rlmBslEnrichment.command),
+                        }
+                        : { mode: 'disabled', commandConfigured: false },
                     oneCIndexScopeProfile,
                     startedImmediately: queuedIndexingJob.startedImmediately,
                     queuePosition: queuedIndexingJob.queuePosition
@@ -1648,6 +1704,10 @@ export class ToolHandlers {
             }
             const oneCScopeStatus = this.getOneCScopeStatus(info, persistedSyncConfig, accelerator);
             Object.assign(structuredStatus, oneCScopeStatus);
+            const rlmBslEnrichmentStatus = await this.getRlmBslEnrichmentStatus(absolutePath, persistedSyncConfig);
+            if (rlmBslEnrichmentStatus) {
+                structuredStatus.rlmBslEnrichment = rlmBslEnrichmentStatus;
+            }
 
             switch (status) {
                 case 'indexed':
@@ -1673,6 +1733,9 @@ export class ToolHandlers {
                                 statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
                             }
                         }
+                        if (rlmBslEnrichmentStatus?.configured) {
+                            statusMessage += `\n🧩 RLM BSL enrichment: ${String(rlmBslEnrichmentStatus.status || rlmBslEnrichmentStatus.mode)}`;
+                        }
                         statusMessage += `\n🕐 Last updated: ${new Date(info.lastUpdated).toLocaleString()}`;
                     } else {
                         if (info && info.status === 'indexed') {
@@ -1689,6 +1752,9 @@ export class ToolHandlers {
                                 if (persistedSyncConfig.retrievalSchemaVersion) {
                                     statusMessage += ` (schema v${persistedSyncConfig.retrievalSchemaVersion})`;
                                 }
+                            }
+                            if (rlmBslEnrichmentStatus?.configured) {
+                                statusMessage += `\n🧩 RLM BSL enrichment: ${String(rlmBslEnrichmentStatus.status || rlmBslEnrichmentStatus.mode)}`;
                             }
                             statusMessage += `\n🕐 Last updated: ${new Date(info.lastUpdated).toLocaleString()}`;
                         }

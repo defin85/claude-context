@@ -141,6 +141,7 @@ class ContextMcpServer {
             embedding: embedding as ContextOptions['embedding'],
             vectorDatabase: vectorDatabase as ContextOptions['vectorDatabase'],
             retrievalProfile: config.retrievalProfile,
+            rlmBslEnrichment: config.rlmBslEnrichment,
             acceleratorResourceSnapshotProvider: () => {
                 const vramPlanning = this.managedBgeM3WorkerManager?.getSnapshot().vramPlanning;
                 if (!vramPlanning?.totalMiB) {

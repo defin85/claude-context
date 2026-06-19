@@ -1064,6 +1064,13 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   if (summary.run.indexStatus) {
     lines.push(`- Index status: ${summary.run.indexStatus.status || summary.run.indexStatus.state || 'recorded'}`);
   }
+  if (summary.run.rlmBslEnrichment) {
+    const enrichment = summary.run.rlmBslEnrichment;
+    lines.push(`- RLM BSL enrichment: mode=${enrichment.mode || 'unknown'}, provider=${enrichment.provider || 'unknown'}, status=${enrichment.status || 'unknown'}, configured=${enrichment.configured === false ? 'false' : 'true'}`);
+    if (enrichment.sourceFingerprint) {
+      lines.push(`- RLM BSL source fingerprint: ${enrichment.sourceFingerprint}`);
+    }
+  }
   if (summary.run.rawSummary) {
     lines.push(`- MCP tool errors: ${summary.run.rawSummary.toolErrors ?? 0}`);
     lines.push(`- Missing ColBERT vector errors: ${summary.run.rawSummary.missingColbertErrors ?? 0}`);

@@ -9,6 +9,7 @@ export interface CodeChunk {
         documentId?: string;
         chunkIndex?: number;
         duplicateOrdinal?: number;
+        bsl?: Record<string, unknown>;
     };
 }
 

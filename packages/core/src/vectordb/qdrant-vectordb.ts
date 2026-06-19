@@ -291,28 +291,47 @@ export class QdrantVectorDatabase implements VectorDatabase {
     }
 
     private async saveCollectionMetadata(collectionName: string, metadata: CollectionMetadata): Promise<void> {
+        const metadataId = `__claude_context_metadata__:${collectionName}`;
         await this.fetchJson(`/collections/${encodeURIComponent(collectionName)}/points?wait=true`, {
             method: 'PUT',
             body: JSON.stringify({
                 points: [{
-                    id: stableUuid(`__claude_context_metadata__:${collectionName}`),
+                    id: stableUuid(metadataId),
                     vector: {
                         dense: Array(metadata.dimension).fill(0),
                         sparse: { indices: [], values: [] },
                         colbert: [Array(metadata.dimension).fill(0)],
                     },
                     payload: {
-                        id: `__claude_context_metadata__:${collectionName}`,
+                        id: metadataId,
                         _claudeContextMetadata: metadata,
                     },
                 }],
             }),
         });
-        await this.delete(collectionName, [`__claude_context_metadata__:${collectionName}`]);
     }
 
-    private async readCollectionMetadata(_collectionName: string): Promise<CollectionMetadata | undefined> {
-        return undefined;
+    private async readCollectionMetadata(collectionName: string): Promise<CollectionMetadata | undefined> {
+        const metadataId = `__claude_context_metadata__:${collectionName}`;
+        const response = await this.fetchJson(`/collections/${encodeURIComponent(collectionName)}/points/scroll`, {
+            method: 'POST',
+            body: JSON.stringify({
+                limit: 1,
+                with_payload: true,
+                with_vector: false,
+                filter: {
+                    must: [{
+                        key: 'id',
+                        match: { value: metadataId },
+                    }],
+                },
+            }),
+        });
+        const metadata = response.result?.points?.[0]?.payload?._claudeContextMetadata;
+        if (!metadata || typeof metadata !== 'object') {
+            return undefined;
+        }
+        return metadata as CollectionMetadata;
     }
 
     private async fetchJson(

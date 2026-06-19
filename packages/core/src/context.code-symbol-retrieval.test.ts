@@ -70,6 +70,7 @@ class TestVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents: VectorDocument[] = [];
     bgeM3SearchResults: HybridSearchResult[] = [];
+    collectionDescription = '';
 
     async createCollection(collectionName: string): Promise<void> { this.collections.add(collectionName); }
     async createHybridCollection(collectionName: string): Promise<void> { this.collections.add(collectionName); }
@@ -114,7 +115,7 @@ class TestVectorDatabase implements VectorDatabase {
 
         return rows.slice(0, limit).map((doc) => project(doc, outputFields));
     }
-    async getCollectionDescription(): Promise<string> { return ''; }
+    async getCollectionDescription(): Promise<string> { return this.collectionDescription; }
     async checkCollectionLimit(): Promise<boolean> { return true; }
     async getCollectionRowCount(): Promise<number> { return this.documents.length; }
 }
@@ -126,13 +127,31 @@ class FakeProvider implements CodeSymbolProvider {
         status: 'available',
     };
     candidates: CodeSymbolProviderCandidate[] = [];
+    calls = 0;
 
     async getAvailability(): Promise<CodeSymbolProviderAvailability> {
+        this.calls++;
         return this.availability;
     }
 
     async queryCandidates(_query: CodeSymbolProviderQuery): Promise<CodeSymbolProviderCandidate[]> {
+        this.calls++;
         return this.candidates;
+    }
+}
+
+class ThrowingProvider implements CodeSymbolProvider {
+    readonly providerName = 'rlm-tools-bsl';
+    calls = 0;
+
+    async getAvailability(): Promise<CodeSymbolProviderAvailability> {
+        this.calls++;
+        throw new Error('search-time provider should not be called');
+    }
+
+    async queryCandidates(): Promise<CodeSymbolProviderCandidate[]> {
+        this.calls++;
+        throw new Error('search-time provider should not be called');
     }
 }
 
@@ -1254,6 +1273,177 @@ describe('Context code-symbol retrieval', () => {
         }));
     });
 
+    it('uses stored RLM BSL enrichment metadata for exact symbol ranking without a search-time provider', async () => {
+        const enriched = doc({
+            id: 'stored-rlm-symbol',
+            content: 'Возврат Параметры;',
+            relativePath: 'src/cf/CommonModules/СкладскойЖурнал/Ext/Module.bsl',
+            startLine: 10,
+            endLine: 18,
+            metadata: {
+                bsl: {
+                    provider: 'rlm-tools-bsl',
+                    status: 'available',
+                    objectName: 'СкладскойЖурнал',
+                    moduleKind: 'Module',
+                    symbols: [{
+                        name: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+                        declarationKind: 'function',
+                        startLine: 10,
+                        endLine: 18,
+                        isExport: true,
+                    }],
+                },
+            },
+        });
+        const distractor = doc({
+            id: 'stored-rlm-distractor',
+            content: 'Параметры заполнения другого журнала',
+            relativePath: 'src/cf/CommonModules/ДругойЖурнал/Ext/Module.bsl',
+            startLine: 1,
+            endLine: 5,
+        });
+        const vectorDatabase = createDb([enriched, distractor]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: distractor, score: 0.95 },
+            { document: enriched, score: 0.1 },
+        ];
+        const context = createContext(vectorDatabase);
+
+        const results = await context.semanticSearch('/tmp/example', 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', 2);
+
+        expect(results[0].relativePath).toBe(enriched.relativePath);
+        expect(results[0].metadata?.exactSymbolBoost).toBeGreaterThan(0);
+        expect(results[0].metadata?.storedBslSymbolName).toBe('ПараметрыЗаполненияЗаписейСкладскогоЖурнала');
+    });
+
+    it('reports distinct ranking diagnostics for stored RLM, semantic, provider, path, and fusion signals', async () => {
+        const enriched = doc({
+            id: 'stored-rlm-symbol-diagnostics',
+            content: 'Возврат Параметры;',
+            relativePath: 'src/cf/CommonModules/СкладскойЖурнал/Ext/Module.bsl',
+            startLine: 10,
+            endLine: 18,
+            metadata: {
+                bsl: {
+                    provider: 'rlm-tools-bsl',
+                    status: 'available',
+                    objectKind: 'CommonModule',
+                    objectName: 'СкладскойЖурнал',
+                    moduleKind: 'Module',
+                    symbols: [{
+                        name: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+                        declarationKind: 'function',
+                        startLine: 10,
+                        endLine: 18,
+                    }],
+                },
+            },
+        });
+        const provider = new FakeProvider();
+        provider.candidates = [{
+            providerName: 'rlm-tools-bsl',
+            providerStatus: 'available',
+            relativePath: exactSymbolDocument.relativePath,
+            startLine: 125,
+            endLine: 125,
+            symbolName: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+            declarationKind: 'function',
+            providerRank: 0,
+            lexicalScore: 4,
+        }];
+        const vectorDatabase = createDb([enriched, exactSymbolDocument]);
+        vectorDatabase.bgeM3SearchResults = [
+            { document: enriched, score: 0.6 },
+            { document: exactSymbolDocument, score: 0.1 },
+        ];
+        const context = createContext(vectorDatabase, [provider]);
+
+        const results = await context.semanticSearch('/tmp/example', 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', 2);
+        const storedResult = results.find((result) => result.relativePath === enriched.relativePath);
+        const providerResult = results.find((result) => result.relativePath === exactSymbolDocument.relativePath);
+
+        expect(storedResult?.metadata).toEqual(expect.objectContaining({
+            storedBslSymbolName: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+            semanticScore: expect.any(Number),
+            lexicalScore: expect.any(Number),
+            pathBoost: expect.any(Number),
+            baseFusionScore: expect.any(Number),
+            fusionScore: expect.any(Number),
+        }));
+        expect(storedResult?.metadata?.retrievalSources).toEqual(expect.arrayContaining(['semantic', 'lexical']));
+        expect(storedResult?.metadata?.pathBoost).toEqual(expect.any(Number));
+        expect(providerResult?.metadata?.retrievalSources).toEqual(expect.arrayContaining(['symbol_provider']));
+        expect(providerResult?.metadata?.providerRankBoost).toBeGreaterThan(0);
+    });
+
+    it('skips the search-time RLM provider when collection metadata has compatible stored enrichment', async () => {
+        const enriched = doc({
+            id: 'stored-rlm-symbol-compatible',
+            content: 'Возврат Параметры;',
+            relativePath: 'src/cf/CommonModules/СкладскойЖурнал/Ext/Module.bsl',
+            startLine: 10,
+            endLine: 18,
+            metadata: {
+                bsl: {
+                    provider: 'rlm-tools-bsl',
+                    status: 'available',
+                    symbols: [{ name: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала' }],
+                },
+            },
+        });
+        const provider = new ThrowingProvider();
+        const vectorDatabase = createDb([enriched]);
+        vectorDatabase.collectionDescription = [
+            'codebasePath:/tmp/example',
+            'retrievalMode:bge_m3_full',
+            'retrievalSchemaVersion:1',
+            'enrichmentProvider:rlm-tools-bsl',
+            'enrichmentStatus:available',
+            'enrichmentSourceFingerprint:fingerprint-1',
+        ].join('\n');
+        vectorDatabase.bgeM3SearchResults = [
+            { document: enriched, score: 0.1 },
+        ];
+        const context = createContext(vectorDatabase, [provider]);
+
+        const results = await context.semanticSearch('/tmp/example', 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', 1);
+
+        expect(results[0].relativePath).toBe(enriched.relativePath);
+        expect(provider.calls).toBe(0);
+    });
+
+    it('keeps search-time RLM provider active for old collections without stored enrichment metadata', async () => {
+        const provider = new FakeProvider();
+        provider.candidates = [{
+            providerName: 'rlm-tools-bsl',
+            providerStatus: 'available',
+            relativePath: exactSymbolDocument.relativePath,
+            startLine: 125,
+            endLine: 125,
+            symbolName: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
+            declarationKind: 'function',
+            providerRank: 0,
+            lexicalScore: 4,
+        }];
+        const vectorDatabase = createDb([exactSymbolDocument, relatedDistractor]);
+        vectorDatabase.collectionDescription = [
+            'codebasePath:/tmp/example',
+            'retrievalMode:bge_m3_full',
+            'retrievalSchemaVersion:1',
+        ].join('\n');
+        vectorDatabase.bgeM3SearchResults = [
+            { document: relatedDistractor, score: 0.95 },
+        ];
+        const context = createContext(vectorDatabase, [provider]);
+
+        const results = await context.semanticSearch('/tmp/example', 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', 2);
+
+        expect(results[0].relativePath).toBe(exactSymbolDocument.relativePath);
+        expect(provider.calls).toBeGreaterThan(0);
+        expect(results[0].metadata?.symbolProvider).toBe('rlm-tools-bsl');
+    });
+
     it('keeps exact-symbol and provider-backed ordering active under generic profile', async () => {
         const provider = new FakeProvider();
         provider.candidates = [{
@@ -1475,13 +1665,14 @@ function doc(input: {
     relativePath: string;
     startLine: number;
     endLine: number;
+    metadata?: Record<string, any>;
 }): VectorDocument {
     return {
         ...input,
         vector: [],
         colbertVectors: [[1, 0]],
         fileExtension: '.bsl',
-        metadata: { language: 'bsl' },
+        metadata: { language: 'bsl', ...(input.metadata || {}) },
     };
 }
 

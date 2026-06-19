@@ -8,6 +8,7 @@ import {
     resolveRetrievalProfile,
 } from "@zilliz/claude-context-core";
 import type { ResolvedRetrievalProfile, RetrievalProfile } from "@zilliz/claude-context-core";
+import type { RlmBslEnrichmentConfig } from "@zilliz/claude-context-core";
 import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import { McpRuntimeMode } from './access-policy.js';
 import { normalizeCodebasePath } from './utils.js';
@@ -42,6 +43,7 @@ export interface ContextMcpConfig {
     bgeM3StoreColbert: boolean;
     retrievalProfile?: RetrievalProfile;
     resolvedRetrievalProfile: ResolvedRetrievalProfile;
+    rlmBslEnrichment?: RlmBslEnrichmentConfig;
     acceleratorMode: 'off' | 'auto';
     indexEmbeddingBatchSize: number;
     indexInsertBatchSize: number;
@@ -372,6 +374,7 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3StoreColbert: resolvedRetrievalProfile.storeColbert,
         retrievalProfile,
         resolvedRetrievalProfile,
+        rlmBslEnrichment: createRlmBslEnrichmentConfigFromEnv(),
         acceleratorMode,
         indexEmbeddingBatchSize: indexingAcceleratorConfig.embeddingBatchSize,
         indexInsertBatchSize: indexingAcceleratorConfig.insertBatchSize,
@@ -423,6 +426,42 @@ export function createMcpConfig(): ContextMcpConfig {
     }
 
     return config;
+}
+
+function createRlmBslEnrichmentConfigFromEnv(): RlmBslEnrichmentConfig | undefined {
+    const mode = envManager.get('RLM_BSL_ENRICHMENT_MODE');
+    if (!mode || mode === 'disabled') {
+        return undefined;
+    }
+    if (mode !== 'optional' && mode !== 'required') {
+        throw new Error(`Invalid RLM_BSL_ENRICHMENT_MODE '${mode}'. Expected 'disabled', 'optional', or 'required'.`);
+    }
+
+    return {
+        mode,
+        command: envManager.get('RLM_BSL_ENRICHMENT_COMMAND') || envManager.get('RLM_TOOLS_BSL_COMMAND'),
+        args: parseJsonStringArrayEnv('RLM_BSL_ENRICHMENT_ARGS_JSON'),
+        timeoutMs: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_TIMEOUT_MS', 5000),
+        limits: {
+            maxFiles: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_FILES', 100000),
+            maxSymbolsPerFile: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_SYMBOLS_PER_FILE', 500),
+            maxSynonymsPerFile: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_SYNONYMS_PER_FILE', 50),
+            maxStringLength: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_STRING_LENGTH', 1024),
+            maxDiagnosticsBytes: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_DIAGNOSTICS_BYTES', 16384)
+        }
+    };
+}
+
+function parseJsonStringArrayEnv(name: string): string[] | undefined {
+    const rawValue = envManager.get(name);
+    if (!rawValue) {
+        return undefined;
+    }
+    const parsedValue = JSON.parse(rawValue);
+    if (Array.isArray(parsedValue) && parsedValue.every((item) => typeof item === 'string')) {
+        return parsedValue;
+    }
+    throw new Error(`Invalid ${name}. Expected a JSON string array.`);
 }
 
 function parseVectorDatabaseBackend(rawValue: string | undefined): VectorDatabaseBackend {
@@ -703,6 +742,10 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
     console.log(`[MCP]   Vector Database Backend: ${config.vectorDatabaseBackend}`);
     console.log(`[MCP]   Retrieval Profile: ${config.retrievalProfile || 'unset (low-level compatibility)'}`);
     console.log(`[MCP]   Resolved Retrieval: profile=${config.resolvedRetrievalProfile.retrievalProfile}, mode=${config.resolvedRetrievalProfile.retrievalMode}, schema=${config.resolvedRetrievalProfile.retrievalSchemaVersion}`);
+    console.log(`[MCP]   RLM BSL Enrichment: ${config.rlmBslEnrichment?.mode || 'disabled'}`);
+    if (config.rlmBslEnrichment?.command) {
+        console.log(`[MCP]   RLM BSL Export Command: configured`);
+    }
     switch (config.vectorDatabaseBackend) {
         case 'qdrant':
             console.log(`[MCP]   Qdrant URL: ${config.qdrantUrl || 'http://127.0.0.1:6333'}`);
