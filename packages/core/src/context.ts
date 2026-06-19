@@ -66,8 +66,6 @@ import {
     DisabledCodebaseIndexEnricher,
     RlmBslEnrichmentConfig,
     RlmBslCompatibilityProof,
-    createRlmBslIndexEnricher,
-    normalizeRlmBslEnrichmentConfig,
 } from "./rlm-bsl-enrichment";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
@@ -281,7 +279,6 @@ export class Context {
     private acceleratorResourceSnapshotProvider?: () => IndexingAcceleratorResourcePressure | undefined;
     private codeSymbolProviders: CodeSymbolProvider[];
     private explicitCodebaseIndexEnricher?: CodebaseIndexEnricher;
-    private defaultRlmBslEnrichment?: RlmBslEnrichmentConfig;
     private rlmBslEnrichmentRuntimeStatus = new Map<string, Record<string, unknown>>();
 
     constructor(config: ContextConfig = {}) {
@@ -337,9 +334,6 @@ export class Context {
         this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
         this.codeSymbolProviders = config.codeSymbolProviders || this.createCodeSymbolProvidersFromEnv();
         this.explicitCodebaseIndexEnricher = config.codebaseIndexEnricher;
-        this.defaultRlmBslEnrichment = normalizeRlmBslEnrichmentConfig(config.rlmBslEnrichment)
-            || this.createRlmBslEnrichmentConfigFromEnv();
-
         console.log(
             `[Context] 🔧 Initialized with ${this.defaultSupportedExtensions.length} supported extensions and ${this.defaultIgnorePatterns.length} ignore patterns`,
         );
@@ -604,9 +598,7 @@ export class Context {
         session.retrievalMode = config.retrievalMode;
         session.retrievalSchemaVersion = config.retrievalSchemaVersion;
         session.oneCIndexScopeProfile = config.oneCIndexScopeProfile;
-        session.rlmBslEnrichment = normalizeRlmBslEnrichmentConfig(
-            config.rlmBslEnrichment || this.defaultRlmBslEnrichment,
-        );
+        session.rlmBslEnrichment = undefined;
         this.updateSessionEffectiveState(session);
 
         console.log(
@@ -633,7 +625,6 @@ export class Context {
             retrievalMode: resolvedRetrieval.retrievalMode,
             retrievalSchemaVersion: resolvedRetrieval.retrievalSchemaVersion,
             ...(session.oneCIndexScopeProfile ? { oneCIndexScopeProfile: session.oneCIndexScopeProfile } : {}),
-            ...(session.rlmBslEnrichment ? { rlmBslEnrichment: normalizeRlmBslEnrichmentConfig(session.rlmBslEnrichment) } : {}),
         };
     }
 
@@ -843,55 +834,14 @@ export class Context {
     }
 
     private createCodeSymbolProvidersFromEnv(): CodeSymbolProvider[] {
-        const command = envManager.get("RLM_TOOLS_BSL_COMMAND");
-        if (!command) {
-            return [];
-        }
-
-        return [
-            new RlmToolsBslSubprocessProvider({
-                command,
-                args: this.parseJsonStringArrayEnv("RLM_TOOLS_BSL_ARGS_JSON"),
-                availabilityArgs: this.parseJsonStringArrayEnv("RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON"),
-                providerRoot: envManager.get("RLM_TOOLS_BSL_ROOT"),
-                timeoutMs: this.parsePositiveEnvInt("CODE_SYMBOL_PROVIDER_TIMEOUT_MS", 750),
-            }),
-        ];
+        return [];
     }
 
-    private createRlmBslEnrichmentConfigFromEnv(): RlmBslEnrichmentConfig | undefined {
-        const mode = envManager.get("RLM_BSL_ENRICHMENT_MODE");
-        if (!mode || mode === "disabled") {
-            return undefined;
-        }
-        if (mode !== "optional" && mode !== "required") {
-            console.warn(`[Context] ⚠️  RLM_BSL_ENRICHMENT_MODE must be disabled, optional, or required. Ignoring '${mode}'.`);
-            return undefined;
-        }
-
-        return normalizeRlmBslEnrichmentConfig({
-            mode,
-            command: envManager.get("RLM_BSL_ENRICHMENT_COMMAND") || envManager.get("RLM_TOOLS_BSL_COMMAND"),
-            args: this.parseJsonStringArrayEnv("RLM_BSL_ENRICHMENT_ARGS_JSON"),
-            timeoutMs: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_TIMEOUT_MS", 5000),
-            limits: {
-                maxFiles: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_FILES", 100000),
-                maxSymbolsPerFile: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_SYMBOLS_PER_FILE", 500),
-                maxSynonymsPerFile: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_SYNONYMS_PER_FILE", 50),
-                maxStringLength: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_STRING_LENGTH", 1024),
-                maxDiagnosticsBytes: this.parsePositiveEnvInt("RLM_BSL_ENRICHMENT_MAX_DIAGNOSTICS_BYTES", 16384),
-            },
-        });
-    }
-
-    private getCodebaseIndexEnricherForSession(session: CodebaseSessionState): CodebaseIndexEnricher {
+    private getCodebaseIndexEnricherForSession(_session: CodebaseSessionState): CodebaseIndexEnricher {
         if (this.explicitCodebaseIndexEnricher) {
             return this.explicitCodebaseIndexEnricher;
         }
-        if (!session.rlmBslEnrichment || session.rlmBslEnrichment.mode === "disabled") {
-            return new DisabledCodebaseIndexEnricher();
-        }
-        return createRlmBslIndexEnricher(session.rlmBslEnrichment);
+        return new DisabledCodebaseIndexEnricher();
     }
 
     private getCodeSymbolRetrievalEnabled(): boolean {
@@ -914,25 +864,6 @@ export class Context {
         }
         const parsedValue = Number.parseInt(rawValue, 10);
         return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : defaultValue;
-    }
-
-    private parseJsonStringArrayEnv(name: string): string[] | undefined {
-        const rawValue = envManager.get(name);
-        if (!rawValue) {
-            return undefined;
-        }
-        try {
-            const parsedValue = JSON.parse(rawValue);
-            if (Array.isArray(parsedValue) && parsedValue.every((item) => typeof item === "string")) {
-                return parsedValue;
-            }
-            console.warn(`[Context] ⚠️  ${name} must be a JSON string array. Ignoring it.`);
-        } catch (error) {
-            console.warn(
-                `[Context] ⚠️  Failed to parse ${name}: ${error instanceof Error ? error.message : String(error)}. Ignoring it.`,
-            );
-        }
-        return undefined;
     }
 
     private getBgeM3ColbertTokenLimit(): number {

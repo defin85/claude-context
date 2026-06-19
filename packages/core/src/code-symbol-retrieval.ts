@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import * as path from 'path';
 import { SemanticSearchResult } from './types';
 import { VectorDatabase, VectorDocument } from './vectordb';
@@ -88,6 +87,8 @@ export interface CodeSymbolRetrievalResult {
 export const RANKING_PROFILES = ['auto', 'generic', 'one-c'] as const;
 
 export type RankingProfile = typeof RANKING_PROFILES[number];
+
+const RLM_TOOLS_BSL_PROVIDER_DISABLED_REASON = 'RLM BSL search provider is disabled';
 
 export interface RankingProfileResolutionOptions {
     searchTimeProfile?: RankingProfile;
@@ -484,107 +485,27 @@ export interface RlmToolsBslSubprocessProviderConfig {
 
 export class RlmToolsBslSubprocessProvider implements CodeSymbolProvider {
     readonly providerName = 'rlm-tools-bsl';
-    private readonly command?: string;
-    private readonly args: string[];
-    private readonly availabilityArgs?: string[];
     private readonly providerRoot?: string;
-    private readonly timeoutMs: number;
 
     constructor(config: RlmToolsBslSubprocessProviderConfig = {}) {
-        this.command = config.command;
-        this.args = config.args || ['symbol-search', '--json', '--path', '{codebasePath}', '--query', '{query}', '--limit', '{limit}'];
-        this.availabilityArgs = config.availabilityArgs;
         this.providerRoot = config.providerRoot;
-        this.timeoutMs = config.timeoutMs || 750;
     }
 
     async getAvailability(codebasePath: string): Promise<CodeSymbolProviderAvailability> {
-        if (!this.command) {
-            return {
-                providerName: this.providerName,
-                status: 'disabled',
-                diagnostics: { reason: 'RLM_TOOLS_BSL_COMMAND is not configured' },
-            };
-        }
-
-        if (this.availabilityArgs) {
-            const args = this.availabilityArgs.map((arg) => arg
-                .split('{codebasePath}').join(codebasePath));
-            try {
-                const output = await runJsonCommand(this.command, args, this.timeoutMs);
-                const status = normalizeProviderStatus(output?.status);
-                return {
-                    providerName: this.providerName,
-                    status,
-                    diagnostics: {
-                        ...(output?.diagnostics || {}),
-                        codebasePath,
-                        providerRoot: this.providerRoot,
-                        transport: 'subprocess-json',
-                        autoIndexLifecycle: 'disabled',
-                    },
-                };
-            } catch (error) {
-                return {
-                    providerName: this.providerName,
-                    status: 'error',
-                    diagnostics: {
-                        error: error instanceof Error ? error.message : String(error),
-                        transport: 'subprocess-json',
-                        autoIndexLifecycle: 'disabled',
-                    },
-                };
-            }
-        }
-
         return {
             providerName: this.providerName,
-            status: 'unsupported',
+            status: 'disabled',
             diagnostics: {
-                reason: 'RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON is required for freshness checks',
+                reason: RLM_TOOLS_BSL_PROVIDER_DISABLED_REASON,
                 codebasePath,
                 providerRoot: this.providerRoot,
-                transport: 'subprocess-json',
                 autoIndexLifecycle: 'disabled',
             },
         };
     }
 
-    async queryCandidates(query: CodeSymbolProviderQuery): Promise<CodeSymbolProviderCandidate[]> {
-        if (!this.command) {
-            return [];
-        }
-
-        const args = this.args.map((arg) => arg
-            .split('{codebasePath}').join(query.codebasePath)
-            .split('{query}').join(query.query)
-            .split('{limit}').join(String(query.maxCandidates)));
-        const output = await runJsonCommand(this.command, args, Math.min(query.timeoutMs, this.timeoutMs));
-        const rows = Array.isArray(output) ? output : output?.candidates;
-        if (!Array.isArray(rows)) {
-            throw new Error('rlm-tools-bsl provider did not return a JSON candidate array.');
-        }
-
-        return rows.slice(0, query.maxCandidates).map((row: any, index: number) => ({
-            providerName: this.providerName,
-            providerStatus: 'available' as CodeSymbolProviderStatus,
-            relativePath: translateProviderPath(
-                String(row.relativePath || row.path || ''),
-                query.codebasePath,
-                this.providerRoot,
-            ),
-            startLine: numberOrUndefined(row.startLine ?? row.line),
-            endLine: numberOrUndefined(row.endLine ?? row.lineEnd ?? row.line),
-            symbolName: stringOrUndefined(row.symbolName ?? row.name ?? row.methodName),
-            declarationKind: stringOrUndefined(row.declarationKind ?? row.kind),
-            moduleName: stringOrUndefined(row.moduleName),
-            objectKind: stringOrUndefined(row.objectKind),
-            moduleType: stringOrUndefined(row.moduleType),
-            export: typeof row.export === 'boolean' ? row.export : undefined,
-            providerRank: numberOrUndefined(row.providerRank ?? row.rank) ?? index,
-            lexicalScore: numberOrUndefined(row.lexicalScore ?? row.score) ?? 4,
-            diagnostics: { transport: 'subprocess-json' },
-        })).filter((candidate) => candidate.relativePath.length > 0);
+    async queryCandidates(_query: CodeSymbolProviderQuery): Promise<CodeSymbolProviderCandidate[]> {
+        return [];
     }
 }
 
@@ -634,20 +555,6 @@ async function fetchNoReindexLexicalCandidates(
         }
     }
 
-    const storedBslRows = await vectorDatabase.query(collectionName, undefined, outputFields, maxCandidates).catch(() => [] as Record<string, any>[]);
-    for (const row of storedBslRows) {
-        if (rowsByKey.size >= maxCandidates) {
-            break;
-        }
-        if (!rowMatchesFilterExpr(row, filterExpr)) {
-            continue;
-        }
-        const document = rowToVectorDocument(row);
-        if (scoreStoredBslMetadata(tokens, document.metadata).exactSymbolBoost > 0) {
-            rowsByKey.set(rowKey(row), row);
-        }
-    }
-
     if (rowsByKey.size === 0) {
         const rows = await vectorDatabase.query(collectionName, undefined, outputFields, maxCandidates);
         for (const row of rows) {
@@ -661,14 +568,11 @@ async function fetchNoReindexLexicalCandidates(
     return [...rowsByKey.values()]
         .map((row) => {
             const document = rowToVectorDocument(row);
-            const storedBslScore = scoreStoredBslMetadata(tokens, document.metadata).exactSymbolBoost > 0 ? 4 : 0;
             const lexicalScore = scoreLexicalDocument(tokens, document);
             return {
                 document,
-                lexicalScore: Math.max(lexicalScore, storedBslScore),
-                sources: storedBslScore > 0
-                    ? unique(['stored_rlm_bsl', ...(lexicalScore > 0 ? ['lexical'] : [])])
-                    : ['lexical'],
+                lexicalScore,
+                sources: ['lexical'],
             };
         })
         .filter((candidate) => candidate.lexicalScore > 0)
@@ -825,24 +729,6 @@ function scoreExactSymbol(tokens: CodeSymbolQueryTokens, content: string): numbe
 }
 
 function scoreStoredBslMetadata(tokens: CodeSymbolQueryTokens, metadata?: Record<string, any>): { exactSymbolBoost: number; symbolName?: string } {
-    const symbols = Array.isArray(metadata?.bsl?.symbols) ? metadata.bsl.symbols : [];
-    for (const symbol of symbols) {
-        if (!symbol || typeof symbol.name !== 'string') {
-            continue;
-        }
-        const normalizedSymbol = normalizeText(symbol.name);
-        const matched = unique([...tokens.exactTerms, ...tokens.identifierTerms]).some((term) => {
-            const normalizedTerm = normalizeText(term);
-            return normalizedTerm.length > 0 && (
-                normalizedSymbol === normalizedTerm ||
-                normalizedSymbol.includes(normalizedTerm) ||
-                normalizedTerm.includes(normalizedSymbol)
-            );
-        });
-        if (matched) {
-            return { exactSymbolBoost: 6, symbolName: symbol.name };
-        }
-    }
     return { exactSymbolBoost: 0 };
 }
 
@@ -1592,44 +1478,6 @@ function scoreLineOverlap(candidate: CodeSymbolProviderCandidate, row: Record<st
     return Math.max(0, overlapEnd - overlapStart + 1);
 }
 
-function runJsonCommand(command: string, args: string[], timeoutMs: number): Promise<any> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            shell: false,
-        });
-        let stdout = '';
-        let stderr = '';
-        const timer = setTimeout(() => {
-            child.kill('SIGTERM');
-            reject(new ProviderTimeoutError(`Provider command timed out after ${timeoutMs}ms.`));
-        }, timeoutMs);
-
-        child.stdout.on('data', (chunk) => {
-            stdout += chunk.toString('utf8');
-        });
-        child.stderr.on('data', (chunk) => {
-            stderr += chunk.toString('utf8');
-        });
-        child.on('error', (error) => {
-            clearTimeout(timer);
-            reject(error);
-        });
-        child.on('close', (code) => {
-            clearTimeout(timer);
-            if (code !== 0) {
-                reject(new Error(`Provider command exited with ${code}: ${stderr.trim()}`));
-                return;
-            }
-            try {
-                resolve(JSON.parse(stdout));
-            } catch (error) {
-                reject(new Error(`Provider command did not return valid JSON: ${error instanceof Error ? error.message : String(error)}`));
-            }
-        });
-    });
-}
-
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new ProviderTimeoutError(`Provider timed out after ${timeoutMs}ms.`)), timeoutMs);
@@ -1737,29 +1585,4 @@ function rowMatchesFilterExpr(row: Record<string, any>, filterExpr?: string): bo
 function parseQuotedList(value: string): string[] {
     return [...value.matchAll(/['"]((?:\\.|[^'"\\])*)['"]/g)]
         .map((match) => match[1].replace(/\\(["'])/g, '$1'));
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function stringOrUndefined(value: unknown): string | undefined {
-    return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function normalizeProviderStatus(value: unknown): CodeSymbolProviderStatus {
-    if (
-        value === 'available' ||
-        value === 'missing' ||
-        value === 'stale' ||
-        value === 'busy' ||
-        value === 'error' ||
-        value === 'unsupported' ||
-        value === 'timeout' ||
-        value === 'disabled'
-    ) {
-        return value;
-    }
-    return 'error';
 }

@@ -1,6 +1,3 @@
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import {
     CodeSymbolProvider,
     CodeSymbolProviderAvailability,
@@ -1273,7 +1270,7 @@ describe('Context code-symbol retrieval', () => {
         }));
     });
 
-    it('uses stored RLM BSL enrichment metadata for exact symbol ranking without a search-time provider', async () => {
+    it('ignores stored RLM BSL enrichment metadata for exact symbol ranking', async () => {
         const enriched = doc({
             id: 'stored-rlm-symbol',
             content: 'Возврат Параметры;',
@@ -1312,9 +1309,9 @@ describe('Context code-symbol retrieval', () => {
 
         const results = await context.semanticSearch('/tmp/example', 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала', 2);
 
-        expect(results[0].relativePath).toBe(enriched.relativePath);
-        expect(results[0].metadata?.exactSymbolBoost).toBeGreaterThan(0);
-        expect(results[0].metadata?.storedBslSymbolName).toBe('ПараметрыЗаполненияЗаписейСкладскогоЖурнала');
+        expect(results[0].relativePath).toBe(distractor.relativePath);
+        expect(results.find((result) => result.relativePath === enriched.relativePath)?.metadata?.exactSymbolBoost ?? 0).toBe(0);
+        expect(results.find((result) => result.relativePath === enriched.relativePath)?.metadata?.storedBslSymbolName).toBeUndefined();
     });
 
     it('reports distinct ranking diagnostics for stored RLM, semantic, provider, path, and fusion signals', async () => {
@@ -1364,14 +1361,14 @@ describe('Context code-symbol retrieval', () => {
         const providerResult = results.find((result) => result.relativePath === exactSymbolDocument.relativePath);
 
         expect(storedResult?.metadata).toEqual(expect.objectContaining({
-            storedBslSymbolName: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
             semanticScore: expect.any(Number),
             lexicalScore: expect.any(Number),
             pathBoost: expect.any(Number),
             baseFusionScore: expect.any(Number),
             fusionScore: expect.any(Number),
         }));
-        expect(storedResult?.metadata?.retrievalSources).toEqual(expect.arrayContaining(['semantic', 'lexical']));
+        expect(storedResult?.metadata?.storedBslSymbolName).toBeUndefined();
+        expect(storedResult?.metadata?.retrievalSources).toEqual(['semantic']);
         expect(storedResult?.metadata?.pathBoost).toEqual(expect.any(Number));
         expect(providerResult?.metadata?.retrievalSources).toEqual(expect.arrayContaining(['symbol_provider']));
         expect(providerResult?.metadata?.providerRankBoost).toBeGreaterThan(0);
@@ -1557,24 +1554,14 @@ describe('Context code-symbol retrieval', () => {
         );
     });
 
-    it('uses argv arrays for subprocess provider queries with spaces and Cyrillic characters', async () => {
-        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rlm-tools-bsl-provider-'));
-        const recorderPath = path.join(tempDir, 'recorder.js');
-        const argsPath = path.join(tempDir, 'args.json');
-        await fs.writeFile(
-            recorderPath,
-            [
-                'const fs = require("fs");',
-                `fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
-                'process.stdout.write(JSON.stringify({ candidates: [] }));',
-            ].join('\n'),
-        );
+    it('keeps the subprocess RLM provider disabled for queries and availability checks', async () => {
         const provider = new RlmToolsBslSubprocessProvider({
             command: process.execPath,
-            args: [recorderPath, '--path', '{codebasePath}', '--query', '{query}', '--limit', '{limit}'],
+            args: ['must-not-run'],
+            availabilityArgs: ['must-not-run'],
         });
 
-        await provider.queryCandidates({
+        const candidates = await provider.queryCandidates({
             codebasePath: '/tmp/путь с пробелом',
             query: 'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
             tokens: {
@@ -1590,37 +1577,15 @@ describe('Context code-symbol retrieval', () => {
             timeoutMs: 1000,
         });
 
-        const recordedArgs = JSON.parse(await fs.readFile(argsPath, 'utf8'));
-        expect(recordedArgs).toEqual([
-            '--path',
-            '/tmp/путь с пробелом',
-            '--query',
-            'ПараметрыЗаполненияЗаписейСкладскогоЖурнала',
-            '--limit',
-            '5',
-        ]);
-    });
-
-    it('reads structured subprocess availability status without building indexes', async () => {
-        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rlm-tools-bsl-availability-'));
-        const statusPath = path.join(tempDir, 'status.js');
-        await fs.writeFile(
-            statusPath,
-            'process.stdout.write(JSON.stringify({ status: "stale", diagnostics: { reason: "mtime mismatch" } }));',
-        );
-        const provider = new RlmToolsBslSubprocessProvider({
-            command: process.execPath,
-            availabilityArgs: [statusPath, '--path', '{codebasePath}'],
-        });
-
         const availability = await provider.getAvailability('/tmp/путь с пробелом');
 
+        expect(candidates).toEqual([]);
         expect(availability).toEqual(expect.objectContaining({
             providerName: 'rlm-tools-bsl',
-            status: 'stale',
+            status: 'disabled',
         }));
         expect(availability.diagnostics).toEqual(expect.objectContaining({
-            reason: 'mtime mismatch',
+            reason: 'RLM BSL search provider is disabled',
             autoIndexLifecycle: 'disabled',
         }));
     });
@@ -1634,10 +1599,10 @@ describe('Context code-symbol retrieval', () => {
 
         expect(availability).toEqual(expect.objectContaining({
             providerName: 'rlm-tools-bsl',
-            status: 'unsupported',
+            status: 'disabled',
         }));
         expect(availability.diagnostics).toEqual(expect.objectContaining({
-            reason: 'RLM_TOOLS_BSL_AVAILABILITY_ARGS_JSON is required for freshness checks',
+            reason: 'RLM BSL search provider is disabled',
             autoIndexLifecycle: 'disabled',
         }));
     });

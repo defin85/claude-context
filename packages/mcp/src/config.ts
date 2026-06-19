@@ -374,7 +374,7 @@ export function createMcpConfig(): ContextMcpConfig {
         bgeM3StoreColbert: resolvedRetrievalProfile.storeColbert,
         retrievalProfile,
         resolvedRetrievalProfile,
-        rlmBslEnrichment: createRlmBslEnrichmentConfigFromEnv(),
+        rlmBslEnrichment: undefined,
         acceleratorMode,
         indexEmbeddingBatchSize: indexingAcceleratorConfig.embeddingBatchSize,
         indexInsertBatchSize: indexingAcceleratorConfig.insertBatchSize,
@@ -426,42 +426,6 @@ export function createMcpConfig(): ContextMcpConfig {
     }
 
     return config;
-}
-
-function createRlmBslEnrichmentConfigFromEnv(): RlmBslEnrichmentConfig | undefined {
-    const mode = envManager.get('RLM_BSL_ENRICHMENT_MODE');
-    if (!mode || mode === 'disabled') {
-        return undefined;
-    }
-    if (mode !== 'optional' && mode !== 'required') {
-        throw new Error(`Invalid RLM_BSL_ENRICHMENT_MODE '${mode}'. Expected 'disabled', 'optional', or 'required'.`);
-    }
-
-    return {
-        mode,
-        command: envManager.get('RLM_BSL_ENRICHMENT_COMMAND') || envManager.get('RLM_TOOLS_BSL_COMMAND'),
-        args: parseJsonStringArrayEnv('RLM_BSL_ENRICHMENT_ARGS_JSON'),
-        timeoutMs: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_TIMEOUT_MS', 5000),
-        limits: {
-            maxFiles: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_FILES', 100000),
-            maxSymbolsPerFile: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_SYMBOLS_PER_FILE', 500),
-            maxSynonymsPerFile: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_SYNONYMS_PER_FILE', 50),
-            maxStringLength: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_STRING_LENGTH', 1024),
-            maxDiagnosticsBytes: getPositiveIntegerFromEnvWithDefault('RLM_BSL_ENRICHMENT_MAX_DIAGNOSTICS_BYTES', 16384)
-        }
-    };
-}
-
-function parseJsonStringArrayEnv(name: string): string[] | undefined {
-    const rawValue = envManager.get(name);
-    if (!rawValue) {
-        return undefined;
-    }
-    const parsedValue = JSON.parse(rawValue);
-    if (Array.isArray(parsedValue) && parsedValue.every((item) => typeof item === 'string')) {
-        return parsedValue;
-    }
-    throw new Error(`Invalid ${name}. Expected a JSON string array.`);
 }
 
 function parseVectorDatabaseBackend(rawValue: string | undefined): VectorDatabaseBackend {

@@ -22,6 +22,10 @@ const trackedEnv = [
     'MCP_DASHBOARD_ENABLED',
     'MCP_DASHBOARD_ROUTE',
     'MCP_DASHBOARD_STATIC_DIR',
+    'RLM_BSL_ENRICHMENT_MODE',
+    'RLM_BSL_ENRICHMENT_COMMAND',
+    'RLM_BSL_ENRICHMENT_ARGS_JSON',
+    'RLM_TOOLS_BSL_COMMAND',
 ];
 
 function withEnv(env: Record<string, string | undefined>, run: () => void): void {
@@ -213,6 +217,19 @@ test('daemon dashboard is disabled by default and can be enabled from CLI', () =
         assert.equal(enabled.daemon?.dashboard.routePrefix, '/ops');
         assert.equal(enabled.daemon?.dashboard.apiPrefix, '/ops/api');
         assert.equal(enabled.daemon?.dashboard.staticDir, '/tmp/dashboard');
+    });
+});
+
+test('RLM BSL enrichment environment variables are ignored', () => {
+    withEnv({
+        RLM_BSL_ENRICHMENT_MODE: 'required',
+        RLM_BSL_ENRICHMENT_COMMAND: '/tmp/rlm-bsl-index',
+        RLM_BSL_ENRICHMENT_ARGS_JSON: '["provider","export","{codebasePath}","--json"]',
+        RLM_TOOLS_BSL_COMMAND: '/tmp/rlm-bsl-index',
+    }, () => {
+        const config = createMcpConfig();
+
+        assert.equal(config.rlmBslEnrichment, undefined);
     });
 });
 
