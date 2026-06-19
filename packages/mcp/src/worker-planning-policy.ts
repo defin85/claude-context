@@ -2,6 +2,7 @@ import type { IndexingAcceleratorSnapshot } from '@zilliz/claude-context-core';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ManagedBgeM3WorkerManager } from './bge-m3-managed-workers.js';
 import type { DaemonOperatorStatus } from './daemon-discovery.js';
+import { createDaemonProfileState } from './profile-state.js';
 
 export const GET_DAEMON_STATUS_TOOL_DESCRIPTION = 'Inspect daemon runtime metadata, known repositories, active workload state, and the agent worker planning policy.';
 
@@ -155,6 +156,11 @@ export function createDaemonStatusResult(
     managedBgeM3Workers: ManagedBgeM3WorkerSnapshot | undefined,
     retrievalConfiguration?: Record<string, unknown>,
 ): DaemonStatusResult {
+    const profileState = createDaemonProfileState(
+        retrievalConfiguration,
+        accelerator,
+        managedBgeM3Workers,
+    );
     const textLines = [
         `Daemon runtimes: ${operatorStatus.runtimes.length}`,
         WORKER_PLANNING_POLICY_TEXT,
@@ -238,6 +244,7 @@ export function createDaemonStatusResult(
             accelerator,
             managedBgeM3Workers,
             retrievalConfiguration,
+            profileState,
             workerPlanningPolicy: createWorkerPlanningPolicy(),
         },
     };

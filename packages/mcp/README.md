@@ -313,7 +313,9 @@ Dashboard options:
 - `--dashboard-route <path>` or `MCP_DASHBOARD_ROUTE`: route prefix, default `/dashboard`.
 - `--dashboard-static-dir <path>` or `MCP_DASHBOARD_STATIC_DIR`: production build directory. If omitted, the daemon serves a minimal placeholder page.
 
-The dashboard currently provides polling-based daemon status, known codebase listing, indexing status, search, index, clear, and cancel actions. API routes reject non-loopback requests, non-local web origins, missing bearer tokens, and route collisions with the MCP endpoint.
+The dashboard currently provides polling-based daemon status, known codebase listing, indexing status, profile state visibility, search, index, clear, and cancel actions. API routes reject non-loopback requests, non-local web origins, missing bearer tokens, and route collisions with the MCP endpoint.
+
+Status and search responses may include a structured `profileState` object. The dashboard uses it as the preferred source for daemon retrieval defaults, selected-codebase index-time retrieval and 1C/RLM BSL state, and latest-search ranking state. Existing fields such as `retrievalConfiguration`, `retrievalProfile`, `retrievalMode`, `retrievalSchemaVersion`, `rankingProfile`, `oneCIndexScopeProfile`, and `rlmBslEnrichment` remain available for compatibility and dashboard fallback rendering.
 
 Keep the dashboard bound to `127.0.0.1`. Do not expose it on a non-local interface, reverse proxy, or shared host without a separate deployment review for authentication, TLS, origin policy, and secret handling.
 
@@ -829,6 +831,8 @@ Search the indexed codebase using natural language queries with hybrid search (B
 - `limit` (optional): Maximum number of results to return (default: 10, max: 50)
 - `extensionFilter` (optional): List of file extensions to filter results (e.g., ['.ts', '.py']) (default: [])
 - `rankingProfile` (optional): Retrieval ranking profile. Use `auto` for backward-compatible path-based behavior, `generic` to disable 1C-specific boosts, or `one-c` to explicitly enable 1C ranking signals for exported 1C configurations (default: `auto`).
+
+Structured search responses include `profileState.search` when profile diagnostics are available. It reports the requested and resolved ranking profile as request-time state and does not persist ranking profile as codebase configuration.
 
 ### 3. `clear_index`
 

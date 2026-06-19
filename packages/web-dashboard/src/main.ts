@@ -8,7 +8,9 @@ import {
 } from './actionLog';
 import { buildProgressSummary, CodebaseStatus } from './operationsView';
 import {
+    buildProfileStateSections,
     buildSearchRequestBody,
+    DashboardProfileState,
     formatRetrievalContext,
     getResultDiagnostics,
     RankingProfile,
@@ -74,6 +76,7 @@ interface DaemonStatus {
         usesBgeM3Sparse?: boolean;
         usesColbert?: boolean;
     };
+    profileState?: DashboardProfileState;
 }
 
 interface WorkloadJob {
@@ -111,18 +114,21 @@ interface SearchResult {
     metadata?: Record<string, unknown>;
 }
 
+type DashboardCodebaseStatus = CodebaseStatus & RetrievalContext & { profileState?: DashboardProfileState };
+
 interface SearchData extends RetrievalContext {
     results?: SearchResult[];
     rankingProfile?: RankingProfile;
     indexingStatus?: string;
     oneCIndexScope?: unknown;
+    profileState?: DashboardProfileState;
 }
 
 const tokenKey = 'claude-context-dashboard-token';
 const state = {
     token: sessionStorage.getItem(tokenKey) || '',
     status: undefined as DaemonStatus | undefined,
-    selectedStatus: undefined as CodebaseStatus | undefined,
+    selectedStatus: undefined as DashboardCodebaseStatus | undefined,
     codebases: [] as CodebaseSummary[],
     selectedPath: '',
     message: '',
@@ -429,6 +435,7 @@ function render(): void {
                 ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
                 ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
                 ${operatorLogSection(state.actionLog)}
+                ${profileStateSection()}
                 ${searchSection()}
                 <section class="results">
                     ${state.searchResults.length === 0 ? '<p class="empty">Результатов пока нет.</p>' : state.searchResults.map((result, index) => `
@@ -475,7 +482,7 @@ function searchSection(): string {
                     <input id="extension-filter" type="text" placeholder=".bsl, .xml" value="${escapeHtml(state.extensionFilterText)}" />
                 </label>
                 <label class="field compact">
-                    <span>Ranking profile</span>
+                    <span>Ранжирование</span>
                     <select id="ranking-profile" ${state.busy ? 'disabled' : ''}>
                         ${rankingOption('auto', 'auto')}
                         ${rankingOption('generic', 'generic')}
@@ -557,6 +564,44 @@ function selectedRetrievalContext(status: CodebaseStatus | undefined): Retrieval
         retrievalSchemaVersion: raw?.retrievalSchemaVersion,
         oneCIndexScopeProfile: raw?.oneCIndexScopeProfile,
     };
+}
+
+function profileStateSection(): string {
+    const fallbackRetrieval = {
+        ...state.status?.retrievalConfiguration,
+        ...selectedRetrievalContext(state.selectedStatus),
+    };
+    const profileState: DashboardProfileState = {
+        ...(state.status?.profileState?.daemon ? { daemon: state.status.profileState.daemon } : {}),
+        ...(state.selectedStatus?.profileState?.codebase ? { codebase: state.selectedStatus.profileState.codebase } : {}),
+        ...(state.searchContext?.profileState?.search ? { search: state.searchContext.profileState.search } : {}),
+    };
+    const sections = buildProfileStateSections({
+        profileState,
+        fallbackRetrieval,
+        fallbackRankingProfile: state.searchContext?.rankingProfile || state.rankingProfile,
+    });
+
+    return `
+        <section class="profile-state" aria-label="Состояние профилей">
+            <div class="section-heading">
+                <div>
+                    <h2>Профили</h2>
+                    <p>Настройки демона, индекс выбранного репозитория и последний поиск.</p>
+                </div>
+            </div>
+            <div class="profile-state-grid">
+                ${sections.map((section) => `
+                    <article class="profile-state-card ${section.tone}">
+                        <h3>${escapeHtml(section.title)}</h3>
+                        <ul>
+                            ${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+                        </ul>
+                    </article>
+                `).join('')}
+            </div>
+        </section>
+    `;
 }
 
 function resultDetails(result: SearchResult): string {

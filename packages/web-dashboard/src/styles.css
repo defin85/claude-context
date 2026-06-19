@@ -262,6 +262,53 @@ p {
     gap: 12px;
 }
 
+.profile-state {
+    display: grid;
+    gap: 12px;
+}
+
+.profile-state-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.profile-state-card {
+    background: #ffffff;
+    border: 1px solid #d7ded9;
+    border-radius: 8px;
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+}
+
+.profile-state-card.attention {
+    border-left: 4px solid #d1a53b;
+}
+
+.profile-state-card.degraded {
+    border-left: 4px solid #b65d4b;
+}
+
+.profile-state-card h3 {
+    font-size: 15px;
+    margin: 0;
+}
+
+.profile-state-card ul {
+    display: grid;
+    gap: 5px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.profile-state-card li {
+    color: #40504a;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
 .section-heading {
     display: flex;
     justify-content: space-between;
@@ -713,6 +760,7 @@ pre {
 
     .operations-grid,
     .worker-panels,
+    .profile-state-grid,
     .counter-grid,
     .worker-summary,
     .vram-grid,

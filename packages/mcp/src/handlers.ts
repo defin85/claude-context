@@ -12,7 +12,7 @@ import {
     parseOneCIndexScopeProfile,
     resolveOneCIndexScopeProfile,
 } from "@zilliz/claude-context-core";
-import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile, RetrievalProfile } from "@zilliz/claude-context-core";
+import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile, RetrievalMode, RetrievalProfile } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
 import { RuntimeStatusManager } from "./runtime-status.js";
@@ -26,6 +26,11 @@ import {
 import { CodebaseAccessPolicy } from "./access-policy.js";
 import { ManagedBgeM3WorkerManager } from "./bge-m3-managed-workers.js";
 import { WorkloadCancelledError, WorkloadManager, isWorkloadCancelledError } from "./workload-manager.js";
+import {
+    createCodebaseProfileState,
+    createSearchProfileState,
+    mergeProfileState,
+} from "./profile-state.js";
 
 type ToolArgs = Record<string, unknown>;
 type StructuredContent = Record<string, unknown>;
@@ -39,6 +44,16 @@ type SearchResultSummary = {
     content: string;
     metadata?: unknown;
 };
+type DaemonRetrievalConfiguration = {
+    retrievalProfile?: RetrievalProfile;
+    resolvedRetrievalProfile?: RetrievalProfile;
+    explicitProfile?: boolean;
+    retrievalMode?: RetrievalMode;
+    retrievalSchemaVersion?: number;
+    bgeM3Mode?: 'dense' | 'full';
+    usesBgeM3Sparse?: boolean;
+    usesColbert?: boolean;
+};
 
 export class ToolHandlers {
     private context: Context;
@@ -48,6 +63,7 @@ export class ToolHandlers {
     private accessPolicy: CodebaseAccessPolicy;
     private workloadManager?: WorkloadManager;
     private managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager;
+    private daemonRetrievalConfiguration?: DaemonRetrievalConfiguration;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
@@ -58,7 +74,8 @@ export class ToolHandlers {
         runtimeStatusManager?: RuntimeStatusManager,
         accessPolicy: CodebaseAccessPolicy = new CodebaseAccessPolicy({ mode: 'stdio' }),
         workloadManager?: WorkloadManager,
-        managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager
+        managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager,
+        daemonRetrievalConfiguration?: DaemonRetrievalConfiguration
     ) {
         this.context = context;
         this.snapshotManager = snapshotManager;
@@ -67,6 +84,7 @@ export class ToolHandlers {
         this.accessPolicy = accessPolicy;
         this.workloadManager = workloadManager;
         this.managedBgeM3WorkerManager = managedBgeM3WorkerManager;
+        this.daemonRetrievalConfiguration = daemonRetrievalConfiguration;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
@@ -802,6 +820,12 @@ export class ToolHandlers {
                         retrievalMode: requestedSessionConfig.retrievalMode,
                         persistedRetrievalMode: existingSessionConfig.retrievalMode,
                         forceRequired: true,
+                        profileState: createCodebaseProfileState({
+                            config: existingSessionConfig,
+                            info: existingInfo,
+                            daemonRetrievalConfiguration: requestedSessionConfig,
+                            retrievalCompatibility: 'requires-force',
+                        }),
                     },
                     isError: true
                 };
@@ -1353,6 +1377,15 @@ export class ToolHandlers {
                             retrievalSchemaVersion: persistedSearchConfig?.retrievalSchemaVersion,
                             indexingStatus: isIndexing ? 'indexing' : 'indexed',
                             ...oneCScopeStatus,
+                            profileState: mergeProfileState(
+                                createCodebaseProfileState({
+                                    config: persistedSearchConfig,
+                                    info: this.snapshotManager.getCodebaseInfo(absolutePath),
+                                    oneCScopeStatus,
+                                    daemonRetrievalConfiguration: this.daemonRetrievalConfiguration,
+                                }),
+                                createSearchProfileState({ requestedRankingProfile: rankingProfile }),
+                            ),
                             results: []
                         }
                     };
@@ -1391,6 +1424,18 @@ export class ToolHandlers {
                         retrievalSchemaVersion: persistedSearchConfig?.retrievalSchemaVersion,
                         indexingStatus: isIndexing ? 'indexing' : 'indexed',
                         ...oneCScopeStatus,
+                        profileState: mergeProfileState(
+                            createCodebaseProfileState({
+                                config: persistedSearchConfig,
+                                info: this.snapshotManager.getCodebaseInfo(absolutePath),
+                                oneCScopeStatus,
+                                daemonRetrievalConfiguration: this.daemonRetrievalConfiguration,
+                            }),
+                            createSearchProfileState({
+                                requestedRankingProfile: rankingProfile,
+                                resultMetadata: searchResults[0]?.metadata,
+                            }),
+                        ),
                         results: searchResults.map((result): SearchResultSummary => ({
                             relativePath: result.relativePath,
                             language: result.language,
@@ -1712,6 +1757,13 @@ export class ToolHandlers {
             if (rlmBslEnrichmentStatus) {
                 structuredStatus.rlmBslEnrichment = rlmBslEnrichmentStatus;
             }
+            structuredStatus.profileState = createCodebaseProfileState({
+                config: persistedSyncConfig,
+                info,
+                oneCScopeStatus,
+                rlmBslEnrichmentStatus,
+                daemonRetrievalConfiguration: this.daemonRetrievalConfiguration,
+            });
 
             switch (status) {
                 case 'indexed':

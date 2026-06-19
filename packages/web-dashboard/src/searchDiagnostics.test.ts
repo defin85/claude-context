@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    buildProfileStateSections,
     buildSearchRequestBody,
     formatRetrievalContext,
     getResultDiagnostics,
@@ -10,6 +11,81 @@ import {
 test('parseExtensionFilters accepts comma and whitespace separated extensions', () => {
     assert.deepEqual(parseExtensionFilters('.bsl, .xml .ts'), ['.bsl', '.xml', '.ts']);
     assert.deepEqual(parseExtensionFilters(''), []);
+});
+
+test('buildProfileStateSections renders server-provided profile state classifications', () => {
+    const sections = buildProfileStateSections({
+        profileState: {
+            daemon: {
+                retrieval: {
+                    resolvedProfile: 'quality',
+                    retrievalMode: 'bge_m3_full',
+                    retrievalSchemaVersion: 1,
+                    shape: 'bge-m3-full',
+                    compatibility: 'effective',
+                },
+            },
+            codebase: {
+                retrieval: {
+                    indexedProfile: 'fast',
+                    retrievalMode: 'bge_m3_dense',
+                    retrievalSchemaVersion: 1,
+                    shape: 'bge-m3-dense',
+                    compatibility: 'default-difference',
+                },
+                oneCIndexScope: {
+                    profile: 'developer',
+                    status: 'reduced-coverage',
+                },
+                rlmBslEnrichment: {
+                    mode: 'optional',
+                    status: 'partial',
+                },
+            },
+            search: {
+                ranking: {
+                    requestedProfile: 'generic',
+                    resolvedProfile: 'generic',
+                    oneCSignalsActive: false,
+                },
+            },
+        },
+    });
+
+    assert.equal(sections.length, 3);
+    assert.equal(sections[1].tone, 'attention');
+    assert.deepEqual(sections[1].items, [
+        'Профиль поиска: fast',
+        'Режим: bge_m3_dense',
+        'Схема: 1',
+        'Форма хранения: bge-m3-dense',
+        'Совместимость: default-difference',
+        'Охват 1C: developer',
+        'Состояние охвата: reduced-coverage',
+        'RLM BSL: optional',
+        'Состояние RLM BSL: partial',
+    ]);
+    assert.deepEqual(sections[2].items, [
+        'Запрошенное ранжирование: generic',
+        'Применённое ранжирование: generic',
+        'Сигналы 1C: не активны',
+    ]);
+});
+
+test('buildProfileStateSections falls back to legacy retrieval and ranking fields', () => {
+    const sections = buildProfileStateSections({
+        fallbackRetrieval: {
+            retrievalProfile: 'quality',
+            retrievalMode: 'bge_m3_full',
+            retrievalSchemaVersion: 1,
+            oneCIndexScopeProfile: 'minimal',
+        },
+        fallbackRankingProfile: 'auto',
+    });
+
+    assert.equal(sections[0].items[0], 'Профиль: quality');
+    assert.equal(sections[1].items[3], 'Охват 1C: minimal');
+    assert.deepEqual(sections[2].items, ['Ранжирование: auto']);
 });
 
 test('buildSearchRequestBody forwards extension filters and ranking profile', () => {
@@ -29,7 +105,7 @@ test('buildSearchRequestBody forwards extension filters and ranking profile', ()
 });
 
 test('formatRetrievalContext tolerates missing fields and includes available diagnostics', () => {
-    assert.deepEqual(formatRetrievalContext({}), ['Retrieval: неизвестно']);
+    assert.deepEqual(formatRetrievalContext({}), ['Поиск: профиль неизвестен']);
     assert.deepEqual(formatRetrievalContext({
         retrievalProfile: 'quality',
         retrievalMode: 'bge_m3_full',
@@ -39,7 +115,7 @@ test('formatRetrievalContext tolerates missing fields and includes available dia
         'Профиль: quality',
         'Режим: bge_m3_full',
         'Схема: 1',
-        '1C scope: developer',
+        'Охват 1C: developer',
     ]);
 });
 

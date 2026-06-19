@@ -231,7 +231,17 @@ class ContextMcpServer {
             this.runtimeStatusManager,
             this.accessPolicy,
             this.workloadManager,
-            this.managedBgeM3WorkerManager
+            this.managedBgeM3WorkerManager,
+            {
+                retrievalProfile: this.config.retrievalProfile,
+                resolvedRetrievalProfile: this.config.resolvedRetrievalProfile.retrievalProfile,
+                explicitProfile: this.config.resolvedRetrievalProfile.explicitProfile,
+                retrievalMode: this.config.resolvedRetrievalProfile.retrievalMode,
+                retrievalSchemaVersion: this.config.resolvedRetrievalProfile.retrievalSchemaVersion,
+                bgeM3Mode: this.config.resolvedRetrievalProfile.bgeM3Mode,
+                usesBgeM3Sparse: this.config.resolvedRetrievalProfile.usesBgeM3Sparse,
+                usesColbert: this.config.resolvedRetrievalProfile.usesColbert,
+            }
         );
 
         this.snapshotManager.loadCodebaseSnapshot();
