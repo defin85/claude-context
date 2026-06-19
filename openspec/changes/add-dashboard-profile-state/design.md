@@ -54,6 +54,18 @@ Profile fragments will include machine-readable states such as `effective`, `unk
 
 The dashboard can then render neutral, warning, and degraded states without parsing prose.
 
+### Decision: Compare repository state to current daemon defaults only
+
+`profileState.codebase.retrieval.compatibility` will classify the selected repository against the currently configured and resolved daemon defaults. It will not try to predict compatibility against unsent dashboard form values or a future indexing request.
+
+Explicit indexing requests remain governed by the existing server-side compatibility guard, which can reject incompatible retrieval mode or schema changes unless `force=true` is provided.
+
+### Decision: Clear latest-search state when repository selection changes
+
+The dashboard will treat `profileState.search` as selected-repository state. It may keep the latest search state across periodic refreshes for the same selected repository, but it must clear or replace that state when the selected repository changes.
+
+This avoids showing a ranking profile from a previous repository beside the newly selected repository profile state.
+
 ### Decision: Preserve existing fields during migration
 
 Existing top-level fields remain in place:
@@ -88,5 +100,4 @@ Rollback is straightforward: dashboard can fall back to existing fields, and MCP
 
 ## Open Questions
 
-- Should `profileState.codebase.retrieval.compatibility` compare only against current daemon defaults, or also against an explicit pending indexing request when the dashboard form includes one?
-- Should the dashboard remember the last search `profileState.search` across refreshes, or clear it when the selected repository changes?
+- None.

@@ -26,11 +26,13 @@ The system SHALL classify selected codebase profile state against current daemon
 - **AND** daemon status has a different configured or resolved default retrieval profile
 - **THEN** `profileState.codebase.retrieval.compatibility` SHALL indicate a mismatch or default difference
 - **AND** the status response SHALL NOT imply that the existing index is invalid solely because the daemon default changed
+- **AND** the classification SHALL compare against current daemon defaults, not against unsent dashboard form values
 
 #### Scenario: Retrieval schema requires explicit reindex
 - **WHEN** a codebase profile state indicates an incompatible retrieval mode or schema for a requested indexing operation
 - **THEN** the profile state SHALL expose a `requires-force` compatibility classification
 - **AND** existing force-reindex guard behavior SHALL remain authoritative
+- **AND** requested indexing operations SHALL continue to use the existing server-side compatibility guard as the authoritative decision point
 
 #### Scenario: Profile metadata is missing
 - **WHEN** an older indexed codebase lacks persisted profile metadata

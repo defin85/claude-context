@@ -20,6 +20,11 @@ The dashboard SHALL display daemon, selected-codebase, and latest-search profile
 - **WHEN** selected-codebase profile state includes RLM BSL enrichment status
 - **THEN** the dashboard SHALL show whether enrichment is disabled, enabled, required, partial, unavailable, or failed according to the server-provided status
 
+#### Scenario: Selected codebase changes
+- **WHEN** the operator selects a different codebase
+- **THEN** the dashboard SHALL clear or replace latest-search profile state from the previously selected codebase
+- **AND** it SHALL NOT render a previous repository's latest-search ranking state as if it belongs to the newly selected codebase
+
 ### Requirement: Dashboard profile state fallback
 The dashboard SHALL remain compatible with status responses that do not yet include `profileState`.
 
