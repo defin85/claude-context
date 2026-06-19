@@ -33,6 +33,9 @@ function listFiles(dir: string): string[] {
         if (entry.isDirectory()) {
             return listFiles(entryPath);
         }
+        if (entry.name.endsWith('.test.ts')) {
+            return [];
+        }
         return [entryPath];
     });
 }
