@@ -71,6 +71,24 @@ test('codebase profile state classifies matching, mismatched, and missing retrie
     assert.equal(missing.codebase?.retrieval.compatibility, 'unknown');
 });
 
+test('codebase profile state classifies persisted profile differences even when storage shape matches', () => {
+    const state = createCodebaseProfileState({
+        config: {
+            retrievalProfile: 'fast',
+            retrievalMode: 'bge_m3_dense',
+            retrievalSchemaVersion: 1,
+        },
+        daemonRetrievalConfiguration: {
+            retrievalProfile: 'balanced',
+            resolvedRetrievalProfile: 'balanced',
+            retrievalMode: 'bge_m3_dense',
+            retrievalSchemaVersion: 1,
+        },
+    });
+
+    assert.equal(state.codebase?.retrieval.compatibility, 'default-difference');
+});
+
 test('codebase profile state reports reduced 1C coverage and sanitized RLM BSL enrichment status', () => {
     const state = createCodebaseProfileState({
         config: {

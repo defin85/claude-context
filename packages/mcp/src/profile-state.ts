@@ -254,6 +254,12 @@ function classifyCompatibility(
     if (!daemonConfig?.retrievalMode) {
         return 'unknown';
     }
+    const daemonProfile = daemonConfig.resolvedRetrievalProfile
+        || daemonConfig.retrievalProfile
+        || inferProfile(daemonConfig.retrievalMode);
+    if (config.retrievalProfile && daemonProfile && config.retrievalProfile !== daemonProfile) {
+        return 'default-difference';
+    }
     if (
         config.retrievalMode !== daemonConfig.retrievalMode ||
         (
