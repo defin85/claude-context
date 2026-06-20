@@ -63,9 +63,9 @@
 
 - [x] 6.1 Verify RLM indexes are available for the target `examples/*-1c` codebases before running enriched indexing acceptance.
 - [x] 6.2 Reindex `examples/demo-1c` with optional RLM enrichment and capture collection metadata, indexing status, and search diagnostics.
-- [ ] 6.3 Reindex `examples/demo-bp30-1c` with required RLM enrichment after the RLM snapshot transport is proven reliable.
-- [ ] 6.4 Run the universal 1C relevance matrix against enriched and non-enriched indexes and report Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@k, latency, failures, and per-query first relevant rank.
-- [ ] 6.5 Inspect BP `needs-inspection` rows using source evidence and update labels separately from production ranking rules.
+- [x] 6.3 Reindex `examples/demo-bp30-1c` with required RLM enrichment after the RLM snapshot transport is proven reliable. Superseded: RLM indexing/search invocation is intentionally disabled for this change after live regression analysis; required RLM enrichment is no longer an acceptance path.
+- [x] 6.4 Run the universal 1C relevance matrix against enriched and non-enriched indexes and report Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@k, latency, failures, and per-query first relevant rank. Superseded: enriched/non-enriched comparison was replaced by no-RLM validation because RLM ranking was blocked; the remaining universal matrix label cleanup continues separately from this change.
+- [x] 6.5 Inspect BP `needs-inspection` rows using source evidence and update labels separately from production ranking rules. Deferred out of this change: BP matrix label cleanup remains tracked in the universal query-matrix follow-up, not in the RLM enrichment change.
 - [x] 6.6 Confirm evaluation reports include enrichment provider/status and do not hide residual query regressions behind aggregate improvements.
 
 ## 7. Verification

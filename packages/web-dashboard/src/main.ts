@@ -141,6 +141,7 @@ const state = {
     actionLog: [] as ActionLogEntry[],
     busy: false,
     refreshInFlight: false,
+    selectedPathRevision: 0,
 };
 let lastRefreshFingerprint = '';
 const actionRecorder = createActionRecorder({ entries: state.actionLog, maxEntries: maxActionLogEntries });
@@ -202,6 +203,7 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
         return;
     }
 
+    const requestSelectedPathRevision = state.selectedPathRevision;
     if (options.showBusy) {
         state.busy = true;
     }
@@ -217,6 +219,27 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
         ]);
         const selectedPath = state.selectedPath || codebases[0]?.path || '';
         const selectedStatus = selectedPath ? await loadSelectedStatus(selectedPath) : undefined;
+        if (state.selectedPathRevision !== requestSelectedPathRevision) {
+            const nextFingerprint = JSON.stringify({
+                status,
+                codebases,
+                selectedPath: state.selectedPath,
+                selectedStatus: state.selectedStatus,
+            });
+            const shouldRender = options.forceRender || nextFingerprint !== lastRefreshFingerprint;
+
+            state.status = status;
+            state.codebases = codebases;
+            lastRefreshFingerprint = nextFingerprint;
+            if (options.showMessage) {
+                state.message = `Обновлено: ${new Date().toLocaleTimeString()}`;
+            }
+            if (shouldRender || options.showMessage) {
+                render();
+            }
+            return;
+        }
+
         const nextFingerprint = JSON.stringify({ status, codebases, selectedPath, selectedStatus });
         const shouldRender = options.forceRender || nextFingerprint !== lastRefreshFingerprint;
 
@@ -249,6 +272,30 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
             render();
         }
     }
+}
+
+async function selectCodebase(path: string): Promise<void> {
+    if (!path || path === state.selectedPath) {
+        return;
+    }
+
+    state.selectedPath = path;
+    state.selectedPathRevision++;
+    const selectedPathRevision = state.selectedPathRevision;
+    state.selectedStatus = undefined;
+    state.searchResults = [];
+    state.searchContext = undefined;
+    state.message = '';
+    state.error = '';
+    render();
+
+    const selectedStatus = await loadSelectedStatus(path);
+    if (state.selectedPath !== path || state.selectedPathRevision !== selectedPathRevision) {
+        return;
+    }
+
+    state.selectedStatus = selectedStatus;
+    render();
 }
 
 async function loadSelectedStatus(path: string): Promise<CodebaseStatus | undefined> {
@@ -540,14 +587,7 @@ function bind(): void {
     });
     document.querySelectorAll<HTMLButtonElement>('.codebase').forEach((button) => {
         button.addEventListener('click', () => {
-            state.selectedPath = button.dataset.path || '';
-            state.selectedStatus = undefined;
-            state.searchResults = [];
-            state.searchContext = undefined;
-            state.message = '';
-            state.error = '';
-            void refresh({ forceRender: true });
-            render();
+            void selectCodebase(button.dataset.path || '');
         });
     });
 }

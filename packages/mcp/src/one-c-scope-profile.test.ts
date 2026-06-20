@@ -250,6 +250,39 @@ test('codebase config persists retrieval profile next to mode and schema', async
     assert.equal(loaded?.retrievalSchemaVersion, 1);
 });
 
+test('clear_index removes configured-only codebase without clearing cloud index', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-clear-configured-only-'));
+    const rawCodebasePath = path.join(workspacePath, 'configured-only');
+    await fs.mkdir(rawCodebasePath, { recursive: true });
+    const codebasePath = await fs.realpath(rawCodebasePath);
+    const snapshotManager = new SnapshotManager({
+        workspacePath,
+        saveDebounceMs: 10,
+    });
+    const codebaseConfigManager = new CodebaseConfigManager({ workspacePath });
+    await codebaseConfigManager.saveConfig(codebasePath, {
+        retrievalProfile: 'quality',
+        retrievalMode: 'bge_m3_full',
+        retrievalSchemaVersion: 1,
+    });
+    let clearIndexCalled = false;
+    const context = {
+        ...createFakeContext(false),
+        clearIndex: async () => {
+            clearIndexCalled = true;
+        },
+    } as unknown as Context;
+    const handlers = new ToolHandlers(context, snapshotManager, codebaseConfigManager);
+
+    const result = await handlers.handleClearIndex({ path: codebasePath });
+
+    assert.equal((result as { isError?: boolean }).isError, undefined);
+    assert.equal(getStructuredContent(result).cleared, true);
+    assert.equal(clearIndexCalled, false);
+    assert.equal(await codebaseConfigManager.hasConfig(codebasePath), false);
+    assert.equal(snapshotManager.getCodebaseStatus(codebasePath), 'not_found');
+});
+
 test('index_codebase rejects incompatible retrieval profile changes without force', async () => {
     const { codebasePath, handlers } = await createIndexedCodebase(undefined, undefined, {
         retrievalProfile: 'fast',

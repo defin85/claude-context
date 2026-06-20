@@ -1521,9 +1521,10 @@ export class ToolHandlers {
             const snapshotStatus = this.snapshotManager.getCodebaseStatus(absolutePath);
             const hasTrackedSnapshotState = snapshotStatus !== 'not_found';
             const hasCloudIndex = await this.context.hasIndex(absolutePath);
+            const hasPersistedConfig = await this.codebaseConfigManager.hasConfig(absolutePath);
             const ownershipState = await this.snapshotManager.inspectIndexingOwnership(absolutePath);
 
-            if (!hasTrackedSnapshotState && !hasCloudIndex) {
+            if (!hasTrackedSnapshotState && !hasCloudIndex && !hasPersistedConfig) {
                 return {
                     content: [{
                         type: "text",

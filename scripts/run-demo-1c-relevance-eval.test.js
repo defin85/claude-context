@@ -799,9 +799,17 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
 
   assert.equal(dataset.dataset, 'universal-1c-search-matrix');
   assert.equal(dataset.labelsAreProductionRules, false);
-  assert.equal(positive.length, 53);
+  assert.equal(positive.length, 70);
   assert.equal(negative.length, 8);
-  assert.deepEqual(fixtures, ['demo-do30-1c', 'demo-bp30-1c', 'demo-ut-1c', 'demo-unf-1c', 'demo-zup-1c']);
+  assert.deepEqual(fixtures, [
+    'demo-do30-1c',
+    'demo-bp30-1c',
+    'demo-ut-1c',
+    'demo-unf-1c',
+    'demo-zup-1c',
+    'demo-ssl-1c',
+    'demo-led-1c',
+  ]);
   assert.deepEqual(dataset.fixtures['demo-zup-1c'], {
     label: 'Зарплата и управление персоналом',
     path: 'examples/demo-zup-1c',
@@ -813,6 +821,12 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
   for (const pattern of [/payroll/i, /hr-/i, /leave/i, /sick/i, /time-sheet/i, /ndfl/i, /sedo-fss/i, /military/i]) {
     assert.match(positiveText, pattern, `missing ZUP matrix coverage: ${pattern}`);
   }
+  for (const pattern of [/bsp-mail/i, /bsp-sms/i, /bsp-files/i, /bsp-crypto/i]) {
+    assert.match(positiveText, pattern, `missing SSL matrix coverage: ${pattern}`);
+  }
+  for (const pattern of [/edo-accounts/i, /edo-invitations/i, /edo-center/i, /mobile-signature/i]) {
+    assert.match(positiveText, pattern, `missing LED matrix coverage: ${pattern}`);
+  }
 });
 
 test('validates demo-zup-1c matrix labels and unresolved classifications', () => {
@@ -823,13 +837,13 @@ test('validates demo-zup-1c matrix labels and unresolved classifications', () =>
   const collection = collectionDatasetForFixture(dataset, 'demo-zup-1c');
 
   assert.equal(validation.fixtureKey, 'demo-zup-1c');
-  assert.equal(validation.applicableTargetCount, 39);
-  assert.equal(validation.notApplicableTargetCount, 19);
+  assert.equal(validation.applicableTargetCount, 48);
+  assert.equal(validation.notApplicableTargetCount, 27);
   assert.equal(validation.needsInspectionCount, 3);
   assert.equal(validation.unreachablePrefixCount, 0);
   assert.equal(validation.issueCount, 0);
   assert.equal(validation.strictAcceptanceReady, false);
-  assert.equal(collection.queries.filter((query) => query.kind !== 'negative-control').length, 31);
+  assert.equal(collection.queries.filter((query) => query.kind !== 'negative-control').length, 40);
   assert.equal(collection.queries.filter((query) => query.kind === 'negative-control').length, 8);
   assert.equal(collection.queries.some((query) => query.id === 'zupn01'), true);
   assert.match(
@@ -840,6 +854,40 @@ test('validates demo-zup-1c matrix labels and unresolved classifications', () =>
     validation.unresolved.map((row) => row.id),
     ['u03', 'u04', 'u05'],
   );
+});
+
+test('validates demo-ssl-1c and demo-led-1c matrix labels', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'universal-1c-search-matrix.json'));
+  const sslValidation = validateLabels(dataset, path.join(repoRoot, 'examples', 'demo-ssl-1c'), {
+    matrixFixture: 'demo-ssl-1c',
+  });
+  const ledValidation = validateLabels(dataset, path.join(repoRoot, 'examples', 'demo-led-1c'), {
+    matrixFixture: 'demo-led-1c',
+  });
+  const sslCollection = collectionDatasetForFixture(dataset, 'demo-ssl-1c');
+  const ledCollection = collectionDatasetForFixture(dataset, 'demo-led-1c');
+
+  assert.equal(sslValidation.applicableTargetCount, 24);
+  assert.equal(sslValidation.notApplicableTargetCount, 54);
+  assert.equal(sslValidation.needsInspectionCount, 0);
+  assert.equal(sslValidation.unreachablePrefixCount, 0);
+  assert.equal(sslValidation.issueCount, 0);
+  assert.equal(sslValidation.strictAcceptanceReady, true);
+  assert.equal(sslCollection.queries.filter((query) => query.kind !== 'negative-control').length, 18);
+  assert.equal(sslCollection.queries.filter((query) => query.kind === 'negative-control').length, 6);
+  assert.equal(sslCollection.queries.some((query) => query.id === 'ssl01'), true);
+  assert.equal(sslCollection.queries.some((query) => query.id === 'ssl08'), true);
+
+  assert.equal(ledValidation.applicableTargetCount, 29);
+  assert.equal(ledValidation.notApplicableTargetCount, 49);
+  assert.equal(ledValidation.needsInspectionCount, 0);
+  assert.equal(ledValidation.unreachablePrefixCount, 0);
+  assert.equal(ledValidation.issueCount, 0);
+  assert.equal(ledValidation.strictAcceptanceReady, true);
+  assert.equal(ledCollection.queries.filter((query) => query.kind !== 'negative-control').length, 23);
+  assert.equal(ledCollection.queries.filter((query) => query.kind === 'negative-control').length, 6);
+  assert.equal(ledCollection.queries.some((query) => query.id === 'led01'), true);
+  assert.equal(ledCollection.queries.some((query) => query.id === 'led08'), true);
 });
 
 test('rejects unreachable demo-zup-1c applicable labels', () => {

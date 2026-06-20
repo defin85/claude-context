@@ -23,6 +23,14 @@
     "demo-zup-1c": {
       "label": "Зарплата и управление персоналом",
       "path": "examples/demo-zup-1c"
+    },
+    "demo-ssl-1c": {
+      "label": "Библиотека стандартных подсистем",
+      "path": "examples/demo-ssl-1c"
+    },
+    "demo-led-1c": {
+      "label": "Библиотека электронных документов",
+      "path": "examples/demo-led-1c"
     }
   },
   "queries": [
@@ -55,6 +63,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден исходный объект подсистемы проверки контрагентов ФНС с NdsResponse; есть контрагенты, но не этот диагностический сценарий."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -84,6 +100,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найдены source-backed объекты сохраненного состояния проверки контрагентов по ИНН/КПП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -113,6 +137,17 @@
         "demo-zup-1c": {
           "status": "needs-inspection",
           "note": "В ЗУП есть подсистема МЧД, но точная константа АдресРеестраМЧД из исходной строки не найдена."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/АдресРеестраМЧД/Ext/ManagerModule.bsl",
+            "CommonForms/АдресРеестраМЧД/Ext/Form/Module.bsl"
+          ]
         }
       }
     },
@@ -142,6 +177,16 @@
         "demo-zup-1c": {
           "status": "needs-inspection",
           "note": "В ЗУП есть подсистема МЧД, но точная константа ТипПодписиМЧД из исходной строки не найдена."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/ТипПодписиМЧД/Ext/ManagerModule.bsl"
+          ]
         }
       }
     },
@@ -171,6 +216,16 @@
         "demo-zup-1c": {
           "status": "needs-inspection",
           "note": "В ЗУП есть подсистема МЧД, но точная настройка отключения подбора МЧД по КПП не подтверждена."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ManagerModule.bsl"
+          ]
         }
       }
     },
@@ -204,6 +259,16 @@
           ],
           "acceptablePathPrefixes": [
             "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра"
           ]
         }
       }
@@ -239,6 +304,16 @@
           "acceptablePathPrefixes": [
             "CommonCommands/РассылкаДокументовЭДО/Ext/CommandModule.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра"
+          ]
         }
       }
     },
@@ -268,6 +343,17 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден источник легкой формы просмотра входящего ЭДО из строки Документооборота."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс",
+            "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО"
+          ]
         }
       }
     },
@@ -297,6 +383,17 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден источник легкой формы просмотра исходящего ЭДО из строки Документооборота."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийИнтерфейс",
+            "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО"
+          ]
         }
       }
     },
@@ -326,6 +423,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден общий помощник отправки ПомощникОтправить с деревом вариантов."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -356,6 +461,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден клиентский модуль ПомощникОтправить для вариантов отправки."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -385,6 +498,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП есть документы электронных писем, но нет source-backed журнала ЭлектроннаяПочта/ПечатьПисьма из этой строки."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -414,6 +535,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП есть документы электронных писем, но нет source-backed формы журнала ЭлектроннаяПочта/СохранениеПисьма."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -443,6 +572,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП есть документы электронных писем, но нет source-backed формы журнала ЭлектроннаяПочта/ПросмотрВложенногоПисьма."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -477,6 +614,17 @@
           "acceptablePathPrefixes": [
             "CommonCommands/НастройкаСистемнойУчетнойЗаписиЭлектроннойПочты"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Forms/ФормаЗаписи",
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -512,6 +660,17 @@
           "acceptablePathPrefixes": [
             "CommonModules/ОтправкаSMSЧерезСМСУслуги/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl",
+            "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -546,6 +705,14 @@
           "acceptablePathPrefixes": [
             "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -580,6 +747,16 @@
           "acceptablePathPrefixes": [
             "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -609,6 +786,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП есть интеграция с 1С:Архивом, но нет документа ПередачаДелВАрхив из строки Документооборота."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -638,6 +823,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП есть интеграция с 1С:Архивом, но нет формы документа ПередачаДелВАрхив из строки Документооборота."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -672,6 +865,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Декларация по НДС относится к бухгалтерской отчетности, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -710,6 +911,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "В ЗУП не найден регистр СостоянияКонтрагентов для сохраненного состояния проверки контрагентов."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -744,6 +953,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Остатки товаров на складах и производство относятся к торгово-складскому контуру, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -778,6 +995,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Регистр бухгалтерии Хозрасчетный не входит в проверяемый зарплатно-кадровый контур ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -812,6 +1037,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Документ реализации товаров и услуг относится к торговому/бухгалтерскому контуру, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -846,6 +1079,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Заказ клиента относится к торговому контуру, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -880,6 +1121,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "Заказ поставщику и ввод на основании относятся к торгово-закупочному контуру, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -920,6 +1169,14 @@
           "expectedPathPrefixes": [
             "ExchangePlans/СинхронизацияДанныхЧерезУниверсальныйФормат"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -963,6 +1220,21 @@
           "acceptablePathPrefixes": [
             "ScheduledJobs/ФоноваяОтправкаЗапросовСЭДО"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "ScheduledJobs/ВыгрузкаВЦентрЭДО",
+            "ScheduledJobs/ОбработкаОчередиЗапросовВРеестрМЧДЭДО"
+          ],
+          "acceptablePathPrefixes": [
+            "CommonModules/АвтоматическоеПолучениеЭДОЦентрЭДО/Ext/Module.bsl",
+            "CommonModules/ЦентрЭДО/Ext/Module.bsl"
+          ]
         }
       }
     },
@@ -1001,6 +1273,14 @@
         "demo-zup-1c": {
           "status": "not-applicable",
           "reason": "ККМ, розничная выручка и движение денег относятся к розничному/торговому контуру, а не к ЗУП."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1044,6 +1324,17 @@
           "acceptablePathPrefixes": [
             "CommonModules/ЖурналРегистрации/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации",
+            "Reports/АнализЖурналаРегистрации"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1087,6 +1378,17 @@
           "acceptablePathPrefixes": [
             "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1127,6 +1429,17 @@
           "expectedPathPrefixes": [
             "SettingsStorages/ХранилищеВариантовОтчетов"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1170,6 +1483,14 @@
           "acceptablePathPrefixes": [
             "CommonModules/КонтрагентыСлужебный/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1213,6 +1534,14 @@
           "acceptablePathPrefixes": [
             "CommonModules/КонтрагентыСлужебный/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1253,6 +1582,14 @@
           "expectedPathPrefixes": [
             "Catalogs/Номенклатура/Forms/ФормаЭлемента"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1293,6 +1630,14 @@
           "expectedPathPrefixes": [
             "Catalogs/Номенклатура/Ext/ManagerModule.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1333,6 +1678,17 @@
           "expectedPathPrefixes": [
             "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ОбщегоНазначения/Ext/Module.bsl",
+            "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1376,6 +1732,17 @@
           "acceptablePathPrefixes": [
             "CommonModules/ПользователиКлиентСервер/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/Пользователи/Ext/Module.bsl",
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1416,6 +1783,17 @@
           "expectedPathPrefixes": [
             "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СтандартныеПодсистемыСервер/Ext/Module.bsl",
+            "CommonModules/СтандартныеПодсистемыКлиентСервер/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1456,6 +1834,20 @@
           ]
         },
         "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты",
+            "Catalogs/Номенклатура"
+          ]
+        },
+        "demo-led-1c": {
           "status": "applicable",
           "prohibitedPathPrefixes": [
             "Catalogs/Контрагенты",
@@ -1506,6 +1898,20 @@
             "DataProcessors/ЖурналРегистрации",
             "DataProcessors/УдалениеПомеченныхОбъектов"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации",
+            "DataProcessors/УдалениеПомеченныхОбъектов"
+          ]
         }
       }
     },
@@ -1542,6 +1948,18 @@
           ]
         },
         "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов"
+          ]
+        },
+        "demo-led-1c": {
           "status": "applicable",
           "prohibitedPathPrefixes": [
             "SettingsStorages/ХранилищеВариантовОтчетов"
@@ -1586,6 +2004,18 @@
           "prohibitedPathPrefixes": [
             "CommonModules/ПользователиКлиент/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "CommonModules/ПользователиКлиент/Ext/Module.bsl"
+          ]
         }
       }
     },
@@ -1622,6 +2052,18 @@
           ]
         },
         "demo-zup-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Контрагенты/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-led-1c": {
           "status": "applicable",
           "prohibitedPathPrefixes": [
             "Catalogs/Контрагенты/Forms/ФормаЭлемента"
@@ -1666,6 +2108,18 @@
           "prohibitedPathPrefixes": [
             "Catalogs/Номенклатура/Forms/ФормаЭлемента"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "prohibitedPathPrefixes": [
+            "Catalogs/Номенклатура/Forms/ФормаЭлемента"
+          ]
         }
       }
     },
@@ -1701,6 +2155,14 @@
           "acceptablePathPrefixes": [
             "DocumentJournals/НачислениеЗарплаты"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1736,6 +2198,14 @@
           "acceptablePathPrefixes": [
             "CommonForms/ВыборДокументовОснованийВедомостейНаВыплатуЗарплаты"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1771,6 +2241,14 @@
           "acceptablePathPrefixes": [
             "Documents/ПриемНаРаботуСписком"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1806,6 +2284,14 @@
           "acceptablePathPrefixes": [
             "Documents/КадровыйПереводСписком"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1841,6 +2327,14 @@
           "acceptablePathPrefixes": [
             "Documents/УвольнениеСписком"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1876,6 +2370,14 @@
           "acceptablePathPrefixes": [
             "DocumentJournals/Отпуска"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1911,6 +2413,14 @@
           "acceptablePathPrefixes": [
             "ScheduledJobs/ПроверкаАктуальностиЗаработанныхПравНаОтпуск"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1946,6 +2456,14 @@
           "acceptablePathPrefixes": [
             "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -1981,6 +2499,14 @@
           "acceptablePathPrefixes": [
             "AccumulationRegisters/ДанныеТабельногоУчетаРабочегоВремениСотрудников"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2017,6 +2543,14 @@
             "AccumulationRegisters/СведенияОДоходахНДФЛ",
             "CommonModules/УчетНДФЛКлиент"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2053,6 +2587,14 @@
             "AccumulationRegisters/СтраховыеВзносыПоФизическимЛицам",
             "CommonModules/УчетСтраховыхВзносовСобытия/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2089,6 +2631,14 @@
             "Documents/ЗапросСреднегоЗаработкаСЭДО",
             "CommonModules/СЭДОФССКлиент/Ext/Module.bsl"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2125,6 +2675,14 @@
             "CommonModules/ВоинскийУчет/Ext/Module.bsl",
             "Reports/ВоинскийУчетБронирование"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2158,6 +2716,14 @@
             "Documents/НачислениеЗарплаты",
             "Documents/ПриемНаРаботу"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
       }
     },
@@ -2191,6 +2757,1101 @@
             "DocumentJournals/ВедомостиНаВыплатуЗарплаты",
             "Reports/ОстаткиОтпусков"
           ]
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В БСП не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
+        }
+      }
+    },
+    {
+      "id": "ssl01",
+      "query": "настройки учетной записи электронной почты IMAP подпись ответственный за обработку писем",
+      "intent": "settings-form-navigation",
+      "domain": "bsp-mail",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "В Документооборот 3.0 не найден проверенный объект БСП для этого библиотечного сценария."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Forms/ФормаЗаписи/Ext/Form/Module.bsl",
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Forms/ФормаЗаписи/Ext/Form/Module.bsl",
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "В Управление нашей фирмой не найден проверенный объект БСП для этого библиотечного сценария."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Forms/ФормаЗаписи/Ext/Form/Module.bsl",
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Forms/ФормаЗаписи/Ext/Form/Module.bsl",
+            "InformationRegisters/НастройкиУчетныхЗаписейЭлектроннойПочты/Ext/ManagerModule.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека электронных документов не найден проверенный объект БСП для этого библиотечного сценария."
+        }
+      }
+    },
+    {
+      "id": "ssl02",
+      "query": "отправка SMS провайдер логин пароль безопасное хранилище форма настройки",
+      "intent": "settings-form-navigation",
+      "domain": "bsp-sms",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
+            "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека электронных документов не найден проверенный объект БСП для этого библиотечного сценария."
+        }
+      }
+    },
+    {
+      "id": "ssl03",
+      "query": "журнал регистрации анализ активности пользователей регламентных заданий отчет",
+      "intent": "admin-tool-navigation",
+      "domain": "bsp-administration",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "Reports/АнализЖурналаРегистрации/Ext/ObjectModule.bsl",
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ЖурналРегистрации/Forms/ЖурналРегистрации"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "ssl04",
+      "query": "удаление помеченных объектов регламентное задание основная форма обработки",
+      "intent": "admin-tool-navigation",
+      "domain": "bsp-administration",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/УдалениеПомеченныхОбъектов/Forms/ОсновнаяФорма",
+            "ScheduledJobs/УдалениеПомеченныхОбъектов",
+            "CommonModules/УдалениеПомеченныхОбъектов/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "ssl05",
+      "query": "хранилище вариантов отчетов сохранить вариант отчета быстрые настройки",
+      "intent": "settings-storage-navigation",
+      "domain": "bsp-reports",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
+            "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "ssl06",
+      "query": "хранилище файлов тома очистка файлов условия по дате",
+      "intent": "file-storage-navigation",
+      "domain": "bsp-files",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl",
+            "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате",
+            "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "ssl07",
+      "query": "группы пользователей состав участников ключи доступа пользователи",
+      "intent": "access-control-navigation",
+      "domain": "bsp-users",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonForms/ГруппыПользователей/Ext/Form/Module.bsl",
+            "InformationRegisters/СоставыГруппПользователей/Ext/ManagerModule.bsl",
+            "CommonModules/Пользователи/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "ssl08",
+      "query": "криптография DSS хранилище сертификатов пароль сертификата электронная подпись",
+      "intent": "crypto-navigation",
+      "domain": "bsp-crypto",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+            "CommonModules/ХранилищеСертификатов/Ext/Module.bsl",
+            "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+        }
+      }
+    },
+    {
+      "id": "led01",
+      "query": "учетные записи ЭДО идентификатор оператор способ обмена через сервис 1С ЭДО",
+      "intent": "information-register-navigation",
+      "domain": "edo-accounts",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led02",
+      "query": "помощник подключения ЭДО легкий интерфейс учетная запись налоговый орган",
+      "intent": "form-navigation",
+      "domain": "edo-accounts",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДОЛегкийИнтерфейс/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДОЛегкийИнтерфейс/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДОЛегкийИнтерфейс/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДОЛегкийИнтерфейс/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДОЛегкийИнтерфейс/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
+            "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led03",
+      "query": "приглашение к обмену электронными документами помощник массовой отправки контрагент",
+      "intent": "form-navigation",
+      "domain": "edo-invitations",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникОтправкиПриглашения/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникМассовойОтправкиПриглашений/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникОтправкиПриглашения/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникМассовойОтправкиПриглашений/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникОтправкиПриглашения/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникМассовойОтправкиПриглашений/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникОтправкиПриглашения/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникМассовойОтправкиПриглашений/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникОтправкиПриглашения/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Forms/ПомощникМассовойОтправкиПриглашений/Ext/Form/Module.bsl",
+            "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led04",
+      "query": "отправить и получить ЭДО команда интерфейс документов ЭДО клиент",
+      "intent": "command-navigation",
+      "domain": "edo-exchange",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl",
+            "CommonModules/ИнтерфейсДокументовЭДОЦентрЭДО/Ext/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led05",
+      "query": "правила проверки полномочий по МЧД классификаторы ограничений полномочий",
+      "intent": "information-register-navigation",
+      "domain": "mchd",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl",
+            "InformationRegisters/КлассификаторыОграниченийМЧД/Ext/ManagerModule.bsl",
+            "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl",
+            "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl",
+            "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl",
+            "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl",
+            "InformationRegisters/КлассификаторыОграниченийМЧД/Ext/ManagerModule.bsl",
+            "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led06",
+      "query": "подписание данных в мобильном ЭДО соглашение загрузка сертификата Госключ Моя подпись",
+      "intent": "form-navigation",
+      "domain": "mobile-signature",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ФормаПодписанияСоглашенияНаЗагрузкуСертификата/Ext/Form/Module.bsl",
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ПодписаниеДанных/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ФормаПодписанияСоглашенияНаЗагрузкуСертификата/Ext/Form/Module.bsl",
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ПодписаниеДанных/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ФормаПодписанияСоглашенияНаЗагрузкуСертификата/Ext/Form/Module.bsl",
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ПодписаниеДанных/Ext/Form/Module.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "В Управление нашей фирмой не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ФормаПодписанияСоглашенияНаЗагрузкуСертификата/Ext/Form/Module.bsl",
+            "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ПодписаниеДанных/Ext/Form/Module.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led07",
+      "query": "центр ЭДО метки времени после подписания электронного документа события обмена",
+      "intent": "service-module-navigation",
+      "domain": "edo-center",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "not-applicable",
+          "reason": "В Документооборот 3.0 не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-bp30-1c": {
+          "status": "not-applicable",
+          "reason": "В Бухгалтерия предприятия 3.0 не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ut-1c": {
+          "status": "not-applicable",
+          "reason": "В Управление торговлей не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-unf-1c": {
+          "status": "not-applicable",
+          "reason": "В Управление нашей фирмой не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ЦентрЭДО/Ext/Module.bsl",
+            "CommonModules/МеткиВремениДанныхЭДО/Ext/Module.bsl",
+            "InformationRegisters/МеткиВремениДанныхЭДО/Ext/ManagerModule.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "led08",
+      "query": "журнал машиночитаемых доверенностей форма списка выгрузить МЧД в файл",
+      "intent": "form-navigation",
+      "domain": "mchd",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ЖурналМашиночитаемыхДоверенностей/Forms/ФормаСписка/Ext/Form/Module.bsl",
+            "CommonCommands/ВыгрузитьМЧДВФайл/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ЖурналМашиночитаемыхДоверенностей/Forms/ФормаСписка/Ext/Form/Module.bsl",
+            "CommonCommands/ВыгрузитьМЧДВФайл/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ЖурналМашиночитаемыхДоверенностей/Forms/ФормаСписка/Ext/Form/Module.bsl",
+            "CommonCommands/ВыгрузитьМЧДВФайл/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ЖурналМашиночитаемыхДоверенностей/Forms/ФормаСписка/Ext/Form/Module.bsl",
+            "CommonCommands/ВыгрузитьМЧДВФайл/Ext/CommandModule.bsl"
+          ],
+          "note": "Цель подтверждена по встроенному объекту БЭД в типовой конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "not-applicable",
+          "reason": "В Зарплата и управление персоналом не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-ssl-1c": {
+          "status": "not-applicable",
+          "reason": "В Библиотека стандартных подсистем не найден проверенный объект БЭД для этого библиотечного сценария."
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "InformationRegisters/ЖурналМашиночитаемыхДоверенностей/Forms/ФормаСписка/Ext/Form/Module.bsl",
+            "CommonCommands/ВыгрузитьМЧДВФайл/Ext/CommandModule.bsl",
+            "CommonCommands/ЖурналМашиночитаемыхДоверенностейЛегкийКлиентЭДО/Ext/CommandModule.bsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ssl09",
+      "query": "реализовать длительную операцию БСП выполнить в фоне ожидать завершение прогресс",
+      "intent": "long-operation-navigation",
+      "domain": "bsp-long-operations",
+      "kind": "positive",
+      "controlClass": "source-inspected",
+      "targets": {
+        "demo-do30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+        },
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+        },
+        "demo-ut-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+        },
+        "demo-unf-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+        },
+        "demo-zup-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+        },
+        "demo-ssl-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ]
+        },
+        "demo-led-1c": {
+          "status": "applicable",
+          "expectedPathPrefixes": [
+            "CommonModules/ДлительныеОперации/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl",
+            "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+          ],
+          "acceptablePathPrefixes": [
+            "InformationRegisters/ДлительныеОперации",
+            "SessionParameters/ДлительныеОперации.xml"
+          ],
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
         }
       }
     }
