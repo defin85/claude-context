@@ -19,6 +19,7 @@ Welcome to the Claude Context documentation! Claude Context is a powerful tool t
 ### Dive Deep
 - [File Inclusion & Exclusion Rules](dive-deep/file-inclusion-rules.md) - Detailed explanation of file inclusion and exclusion rules
 - [Asynchronous Indexing Workflow](dive-deep/asynchronous-indexing-workflow.md) - Detailed explanation of asynchronous indexing workflow
+- [1C Semantic Search Runbook](dive-deep/one-c-semantic-search-runbook.md) - Agent workflow for searching exported 1C configurations
 
 ### Troubleshooting
 - [❓ FAQ](troubleshooting/faq.md) - Frequently asked questions

@@ -128,6 +128,7 @@ function universalQueriesForFixture(dataset, fixtureKey, options = {}) {
         expectedPathPrefixes: target.expectedPathPrefixes || [],
         acceptablePathPrefixes: target.acceptablePathPrefixes || [],
         prohibitedPathPrefixes: target.prohibitedPathPrefixes || [],
+        requiredResultRoles: target.requiredResultRoles || [],
         note: target.note || query.note,
       });
     }
@@ -347,6 +348,38 @@ function firstRelevantRank(results, expectedPathPrefixes, limit = 10) {
   return null;
 }
 
+function evaluateResultRoles(results, roles = [], limit = 10) {
+  const capped = results.slice(0, limit);
+  return roles.map((role) => {
+    const prefixes = role.pathPrefixes || [];
+    const matchedPaths = capped
+      .map((result) => normalizePath(result.relativePath || result.path || ''))
+      .filter((resultPath) => prefixes.some((prefix) => resultPath.startsWith(normalizePath(prefix))));
+    return {
+      id: role.id,
+      label: role.label,
+      description: role.description,
+      optional: Boolean(role.optional),
+      pathPrefixes: prefixes,
+      found: matchedPaths.length > 0,
+      matchedPaths,
+    };
+  });
+}
+
+function summarizeRoleCoverage(roleRows) {
+  const requiredRows = roleRows.filter((row) => !row.optional);
+  const foundRequiredRows = requiredRows.filter((row) => row.found);
+  return {
+    roleCount: roleRows.length,
+    requiredRoleCount: requiredRows.length,
+    foundRoleCount: roleRows.filter((row) => row.found).length,
+    foundRequiredRoleCount: foundRequiredRows.length,
+    missingRequiredRoleCount: requiredRows.length - foundRequiredRows.length,
+    complete: requiredRows.every((row) => row.found),
+  };
+}
+
 function metricBucket() {
   return {
     hitAt1Count: 0,
@@ -428,6 +461,8 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
     const strictRank = firstRelevantRank(results, strictPrefixes, 10);
     const acceptableRank = firstRelevantRank(results, acceptablePrefixes, 10);
     const alternateRank = firstRelevantRank(results, query.acceptablePathPrefixes || [], 10);
+    const resultRoles = evaluateResultRoles(results, query.requiredResultRoles || [], 10);
+    const roleCoverage = summarizeRoleCoverage(resultRoles);
     const rank = strictRank;
     const relevantAt10 = results
       .slice(0, 10)
@@ -444,6 +479,9 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
       relevantHitsAt10: relevantAt10,
       topResultPaths: results.slice(0, 10).map((result) => result.relativePath || result.path || ''),
       topResults: results.slice(0, 10),
+      resultRoles,
+      roleCoverage,
+      missingRequiredRoles: resultRoles.filter((role) => !role.optional && !role.found),
       missing: rank === null,
       latencyMs,
       error,
@@ -496,6 +534,7 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
     run: runMetadata,
     metrics,
     perQuery,
+    bundleRoles: summarizeBundleRoles(perQuery),
     ...(residualQueryIds.size > 0
       ? { residualQueries: perQuery.filter((row) => residualQueryIds.has(row.id)) }
       : {}),
@@ -504,6 +543,27 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
     summary.residualAssertions = evaluateResidualAssertions(summary, runMetadata.requiredResidualAssertions);
   }
   return summary;
+}
+
+function summarizeBundleRoles(perQuery) {
+  const rows = perQuery.filter((row) => row.roleCoverage?.roleCount > 0);
+  return {
+    queryCount: rows.length,
+    completeCount: rows.filter((row) => row.roleCoverage.complete).length,
+    incompleteCount: rows.filter((row) => !row.roleCoverage.complete).length,
+    missingRequiredRoleCount: rows.reduce((sum, row) => sum + row.roleCoverage.missingRequiredRoleCount, 0),
+    incompleteQueries: rows
+      .filter((row) => !row.roleCoverage.complete)
+      .map((row) => ({
+        id: row.id,
+        query: row.query,
+        missingRequiredRoles: row.missingRequiredRoles.map((role) => ({
+          id: role.id,
+          label: role.label,
+          pathPrefixes: role.pathPrefixes,
+        })),
+      })),
+  };
 }
 
 function groupPerQuery(rows, fieldName) {
@@ -666,6 +726,9 @@ function validateFlatLabels(dataset, codebasePath) {
     acceptablePrefixCount: perQuery.reduce((sum, row) => (
       sum + row.prefixes.filter((prefix) => prefix.labelKind === 'acceptable').length
     ), 0),
+    resultRolePrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'result-role').length
+    ), 0),
     unreachablePrefixCount: perQuery.reduce((sum, row) => (
       sum + row.prefixes.filter((prefix) => !prefix.reachable).length
     ), 0),
@@ -713,12 +776,24 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
       ? [
         ...(target.expectedPathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'strict' })),
         ...(target.acceptablePathPrefixes || []).map((prefix) => ({ prefix, labelKind: 'acceptable' })),
-      ].map(({ prefix, labelKind }) => {
-        const normalizedPrefix = normalizePath(prefix);
+        ...(target.requiredResultRoles || []).flatMap((role) => (
+          (role.pathPrefixes || []).map((prefix) => ({
+            prefix,
+            labelKind: 'result-role',
+            roleId: role.id,
+            roleLabel: role.label,
+            optionalRole: Boolean(role.optional),
+          }))
+        )),
+      ].map((label) => {
+        const normalizedPrefix = normalizePath(label.prefix);
         const matchingFiles = files.filter((file) => file.startsWith(normalizedPrefix));
         return {
-          prefix,
-          labelKind,
+          prefix: label.prefix,
+          labelKind: label.labelKind,
+          roleId: label.roleId,
+          roleLabel: label.roleLabel,
+          optionalRole: Boolean(label.optionalRole),
           reachable: matchingFiles.length > 0,
           matchingFileCount: matchingFiles.length,
           sampleMatches: matchingFiles.slice(0, 5),
@@ -764,6 +839,9 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
     ), 0),
     acceptablePrefixCount: perQuery.reduce((sum, row) => (
       sum + row.prefixes.filter((prefix) => prefix.labelKind === 'acceptable').length
+    ), 0),
+    resultRolePrefixCount: perQuery.reduce((sum, row) => (
+      sum + row.prefixes.filter((prefix) => prefix.labelKind === 'result-role').length
     ), 0),
     unreachablePrefixCount: perQuery.reduce((sum, row) => (
       sum + row.prefixes.filter((prefix) => !prefix.reachable).length
@@ -1108,6 +1186,12 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   if (summary.negativeControls) {
     lines.push(`- Negative controls: ${summary.negativeControls.passCount}/${summary.negativeControls.queryCount} passed`);
   }
+  if (summary.bundleRoles?.queryCount) {
+    lines.push(`- Bundle roles: ${summary.bundleRoles.completeCount}/${summary.bundleRoles.queryCount} complete`);
+    if (summary.bundleRoles.missingRequiredRoleCount > 0) {
+      lines.push(`- Missing required bundle roles: ${summary.bundleRoles.missingRequiredRoleCount}`);
+    }
+  }
   if (comparison) {
     lines.push(`- Compared baseline Hit@10: ${comparison.baseline.hitAt10Count}/${summary.metrics.queryCount}`);
     lines.push(`- Comparison comparable: ${comparison.comparable ? 'yes' : 'no'}`);
@@ -1137,6 +1221,15 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
       for (const [key, value] of Object.entries(groups)) {
         lines.push(`| ${key} | ${value.queryCount} | ${value.strict.hitAt10Count} | ${value.acceptable.hitAt10Count} | ${value.failures} |`);
       }
+    }
+  }
+  if (summary.bundleRoles?.queryCount) {
+    lines.push('');
+    lines.push('## Bundle role coverage');
+    lines.push('| id | complete | found required roles | missing required roles |');
+    lines.push('| --- | --- | ---: | --- |');
+    for (const row of summary.perQuery.filter((item) => item.roleCoverage?.roleCount > 0)) {
+      lines.push(`| ${row.id} | ${row.roleCoverage.complete ? 'yes' : 'no'} | ${row.roleCoverage.foundRequiredRoleCount}/${row.roleCoverage.requiredRoleCount} | ${row.missingRequiredRoles.map((role) => role.label || role.id).join('<br>')} |`);
     }
   }
   if (summary.negativeControls?.perQuery?.length) {

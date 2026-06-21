@@ -415,6 +415,7 @@ test('keeps residual evaluation labels out of production ranking code', () => {
     'r06',
     'r28',
     'expectedPathPrefixes',
+    'requiredResultRoles',
     'labelsAreProductionRules',
     'residualQueryIds',
   ]) {
@@ -827,6 +828,16 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
   for (const pattern of [/edo-accounts/i, /edo-invitations/i, /edo-center/i, /mobile-signature/i]) {
     assert.match(positiveText, pattern, `missing LED matrix coverage: ${pattern}`);
   }
+  const longOperations = dataset.queries.find((query) => query.id === 'ssl09');
+  const bpRoles = longOperations.targets['demo-bp30-1c'].requiredResultRoles;
+  assert.deepEqual(bpRoles.map((role) => role.id), [
+    'bsp-server-api',
+    'client-waiting-progress',
+    'server-completion-checks',
+    'applied-usage',
+    'state-metadata',
+  ]);
+  assert.equal(bpRoles.filter((role) => !role.optional).length, 4);
 });
 
 test('validates demo-zup-1c matrix labels and unresolved classifications', () => {
@@ -901,6 +912,28 @@ test('rejects unreachable demo-zup-1c applicable labels', () => {
   assert.equal(validation.unreachablePrefixCount, 1);
   assert.equal(validation.unreachable[0].id, 'zup01');
   assert.equal(validation.unreachable[0].prefixes[0].prefix, 'Documents/НетТакогоДокументаЗУП');
+});
+
+test('validates required result role prefixes for universal matrix labels', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'universal-1c-search-matrix.json'));
+  const validation = validateLabels(dataset, path.join(repoRoot, 'examples', 'demo-bp30-1c'), {
+    matrixFixture: 'demo-bp30-1c',
+  });
+  const ssl09 = validation.perQuery.find((row) => row.id === 'ssl09');
+  const broken = structuredClone(dataset);
+  broken.queries.find((query) => query.id === 'ssl09')
+    .targets['demo-bp30-1c']
+    .requiredResultRoles[0]
+    .pathPrefixes = ['CommonModules/НетТакойДлительнойОперации'];
+  const brokenValidation = validateLabels(broken, path.join(repoRoot, 'examples', 'demo-bp30-1c'), {
+    matrixFixture: 'demo-bp30-1c',
+  });
+
+  assert.equal(validation.resultRolePrefixCount, 10);
+  assert.equal(ssl09.prefixes.filter((prefix) => prefix.labelKind === 'result-role').length, 10);
+  assert.equal(brokenValidation.unreachablePrefixCount, 1);
+  assert.equal(brokenValidation.unreachable[0].id, 'ssl09');
+  assert.equal(brokenValidation.unreachable[0].prefixes[0].labelKind, 'result-role');
 });
 
 test('scores demo-zup-1c negative controls and reports them in markdown', () => {
@@ -1180,6 +1213,70 @@ test('scores universal positives by fixture and reports negative controls separa
   assert.equal(summary.negativeControls.queryCount, 1);
   assert.equal(summary.negativeControls.failCount, 1);
   assert.deepEqual(summary.negativeControls.failures[0].violations, ['Catalogs/Контрагенты/Ext/ObjectModule.bsl']);
+});
+
+test('scores and reports required bundle roles separately from strict hits', () => {
+  const outPath = path.join(repoRoot, '.artifacts', 'test', 'universal-bundle-roles.md');
+  const dataset = {
+    dataset: 'universal-1c-search-matrix',
+    version: 1,
+    labelsAreProductionRules: false,
+    fixtures: { 'demo-unit': { path: 'examples/demo-unit' } },
+    queries: [
+      {
+        id: 'bundle',
+        query: 'длительная операция',
+        kind: 'positive',
+        intent: 'long-operation-navigation',
+        domain: 'bsp-long-operations',
+        controlClass: 'source-inspected',
+        targets: {
+          'demo-unit': {
+            status: 'applicable',
+            expectedPathPrefixes: ['CommonModules/ДлительныеОперации/Ext/Module.bsl'],
+            requiredResultRoles: [
+              { id: 'api', label: 'API', pathPrefixes: ['CommonModules/ДлительныеОперации/Ext/Module.bsl'] },
+              { id: 'client', label: 'Client', pathPrefixes: ['CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl'] },
+            ],
+          },
+        },
+      },
+    ],
+  };
+  const collection = collectionDatasetForFixture(dataset, 'demo-unit');
+  const summary = score(
+    dataset,
+    normalizeResults([{
+      id: 'bundle',
+      top10: [{ path: 'CommonModules/ДлительныеОперации/Ext/Module.bsl' }],
+    }], collection),
+    { matrixFixture: 'demo-unit' },
+  );
+
+  assert.equal(summary.metrics.strict.hitAt10Count, 1);
+  assert.deepEqual(summary.bundleRoles, {
+    queryCount: 1,
+    completeCount: 0,
+    incompleteCount: 1,
+    missingRequiredRoleCount: 1,
+    incompleteQueries: [{
+      id: 'bundle',
+      query: 'длительная операция',
+      missingRequiredRoles: [{
+        id: 'client',
+        label: 'Client',
+        pathPrefixes: ['CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl'],
+      }],
+    }],
+  });
+  assert.equal(summary.perQuery[0].roleCoverage.complete, false);
+  assert.equal(summary.perQuery[0].missingRequiredRoles[0].id, 'client');
+
+  writeMarkdownReport(outPath, summary);
+  const markdown = fs.readFileSync(outPath, 'utf8');
+  assert.match(markdown, /Bundle roles: 0\/1 complete/);
+  assert.match(markdown, /## Bundle role coverage/);
+  assert.match(markdown, /\| bundle \| no \| 1\/2 \| Client \|/);
 });
 
 test('preserves not-applicable reasons in universal matrix summaries and markdown', () => {

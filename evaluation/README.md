@@ -99,6 +99,12 @@ To reproduce these results:
 
 The evaluation framework is designed to be reproducible and can be easily extended to test additional configurations or datasets. Due to the proprietary nature of LLMs, exact numerical results may vary between runs and cannot be guaranteed to be identical. However, the core conclusions drawn from the analysis remain consistent and robust across different runs.
 
+## 1C Search Matrix
+
+The universal 1C search matrix lives in [`retrieval/universal-1c-search-matrix.json`](./retrieval/universal-1c-search-matrix.json). It is used to validate semantic search quality across exported 1C configurations.
+
+For agent-facing guidance on turning a user task into several focused 1C searches, see the [1C Semantic Search Runbook](../docs/dive-deep/one-c-semantic-search-runbook.md).
+
 ## Results Visualization
 
 ![MCP Efficiency Analysis](../assets/mcp_efficiency_analysis_chart.png)

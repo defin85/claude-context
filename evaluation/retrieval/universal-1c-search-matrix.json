@@ -4106,7 +4106,55 @@
             "InformationRegisters/ДлительныеОперации",
             "SessionParameters/ДлительныеОперации.xml"
           ],
-          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "bsp-server-api",
+              "label": "BSP server API",
+              "description": "Entry points for starting long-running operations in background jobs.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперации/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-waiting-progress",
+              "label": "Client waiting and progress",
+              "description": "Client helpers for waiting, progress, and completion callbacks.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-completion-checks",
+              "label": "Server completion checks",
+              "description": "Server wrappers used by forms and clients to inspect long-running operation state.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage in BP30 forms",
+              "description": "Real BP30 form examples that call BSP long-running operation APIs.",
+              "pathPrefixes": [
+                "DataProcessors/ЗаменаИОбъединениеЭлементов/Forms/ОбъединениеЭлементов/Ext/Form/Module.bsl",
+                "DataProcessors/ПомощникУплатыНалога/Forms/ФормаЕдиная/Ext/Form/Module.bsl",
+                "DataProcessors/ВыплатаЗарплатыПлатежнымиПоручениями/Forms/Форма/Ext/Form/Module.bsl",
+                "DataProcessors/СкрытиеКонфиденциальнойИнформации/Forms/Форма/Ext/Form/Module.bsl",
+                "DataProcessors/ОбновлениеКлассификаторов/Forms/Форма/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "state-metadata",
+              "label": "State metadata",
+              "description": "Metadata that stores long-running operation state.",
+              "pathPrefixes": [
+                "InformationRegisters/ДлительныеОперации",
+                "SessionParameters/ДлительныеОперации.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-ut-1c": {
           "status": "applicable",
