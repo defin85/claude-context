@@ -254,6 +254,13 @@ async function main() {
     backend: backendLabel,
     retrievalMode: args.retrievalMode || 'mcp-search_code',
     rankingProfile: options.rankingProfile,
+    bgeM3Mode: {
+      retrievalMode: args.retrievalMode || 'mcp-search_code',
+      rankingProfile: options.rankingProfile,
+      indexStatusRetrievalMode: indexStatus.structuredContent?.retrievalMode,
+      indexStatusRetrievalProfile: indexStatus.structuredContent?.retrievalProfile,
+      indexStatusRetrievalSchemaVersion: indexStatus.structuredContent?.retrievalSchemaVersion,
+    },
     startedAt,
     finishedAt,
     indexStatus: {
@@ -289,6 +296,7 @@ async function main() {
     baselineMode: args.baselineMode || undefined,
     startedAt,
     finishedAt,
+    bgeM3Mode: rawReport.bgeM3Mode,
     rawSummary: rawReport.summary,
     indexStatus: rawReport.indexStatus,
     rlmBslEnrichment: rawReport.rlmBslEnrichment,
@@ -303,6 +311,7 @@ async function main() {
       issueCount: labelValidation.issueCount,
       strictAcceptanceReady: labelValidation.strictAcceptanceReady,
       ambiguousQueryIds: labelValidation.ambiguousQueryIds,
+      queryPurposeCoverage: labelValidation.queryPurposeCoverage,
       notApplicable: labelValidation.notApplicable,
     },
   });

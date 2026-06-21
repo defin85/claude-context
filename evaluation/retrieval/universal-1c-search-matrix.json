@@ -78,7 +78,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u02",
@@ -124,7 +125,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u03",
@@ -176,7 +178,8 @@
             "CommonForms/АдресРеестраМЧД/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u04",
@@ -224,7 +227,8 @@
             "Constants/ТипПодписиМЧД/Ext/ManagerModule.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u05",
@@ -272,7 +276,8 @@
             "Constants/ОтключитьПодборМЧДПоКПППриПодписанииИПроверке/Ext/ManagerModule.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u06",
@@ -325,7 +330,8 @@
             "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотра"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u07",
@@ -378,7 +384,8 @@
             "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u08",
@@ -430,7 +437,8 @@
             "Documents/ЭлектронныйДокументВходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u09",
@@ -482,7 +490,8 @@
             "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотраЛегкийКлиентЭДО"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u10",
@@ -522,7 +531,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u11",
@@ -563,7 +573,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u12",
@@ -605,7 +616,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u13",
@@ -645,7 +657,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u14",
@@ -685,7 +698,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u15",
@@ -743,7 +757,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u16",
@@ -807,7 +822,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u17",
@@ -862,7 +878,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u18",
@@ -915,7 +932,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u19",
@@ -955,7 +973,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u20",
@@ -995,7 +1014,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u21",
@@ -1037,7 +1057,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u22",
@@ -1083,7 +1104,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u23",
@@ -1129,7 +1151,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u24",
@@ -1171,7 +1194,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u25",
@@ -1215,7 +1239,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "u26",
@@ -1257,7 +1282,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "u27",
@@ -1302,7 +1328,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "u28",
@@ -1350,7 +1377,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "u29",
@@ -1408,7 +1436,8 @@
             "CommonModules/ЦентрЭДО/Ext/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u30",
@@ -1457,7 +1486,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "u31",
@@ -1511,7 +1541,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u32",
@@ -1565,7 +1596,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u33",
@@ -1616,7 +1648,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u34",
@@ -1667,7 +1700,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u35",
@@ -1718,7 +1752,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u36",
@@ -1766,7 +1801,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u37",
@@ -1814,7 +1850,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u38",
@@ -1865,7 +1902,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u39",
@@ -1919,7 +1957,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "u40",
@@ -1970,7 +2009,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "n01",
@@ -2022,7 +2062,8 @@
             "CommonModules/ОбщегоНазначенияКлиентСервер/Ext/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "n02",
@@ -2081,7 +2122,8 @@
             "DataProcessors/УдалениеПомеченныхОбъектов"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "n03",
@@ -2133,7 +2175,8 @@
             "SettingsStorages/ХранилищеВариантовОтчетов"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "n04",
@@ -2185,7 +2228,8 @@
             "CommonModules/ПользователиКлиент/Ext/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "n05",
@@ -2237,7 +2281,8 @@
             "Catalogs/Контрагенты/Forms/ФормаЭлемента"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "n06",
@@ -2289,7 +2334,8 @@
             "Catalogs/Номенклатура/Forms/ФормаЭлемента"
           ]
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "zup01",
@@ -2332,7 +2378,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup02",
@@ -2375,7 +2422,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup03",
@@ -2418,7 +2466,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup04",
@@ -2461,7 +2510,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup05",
@@ -2504,7 +2554,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup06",
@@ -2547,7 +2598,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup07",
@@ -2590,7 +2642,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup08",
@@ -2633,7 +2686,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup09",
@@ -2676,7 +2730,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup10",
@@ -2720,7 +2775,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup11",
@@ -2764,7 +2820,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup12",
@@ -2808,7 +2865,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zup13",
@@ -2852,7 +2910,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "navigation"
     },
     {
       "id": "zupn01",
@@ -2893,7 +2952,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "zupn02",
@@ -2934,7 +2994,8 @@
           "status": "not-applicable",
           "reason": "В БЭД не найден source-backed объект этого прикладного сценария в проверенной библиотечной поставке."
         }
-      }
+      },
+      "queryPurpose": "negative-control"
     },
     {
       "id": "ssl01",
@@ -3003,7 +3064,8 @@
           "status": "not-applicable",
           "reason": "В Библиотека электронных документов не найден проверенный объект БСП для этого библиотечного сценария."
         }
-      }
+      },
+      "queryPurpose": "library-oriented"
     },
     {
       "id": "ssl02",
@@ -3019,7 +3081,41 @@
             "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
             "CommonModules/ОтправкаSMS/Ext/Module.bsl"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP SMS sending API.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client-side SMS settings and sending helpers.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Reusable server-side SMS sending implementation.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "SMS provider settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+              ]
+            }
+          ]
         },
         "demo-bp30-1c": {
           "status": "applicable",
@@ -3027,7 +3123,41 @@
             "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
             "CommonModules/ОтправкаSMS/Ext/Module.bsl"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP SMS sending API.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client-side SMS settings and sending helpers.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Reusable server-side SMS sending implementation.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "SMS provider settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+              ]
+            }
+          ]
         },
         "demo-ut-1c": {
           "status": "applicable",
@@ -3035,7 +3165,41 @@
             "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
             "CommonModules/ОтправкаSMS/Ext/Module.bsl"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP SMS sending API.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client-side SMS settings and sending helpers.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Reusable server-side SMS sending implementation.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "SMS provider settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+              ]
+            }
+          ]
         },
         "demo-unf-1c": {
           "status": "applicable",
@@ -3043,7 +3207,41 @@
             "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl",
             "CommonModules/ОтправкаSMS/Ext/Module.bsl"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP SMS sending API.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client-side SMS settings and sending helpers.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Reusable server-side SMS sending implementation.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "SMS provider settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+              ]
+            }
+          ]
         },
         "demo-zup-1c": {
           "status": "applicable",
@@ -3064,7 +3262,8 @@
           "status": "not-applicable",
           "reason": "В Библиотека электронных документов не найден проверенный объект БСП для этого библиотечного сценария."
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "ssl03",
@@ -3128,7 +3327,8 @@
           ],
           "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
         }
-      }
+      },
+      "queryPurpose": "library-oriented"
     },
     {
       "id": "ssl04",
@@ -3200,7 +3400,8 @@
           ],
           "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
         }
-      }
+      },
+      "queryPurpose": "library-oriented"
     },
     {
       "id": "ssl05",
@@ -3217,7 +3418,42 @@
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Settings storage manager module for report variants.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Quick report settings form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Report variant saving form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Settings storage metadata object.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-bp30-1c": {
           "status": "applicable",
@@ -3226,7 +3462,42 @@
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Settings storage manager module for report variants.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Quick report settings form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Report variant saving form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Settings storage metadata object.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-ut-1c": {
           "status": "applicable",
@@ -3235,7 +3506,42 @@
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Settings storage manager module for report variants.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Quick report settings form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Report variant saving form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Settings storage metadata object.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-unf-1c": {
           "status": "applicable",
@@ -3244,7 +3550,42 @@
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета",
             "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
           ],
-          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
+          "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Settings storage manager module for report variants.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Quick report settings form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Report variant saving form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Settings storage metadata object.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-zup-1c": {
           "status": "applicable",
@@ -3272,7 +3613,8 @@
           ],
           "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "ssl06",
@@ -3292,6 +3634,33 @@
             "Catalogs/ТомаХраненияФайлов/Forms/УдалениеЛишнихФайловИзТома/Ext/Form/Module.bsl",
             "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl",
             "Catalogs/ТомаХраненияФайлов/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "File storage service module.",
+              "pathPrefixes": [
+                "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Volume cleanup form for file removal.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Forms/УдалениеЛишнихФайловИзТома/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "File volume metadata and manager context.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl"
+              ],
+              "optional": true
+            }
           ]
         },
         "demo-bp30-1c": {
@@ -3306,6 +3675,41 @@
             "Catalogs/ТомаХраненияФайлов/Forms/УдалениеЛишнихФайловИзТома/Ext/Form/Module.bsl",
             "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl",
             "Catalogs/ТомаХраненияФайлов/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "File storage service module.",
+              "pathPrefixes": [
+                "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "File storage register manager.",
+              "pathPrefixes": [
+                "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Cleanup condition form for date-based file removal.",
+              "pathPrefixes": [
+                "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "File volume metadata and manager context.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl"
+              ],
+              "optional": true
+            }
           ]
         },
         "demo-ut-1c": {
@@ -3320,6 +3724,41 @@
             "Catalogs/ТомаХраненияФайлов/Forms/УдалениеЛишнихФайловИзТома/Ext/Form/Module.bsl",
             "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl",
             "Catalogs/ТомаХраненияФайлов/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "File storage service module.",
+              "pathPrefixes": [
+                "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "File storage register manager.",
+              "pathPrefixes": [
+                "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Cleanup condition form for date-based file removal.",
+              "pathPrefixes": [
+                "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "File volume metadata and manager context.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl"
+              ],
+              "optional": true
+            }
           ]
         },
         "demo-unf-1c": {
@@ -3334,6 +3773,41 @@
             "Catalogs/ТомаХраненияФайлов/Forms/УдалениеЛишнихФайловИзТома/Ext/Form/Module.bsl",
             "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl",
             "Catalogs/ТомаХраненияФайлов/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "File storage service module.",
+              "pathPrefixes": [
+                "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "File storage register manager.",
+              "pathPrefixes": [
+                "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Cleanup condition form for date-based file removal.",
+              "pathPrefixes": [
+                "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "File volume metadata and manager context.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl"
+              ],
+              "optional": true
+            }
           ]
         },
         "demo-zup-1c": {
@@ -3377,7 +3851,8 @@
             "Catalogs/ТомаХраненияФайлов/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "ssl07",
@@ -3449,7 +3924,8 @@
           ],
           "note": "Цель подтверждена по встроенному объекту БСП в типовой конфигурации."
         }
-      }
+      },
+      "queryPurpose": "library-oriented"
     },
     {
       "id": "ssl08",
@@ -3470,6 +3946,41 @@
           "acceptablePathPrefixes": [
             "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl",
             "DataProcessors/КриптографияБЭД/Forms/ЗаписьПароляСертификата/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Cryptography and certificate storage service modules.",
+              "pathPrefixes": [
+                "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+                "CommonModules/ХранилищеСертификатов/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for electronic signatures.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side electronic signature service module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Electronic signature and encryption settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-bp30-1c": {
@@ -3484,6 +3995,41 @@
             "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl",
             "DataProcessors/КриптографияБЭД/Forms/ЗаписьПароляСертификата/Ext/Form/Module.bsl",
             "InformationRegisters/ХранилищеСертификатовПолучателей"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Cryptography and certificate storage service modules.",
+              "pathPrefixes": [
+                "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+                "CommonModules/ХранилищеСертификатов/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for electronic signatures.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side electronic signature service module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Electronic signature and encryption settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-ut-1c": {
@@ -3497,6 +4043,41 @@
           "acceptablePathPrefixes": [
             "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl",
             "DataProcessors/КриптографияБЭД/Forms/ЗаписьПароляСертификата/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Cryptography and certificate storage service modules.",
+              "pathPrefixes": [
+                "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+                "CommonModules/ХранилищеСертификатов/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for electronic signatures.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side electronic signature service module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Electronic signature and encryption settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-unf-1c": {
@@ -3511,6 +4092,41 @@
             "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl",
             "DataProcessors/КриптографияБЭД/Forms/ЗаписьПароляСертификата/Ext/Form/Module.bsl",
             "InformationRegisters/ХранилищеСертификатовПолучателей"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Cryptography and certificate storage service modules.",
+              "pathPrefixes": [
+                "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+                "CommonModules/ХранилищеСертификатов/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for electronic signatures.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side electronic signature service module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Electronic signature and encryption settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-zup-1c": {
@@ -3551,7 +4167,8 @@
             "DataProcessors/КриптографияБЭД/Forms/ЗаписьПароляСертификата/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "led01",
@@ -3573,6 +4190,41 @@
             "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl",
             "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
             "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "EDI account common module.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for EDI account setup.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "EDI account setup forms.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "EDI accounts information register.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl"
+              ]
+            }
           ]
         },
         "demo-bp30-1c": {
@@ -3587,6 +4239,41 @@
             "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl",
             "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
             "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "EDI account common module.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for EDI account setup.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "EDI account setup forms.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "EDI accounts information register.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl"
+              ]
+            }
           ]
         },
         "demo-ut-1c": {
@@ -3601,6 +4288,41 @@
             "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl",
             "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
             "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "EDI account common module.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for EDI account setup.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "EDI account setup forms.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "EDI accounts information register.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl"
+              ]
+            }
           ]
         },
         "demo-unf-1c": {
@@ -3615,6 +4337,41 @@
             "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl",
             "InformationRegisters/УчетныеЗаписиЭДО/Forms/ПомощникПодключенияЭДО/Ext/Form/Module.bsl",
             "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "EDI account common module.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client helpers for EDI account setup.",
+              "pathPrefixes": [
+                "CommonModules/УчетныеЗаписиЭДОСлужебныйКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "EDI account setup forms.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗапись/Ext/Form/Module.bsl",
+                "InformationRegisters/УчетныеЗаписиЭДО/Forms/УчетнаяЗаписьПрямогоОбмена/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "EDI accounts information register.",
+              "pathPrefixes": [
+                "InformationRegisters/УчетныеЗаписиЭДО/Ext/ManagerModule.bsl"
+              ]
+            }
           ]
         },
         "demo-zup-1c": {
@@ -3638,7 +4395,8 @@
             "CommonModules/УчетныеЗаписиЭДО/Ext/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "led02",
@@ -3700,7 +4458,8 @@
             "InformationRegisters/УчетныеЗаписиЭДО/Forms/ВводКодаНалоговогоОргана/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "led03",
@@ -3762,7 +4521,8 @@
             "InformationRegisters/ПриглашенияКОбменуЭлектроннымиДокументами/Ext/ManagerModule.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "led04",
@@ -3782,6 +4542,33 @@
             "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
             "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl",
             "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Common command that starts EDI send/receive workflow.",
+              "pathPrefixes": [
+                "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client module for the EDI document interface.",
+              "pathPrefixes": [
+                "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Applied EDI current-work form and tree command.",
+              "pathPrefixes": [
+                "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
+                "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl"
+              ]
+            }
           ]
         },
         "demo-bp30-1c": {
@@ -3794,6 +4581,33 @@
             "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
             "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl",
             "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Common command that starts EDI send/receive workflow.",
+              "pathPrefixes": [
+                "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client module for the EDI document interface.",
+              "pathPrefixes": [
+                "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Applied EDI current-work form and tree command.",
+              "pathPrefixes": [
+                "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
+                "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl"
+              ]
+            }
           ]
         },
         "demo-ut-1c": {
@@ -3806,6 +4620,33 @@
             "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
             "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl",
             "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Common command that starts EDI send/receive workflow.",
+              "pathPrefixes": [
+                "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client module for the EDI document interface.",
+              "pathPrefixes": [
+                "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Applied EDI current-work form and tree command.",
+              "pathPrefixes": [
+                "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
+                "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl"
+              ]
+            }
           ]
         },
         "demo-unf-1c": {
@@ -3818,6 +4659,33 @@
             "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
             "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl",
             "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Common command that starts EDI send/receive workflow.",
+              "pathPrefixes": [
+                "CommonCommands/ОтправитьИПолучитьЭДО/Ext/CommandModule.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client module for the EDI document interface.",
+              "pathPrefixes": [
+                "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Applied EDI current-work form and tree command.",
+              "pathPrefixes": [
+                "DataProcessors/ИнтерфейсДокументовЭДО/Forms/ТекущиеДелаПоЭДОЛегкийКлиентЭДО/Ext/Form/Module.bsl",
+                "DataProcessors/ИнтерфейсДокументовЭДО/Commands/ДеревоЭД/Ext/CommandModule.bsl"
+              ]
+            }
           ]
         },
         "demo-zup-1c": {
@@ -3840,7 +4708,8 @@
             "CommonModules/ИнтерфейсДокументовЭДОКлиент/Ext/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "led05",
@@ -3861,6 +4730,42 @@
           "acceptablePathPrefixes": [
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Machine-readable power of attorney service module.",
+              "pathPrefixes": [
+                "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Authority-checking rules register.",
+              "pathPrefixes": [
+                "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Authority-checking rule catalog and edit form.",
+              "pathPrefixes": [
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Classifier manager for MCHD authority limits.",
+              "pathPrefixes": [
+                "InformationRegisters/КлассификаторыОграниченийМЧД/Ext/ManagerModule.bsl"
+              ],
+              "optional": true
+            }
           ]
         },
         "demo-bp30-1c": {
@@ -3873,6 +4778,33 @@
           "acceptablePathPrefixes": [
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Machine-readable power of attorney service module.",
+              "pathPrefixes": [
+                "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Authority-checking rules register.",
+              "pathPrefixes": [
+                "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Authority-checking rule catalog and edit form.",
+              "pathPrefixes": [
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-ut-1c": {
@@ -3885,6 +4817,33 @@
           "acceptablePathPrefixes": [
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Machine-readable power of attorney service module.",
+              "pathPrefixes": [
+                "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Authority-checking rules register.",
+              "pathPrefixes": [
+                "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Authority-checking rule catalog and edit form.",
+              "pathPrefixes": [
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-unf-1c": {
@@ -3897,6 +4856,33 @@
           "acceptablePathPrefixes": [
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+          ],
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "Machine-readable power of attorney service module.",
+              "pathPrefixes": [
+                "CommonModules/МашиночитаемыеДоверенности/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Authority-checking rules register.",
+              "pathPrefixes": [
+                "InformationRegisters/ПравилаПроверкиПолномочийПоМЧД/Ext/ManagerModule.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Authority-checking rule catalog and edit form.",
+              "pathPrefixes": [
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Ext/ManagerModule.bsl",
+                "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
+              ]
+            }
           ]
         },
         "demo-zup-1c": {
@@ -3919,7 +4905,8 @@
             "Catalogs/ПравилаПроверкиПолномочийМЧД/Forms/ФормаЭлемента/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     },
     {
       "id": "led06",
@@ -3972,7 +4959,8 @@
             "DataProcessors/ПодписаниеДанныхВМобильномЭДО/Forms/ПодписаниеДанных/Ext/Form/Module.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "led07",
@@ -4014,7 +5002,8 @@
             "InformationRegisters/МеткиВремениДанныхЭДО/Ext/ManagerModule.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "led08",
@@ -4072,7 +5061,8 @@
             "CommonCommands/ЖурналМашиночитаемыхДоверенностейЛегкийКлиентЭДО/Ext/CommandModule.bsl"
           ]
         }
-      }
+      },
+      "queryPurpose": "applied-usage"
     },
     {
       "id": "ssl09",
@@ -4093,7 +5083,51 @@
             "InformationRegisters/ДлительныеОперации",
             "SessionParameters/ДлительныеОперации.xml"
           ],
-          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP background execution entry point.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперации/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client waiting and progress helpers.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side completion and result checks.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Source-backed applied form or processor that starts and waits for a background operation.",
+              "pathPrefixes": [
+                "Documents/ЭлектронныйДокументИсходящийЭДО/Forms/ФормаПросмотра/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "State objects used by long-running operations.",
+              "pathPrefixes": [
+                "InformationRegisters/ДлительныеОперации",
+                "SessionParameters/ДлительныеОперации.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-bp30-1c": {
           "status": "applicable",
@@ -4109,45 +5143,41 @@
           "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации.",
           "requiredResultRoles": [
             {
-              "id": "bsp-server-api",
-              "label": "BSP server API",
-              "description": "Entry points for starting long-running operations in background jobs.",
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP background execution entry point.",
               "pathPrefixes": [
                 "CommonModules/ДлительныеОперации/Ext/Module.bsl"
               ]
             },
             {
-              "id": "client-waiting-progress",
-              "label": "Client waiting and progress",
-              "description": "Client helpers for waiting, progress, and completion callbacks.",
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client waiting and progress helpers.",
               "pathPrefixes": [
                 "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
               ]
             },
             {
-              "id": "server-completion-checks",
-              "label": "Server completion checks",
-              "description": "Server wrappers used by forms and clients to inspect long-running operation state.",
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side completion and result checks.",
               "pathPrefixes": [
                 "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
               ]
             },
             {
               "id": "applied-usage",
-              "label": "Applied usage in BP30 forms",
-              "description": "Real BP30 form examples that call BSP long-running operation APIs.",
+              "label": "Applied usage",
+              "description": "Source-backed applied form or processor that starts and waits for a background operation.",
               "pathPrefixes": [
-                "DataProcessors/ЗаменаИОбъединениеЭлементов/Forms/ОбъединениеЭлементов/Ext/Form/Module.bsl",
-                "DataProcessors/ПомощникУплатыНалога/Forms/ФормаЕдиная/Ext/Form/Module.bsl",
-                "DataProcessors/ВыплатаЗарплатыПлатежнымиПоручениями/Forms/Форма/Ext/Form/Module.bsl",
-                "DataProcessors/СкрытиеКонфиденциальнойИнформации/Forms/Форма/Ext/Form/Module.bsl",
-                "DataProcessors/ОбновлениеКлассификаторов/Forms/Форма/Ext/Form/Module.bsl"
+                "CommonForms/ЗаполнениеРеквизитовКонтрагента/Ext/Form/Module.bsl"
               ]
             },
             {
-              "id": "state-metadata",
-              "label": "State metadata",
-              "description": "Metadata that stores long-running operation state.",
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "State objects used by long-running operations.",
               "pathPrefixes": [
                 "InformationRegisters/ДлительныеОперации",
                 "SessionParameters/ДлительныеОперации.xml"
@@ -4167,7 +5197,51 @@
             "InformationRegisters/ДлительныеОперации",
             "SessionParameters/ДлительныеОперации.xml"
           ],
-          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP background execution entry point.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперации/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client waiting and progress helpers.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side completion and result checks.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Source-backed applied form or processor that starts and waits for a background operation.",
+              "pathPrefixes": [
+                "DataProcessors/ЗагрузкаКурсовВалютЕЦБ/Forms/Форма/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "State objects used by long-running operations.",
+              "pathPrefixes": [
+                "InformationRegisters/ДлительныеОперации",
+                "SessionParameters/ДлительныеОперации.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-unf-1c": {
           "status": "applicable",
@@ -4180,7 +5254,51 @@
             "InformationRegisters/ДлительныеОперации",
             "SessionParameters/ДлительныеОперации.xml"
           ],
-          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
+          "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации.",
+          "requiredResultRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP background execution entry point.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперации/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client waiting and progress helpers.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side completion and result checks.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Source-backed applied form or processor that starts and waits for a background operation.",
+              "pathPrefixes": [
+                "DataProcessors/РасчетПотребностей/Forms/Форма/Ext/Form/Module.bsl"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "State objects used by long-running operations.",
+              "pathPrefixes": [
+                "InformationRegisters/ДлительныеОперации",
+                "SessionParameters/ДлительныеОперации.xml"
+              ],
+              "optional": true
+            }
+          ]
         },
         "demo-zup-1c": {
           "status": "applicable",
@@ -4220,7 +5338,8 @@
           ],
           "note": "Цель подтверждена по встроенному механизму БСП длительных операций в конфигурации."
         }
-      }
+      },
+      "queryPurpose": "task-implementation"
     }
   ]
 }

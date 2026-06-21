@@ -105,6 +105,36 @@ The universal 1C search matrix lives in [`retrieval/universal-1c-search-matrix.j
 
 For agent-facing guidance on turning a user task into several focused 1C searches, see the [1C Semantic Search Runbook](../docs/dive-deep/one-c-semantic-search-runbook.md).
 
+### Live 1C Matrix Check
+
+Run a selected fixture through the live MCP `search_code` flow and score the
+saved results afterward:
+
+```bash
+node scripts/run-universal-1c-live-mcp-eval.js \
+  --fixture demo-bp30-1c \
+  --ranking-profile one-c \
+  --retrieval-mode bge_m3_full
+```
+
+By default, artifacts are written under
+`.artifacts/hybrid-code-symbol-retrieval/<run-name>/`:
+
+- `raw-results.json`: live MCP results plus fixture, codebase path, backend,
+  ranking profile, retrieval mode, timestamps, index status, and available
+  BGE-M3 mode metadata;
+- `summary.json`: scored metrics, query-purpose coverage, role-bundle
+  completion, and missing required roles grouped by role identifier;
+- `summary.md`: human-readable report with strict/acceptable Hit@k,
+  query-purpose groups, missing bundle roles, and negative controls;
+- `label-validation.json`: source-backed label validation for the selected
+  fixture.
+
+Treat these outputs as dated quality snapshots. They are evaluation evidence
+only; `queryPurpose`, expected path prefixes, required result roles, and live
+artifacts must not be used by production `search_code` ranking or query
+rewriting.
+
 ## Results Visualization
 
 ![MCP Efficiency Analysis](../assets/mcp_efficiency_analysis_chart.png)

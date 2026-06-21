@@ -66,6 +66,13 @@ const UNIVERSAL_TARGET_STATUSES = new Set([
   'not-applicable',
   'needs-inspection',
 ]);
+const UNIVERSAL_QUERY_PURPOSES = new Set([
+  'navigation',
+  'task-implementation',
+  'negative-control',
+  'library-oriented',
+  'applied-usage',
+]);
 
 function isUniversalMatrixDataset(dataset) {
   return Boolean(
@@ -73,6 +80,10 @@ function isUniversalMatrixDataset(dataset) {
     Array.isArray(dataset.queries) &&
     (dataset.dataset === UNIVERSAL_MATRIX_DATASET || dataset.matrix === 'universal-1c-search'),
   );
+}
+
+function requiresQueryPurpose(dataset) {
+  return dataset?.dataset === UNIVERSAL_MATRIX_DATASET;
 }
 
 function inferMatrixFixtureKey(dataset, options = {}) {
@@ -130,6 +141,7 @@ function universalQueriesForFixture(dataset, fixtureKey, options = {}) {
         prohibitedPathPrefixes: target.prohibitedPathPrefixes || [],
         requiredResultRoles: target.requiredResultRoles || [],
         note: target.note || query.note,
+        queryPurpose: query.queryPurpose,
       });
     }
   }
@@ -471,6 +483,12 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
       id: query.id,
       query: query.query,
       kind: query.kind,
+      fixtureKey: query.fixtureKey,
+      intent: query.intent,
+      domain: query.domain,
+      controlClass: query.controlClass,
+      queryPurpose: query.queryPurpose,
+      targetStatus: query.targetStatus,
       firstRelevantRank: rank,
       firstStrictRank: strictRank,
       firstAcceptableRank: acceptableRank,
@@ -547,11 +565,36 @@ function scoreFlatDataset(dataset, resultsById, runMetadata = {}) {
 
 function summarizeBundleRoles(perQuery) {
   const rows = perQuery.filter((row) => row.roleCoverage?.roleCount > 0);
+  const missingRequiredRolesById = {};
+  for (const row of rows) {
+    for (const role of row.missingRequiredRoles || []) {
+      const roleId = role.id || 'unspecified';
+      if (!missingRequiredRolesById[roleId]) {
+        missingRequiredRolesById[roleId] = {
+          roleId,
+          label: role.label,
+          count: 0,
+          failures: [],
+        };
+      }
+      missingRequiredRolesById[roleId].count += 1;
+      missingRequiredRolesById[roleId].failures.push({
+        id: row.id,
+        query: row.query,
+        fixtureKey: row.fixtureKey,
+        intent: row.intent,
+        domain: row.domain,
+        queryPurpose: row.queryPurpose,
+        pathPrefixes: role.pathPrefixes,
+      });
+    }
+  }
   return {
     queryCount: rows.length,
     completeCount: rows.filter((row) => row.roleCoverage.complete).length,
     incompleteCount: rows.filter((row) => !row.roleCoverage.complete).length,
     missingRequiredRoleCount: rows.reduce((sum, row) => sum + row.roleCoverage.missingRequiredRoleCount, 0),
+    missingRequiredRolesById,
     incompleteQueries: rows
       .filter((row) => !row.roleCoverage.complete)
       .map((row) => ({
@@ -563,6 +606,31 @@ function summarizeBundleRoles(perQuery) {
           pathPrefixes: role.pathPrefixes,
         })),
       })),
+  };
+}
+
+function summarizeQueryPurposes(rows) {
+  const counts = {};
+  const missing = [];
+  const unknown = [];
+  for (const row of rows) {
+    const purpose = row.queryPurpose;
+    if (!purpose) {
+      missing.push({ id: row.id, query: row.query });
+      counts.unspecified = (counts.unspecified || 0) + 1;
+      continue;
+    }
+    counts[purpose] = (counts[purpose] || 0) + 1;
+    if (!UNIVERSAL_QUERY_PURPOSES.has(purpose)) {
+      unknown.push({ id: row.id, query: row.query, queryPurpose: purpose });
+    }
+  }
+  return {
+    counts,
+    missingCount: missing.length,
+    unknownCount: unknown.length,
+    missing,
+    unknown,
   };
 }
 
@@ -610,6 +678,7 @@ function scoreNegativeControls(dataset, resultsById, fixtureKey, options = {}) {
       intent: query.intent,
       domain: query.domain,
       controlClass: query.controlClass,
+      queryPurpose: query.queryPurpose,
       targetStatus: query.targetStatus,
       passed: violations.length === 0 && !error,
       violations,
@@ -646,6 +715,7 @@ function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
         intent: query.intent,
         domain: query.domain,
         controlClass: query.controlClass,
+        queryPurpose: query.queryPurpose,
         targetStatus: target.status,
         reason: target.reason || target.note || null,
       };
@@ -661,8 +731,10 @@ function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
     row.intent = source?.intent;
     row.domain = source?.domain;
     row.controlClass = source?.controlClass;
+    row.queryPurpose = source?.queryPurpose;
     row.targetStatus = source?.targetStatus;
   }
+  summary.bundleRoles = summarizeBundleRoles(summary.perQuery);
   summary.matrix = {
     dataset: dataset.dataset,
     fixtureKey,
@@ -671,12 +743,14 @@ function scoreUniversalMatrixDataset(dataset, resultsById, runMetadata = {}) {
     sourceQueryCount: dataset.queries.length,
     includeOptionalTargets: Boolean(runMetadata.includeOptionalTargets),
     notApplicableTargets,
+    queryPurposeCoverage: summarizeQueryPurposes(dataset.queries),
   };
   summary.grouped = {
     fixture: groupPerQuery(summary.perQuery, 'fixtureKey'),
     domain: groupPerQuery(summary.perQuery, 'domain'),
     intent: groupPerQuery(summary.perQuery, 'intent'),
     controlClass: groupPerQuery(summary.perQuery, 'controlClass'),
+    queryPurpose: groupPerQuery(summary.perQuery, 'queryPurpose'),
   };
   summary.negativeControls = scoreNegativeControls(dataset, resultsById, fixtureKey, {
     includeOptionalTargets: runMetadata.includeOptionalTargets,
@@ -768,6 +842,11 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
     if (!UNIVERSAL_TARGET_STATUSES.has(target.status)) {
       issues.push(`invalid target status ${target.status}`);
     }
+    if (requiresQueryPurpose(dataset) && !query.queryPurpose) {
+      issues.push('missing queryPurpose');
+    } else if (query.queryPurpose && !UNIVERSAL_QUERY_PURPOSES.has(query.queryPurpose)) {
+      issues.push(`unknown queryPurpose ${query.queryPurpose}`);
+    }
     const shouldValidatePrefixes = ['applicable', 'optional'].includes(target.status) && !isNegativeControlQuery(query);
     if (target.status === 'applicable' && !isNegativeControlQuery(query) && !target.expectedPathPrefixes?.length) {
       issues.push('applicable positive target must include expectedPathPrefixes');
@@ -807,6 +886,7 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
       intent: query.intent,
       domain: query.domain,
       controlClass: query.controlClass,
+      queryPurpose: query.queryPurpose,
       fixtureKey,
       targetStatus: target.status,
       allReachable: prefixes.every((prefix) => prefix.reachable) && issues.length === 0,
@@ -847,6 +927,7 @@ function validateUniversalMatrixLabels(dataset, codebasePath, options = {}) {
       sum + row.prefixes.filter((prefix) => !prefix.reachable).length
     ), 0),
     issueCount: perQuery.reduce((sum, row) => sum + row.issues.length, 0),
+    queryPurposeCoverage: summarizeQueryPurposes(perQuery),
     strictAcceptanceReady: unreachable.length === 0 && perQuery.every((row) => row.targetStatus !== 'needs-inspection'),
     ambiguousQueryIds: [],
     unresolved: perQuery
@@ -1142,6 +1223,10 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
   if (summary.run.indexStatus) {
     lines.push(`- Index status: ${summary.run.indexStatus.status || summary.run.indexStatus.state || 'recorded'}`);
   }
+  if (summary.run.bgeM3Mode) {
+    const bgeM3 = summary.run.bgeM3Mode;
+    lines.push(`- BGE-M3 mode: retrievalMode=${bgeM3.retrievalMode || 'unspecified'}, indexRetrievalMode=${bgeM3.indexStatusRetrievalMode || 'unspecified'}, schema=${bgeM3.indexStatusRetrievalSchemaVersion || 'unspecified'}`);
+  }
   if (summary.run.rlmBslEnrichment) {
     const enrichment = summary.run.rlmBslEnrichment;
     lines.push(`- RLM BSL enrichment: mode=${enrichment.mode || 'unknown'}, provider=${enrichment.provider || 'unknown'}, status=${enrichment.status || 'unknown'}, configured=${enrichment.configured === false ? 'false' : 'true'}`);
@@ -1176,11 +1261,20 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
     if (labelValidation.needsInspectionCount !== undefined) {
       lines.push(`- Needs inspection: ${labelValidation.needsInspectionCount}`);
     }
+    if (labelValidation.queryPurposeCoverage) {
+      lines.push(`- Query purpose validation: missing ${labelValidation.queryPurposeCoverage.missingCount}, unknown ${labelValidation.queryPurposeCoverage.unknownCount}`);
+    }
   }
   if (summary.matrix) {
     lines.push(`- Matrix fixture: ${summary.matrix.fixtureKey}`);
     if (summary.matrix.notApplicableTargets?.length) {
       lines.push(`- Not-applicable targets: ${summary.matrix.notApplicableTargets.length}`);
+    }
+    if (summary.matrix.queryPurposeCoverage) {
+      const purposeCounts = Object.entries(summary.matrix.queryPurposeCoverage.counts)
+        .map(([purpose, count]) => `${purpose}=${count}`)
+        .join(', ');
+      lines.push(`- Query purposes: ${purposeCounts}`);
     }
   }
   if (summary.negativeControls) {
@@ -1230,6 +1324,20 @@ function writeMarkdownReport(filePath, summary, labelValidation, comparison) {
     lines.push('| --- | --- | ---: | --- |');
     for (const row of summary.perQuery.filter((item) => item.roleCoverage?.roleCount > 0)) {
       lines.push(`| ${row.id} | ${row.roleCoverage.complete ? 'yes' : 'no'} | ${row.roleCoverage.foundRequiredRoleCount}/${row.roleCoverage.requiredRoleCount} | ${row.missingRequiredRoles.map((role) => role.label || role.id).join('<br>')} |`);
+    }
+  }
+  if (summary.bundleRoles?.missingRequiredRoleCount > 0) {
+    lines.push('');
+    lines.push('## Missing required bundle roles');
+    lines.push('| role | missing | failures |');
+    lines.push('| --- | ---: | --- |');
+    const missingRoleGroups = Object.values(summary.bundleRoles.missingRequiredRolesById || {})
+      .sort((left, right) => right.count - left.count || left.roleId.localeCompare(right.roleId));
+    for (const group of missingRoleGroups) {
+      const failures = group.failures
+        .map((failure) => `${failure.fixtureKey ? `${failure.fixtureKey}::` : ''}${failure.id}`)
+        .join('<br>');
+      lines.push(`| ${group.label || group.roleId} | ${group.count} | ${failures} |`);
     }
   }
   if (summary.negativeControls?.perQuery?.length) {
@@ -1330,6 +1438,7 @@ function main() {
     negativeControlPassThreshold: args.negativeControlPassThreshold ? Number(args.negativeControlPassThreshold) : undefined,
     startedAt: rawResults.startedAt,
     finishedAt: rawResults.finishedAt,
+    bgeM3Mode: rawResults.bgeM3Mode,
     rawSummary: rawResults.summary,
     indexStatus: rawResults.indexStatus,
     matrixFixture: args.matrixFixture,
@@ -1346,6 +1455,7 @@ function main() {
       issueCount: labelValidation.issueCount,
       strictAcceptanceReady: labelValidation.strictAcceptanceReady,
       ambiguousQueryIds: labelValidation.ambiguousQueryIds,
+      queryPurposeCoverage: labelValidation.queryPurposeCoverage,
       notApplicable: labelValidation.notApplicable,
     } : undefined,
   };

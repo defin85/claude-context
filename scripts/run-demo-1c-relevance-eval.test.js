@@ -780,6 +780,14 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
   const fixtures = Object.keys(dataset.fixtures);
   const positive = dataset.queries.filter((query) => query.kind !== 'negative-control');
   const negative = dataset.queries.filter((query) => query.kind === 'negative-control');
+  const purposeCounts = dataset.queries.reduce((counts, query) => {
+    counts[query.queryPurpose] = (counts[query.queryPurpose] || 0) + 1;
+    return counts;
+  }, {});
+  const roleBearingRows = dataset.queries.filter((query) => (
+    query.queryPurpose === 'task-implementation' &&
+    Object.values(query.targets).some((target) => target.requiredResultRoles?.length)
+  ));
   const positiveText = JSON.stringify(positive);
   const requiredCoverage = {
     reports: /Reports\//,
@@ -802,6 +810,14 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
   assert.equal(dataset.labelsAreProductionRules, false);
   assert.equal(positive.length, 70);
   assert.equal(negative.length, 8);
+  assert.deepEqual(purposeCounts, {
+    navigation: 48,
+    'applied-usage': 10,
+    'negative-control': 8,
+    'library-oriented': 4,
+    'task-implementation': 8,
+  });
+  assert.equal(roleBearingRows.length, 8);
   assert.deepEqual(fixtures, [
     'demo-do30-1c',
     'demo-bp30-1c',
@@ -831,11 +847,11 @@ test('loads the universal 1C matrix with complete fixture targets', () => {
   const longOperations = dataset.queries.find((query) => query.id === 'ssl09');
   const bpRoles = longOperations.targets['demo-bp30-1c'].requiredResultRoles;
   assert.deepEqual(bpRoles.map((role) => role.id), [
-    'bsp-server-api',
-    'client-waiting-progress',
-    'server-completion-checks',
+    'library-api',
+    'client-usage',
+    'server-usage',
     'applied-usage',
-    'state-metadata',
+    'metadata',
   ]);
   assert.equal(bpRoles.filter((role) => !role.optional).length, 4);
 });
@@ -929,8 +945,8 @@ test('validates required result role prefixes for universal matrix labels', () =
     matrixFixture: 'demo-bp30-1c',
   });
 
-  assert.equal(validation.resultRolePrefixCount, 10);
-  assert.equal(ssl09.prefixes.filter((prefix) => prefix.labelKind === 'result-role').length, 10);
+  assert.equal(validation.resultRolePrefixCount, 36);
+  assert.equal(ssl09.prefixes.filter((prefix) => prefix.labelKind === 'result-role').length, 6);
   assert.equal(brokenValidation.unreachablePrefixCount, 1);
   assert.equal(brokenValidation.unreachable[0].id, 'ssl09');
   assert.equal(brokenValidation.unreachable[0].prefixes[0].labelKind, 'result-role');
@@ -984,6 +1000,7 @@ test('validates universal target statuses without scoring unresolved targets as 
         kind: 'positive',
         intent: 'module',
         domain: 'common',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['CommonModules/Strict'] } },
       },
@@ -993,6 +1010,7 @@ test('validates universal target statuses without scoring unresolved targets as 
         kind: 'positive',
         intent: 'module',
         domain: 'common',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'optional', expectedPathPrefixes: ['CommonModules/Optional'] } },
       },
@@ -1002,6 +1020,7 @@ test('validates universal target statuses without scoring unresolved targets as 
         kind: 'positive',
         intent: 'foreign',
         domain: 'foreign',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'not-applicable' } },
       },
@@ -1011,6 +1030,7 @@ test('validates universal target statuses without scoring unresolved targets as 
         kind: 'positive',
         intent: 'unknown',
         domain: 'unknown',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'needs-inspection', note: 'manual review pending' } },
       },
@@ -1080,6 +1100,7 @@ test('reports malformed universal targets and unreachable applicable labels', ()
         kind: 'positive',
         intent: 'module',
         domain: 'common',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: {},
       },
@@ -1089,6 +1110,7 @@ test('reports malformed universal targets and unreachable applicable labels', ()
         kind: 'positive',
         intent: 'module',
         domain: 'common',
+        queryPurpose: 'unknown-purpose',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'unknown', expectedPathPrefixes: ['CommonModules/Missing'] } },
       },
@@ -1098,6 +1120,7 @@ test('reports malformed universal targets and unreachable applicable labels', ()
         kind: 'positive',
         intent: 'module',
         domain: 'common',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['CommonModules/Missing'] } },
       },
@@ -1107,7 +1130,8 @@ test('reports malformed universal targets and unreachable applicable labels', ()
   const validation = validateLabels(dataset, fixtureRoot, { matrixFixture: 'demo-unit' });
 
   assert.equal(validation.missingTargetCount, 1);
-  assert.equal(validation.issueCount, 2);
+  assert.equal(validation.issueCount, 3);
+  assert.equal(validation.queryPurposeCoverage.unknownCount, 1);
   assert.equal(validation.unreachablePrefixCount, 1);
   assert.equal(validation.unreachable.some((row) => row.id === 'missing'), true);
   assert.equal(validation.unreachable.some((row) => row.id === 'bad-status'), true);
@@ -1180,6 +1204,7 @@ test('scores universal positives by fixture and reports negative controls separa
         kind: 'positive',
         intent: 'object-card-navigation',
         domain: 'counterparties',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['Catalogs/Контрагенты'] } },
       },
@@ -1189,6 +1214,7 @@ test('scores universal positives by fixture and reports negative controls separa
         kind: 'negative-control',
         intent: 'negative-control',
         domain: 'payroll',
+        queryPurpose: 'negative-control',
         controlClass: 'negative-control',
         targets: { 'demo-unit': { status: 'applicable', prohibitedPathPrefixes: ['Catalogs/Контрагенты'] } },
       },
@@ -1210,6 +1236,9 @@ test('scores universal positives by fixture and reports negative controls separa
   assert.equal(summary.metrics.strict.hitAt10Count, 1);
   assert.equal(summary.grouped.fixture['demo-unit'].queryCount, 1);
   assert.equal(summary.grouped.domain.counterparties.strict.hitAt10Count, 1);
+  assert.equal(summary.grouped.queryPurpose.navigation.strict.hitAt10Count, 1);
+  assert.equal(summary.matrix.queryPurposeCoverage.counts.navigation, 1);
+  assert.equal(summary.matrix.queryPurposeCoverage.counts['negative-control'], 1);
   assert.equal(summary.negativeControls.queryCount, 1);
   assert.equal(summary.negativeControls.failCount, 1);
   assert.deepEqual(summary.negativeControls.failures[0].violations, ['Catalogs/Контрагенты/Ext/ObjectModule.bsl']);
@@ -1229,6 +1258,7 @@ test('scores and reports required bundle roles separately from strict hits', () 
         kind: 'positive',
         intent: 'long-operation-navigation',
         domain: 'bsp-long-operations',
+        queryPurpose: 'task-implementation',
         controlClass: 'source-inspected',
         targets: {
           'demo-unit': {
@@ -1259,6 +1289,22 @@ test('scores and reports required bundle roles separately from strict hits', () 
     completeCount: 0,
     incompleteCount: 1,
     missingRequiredRoleCount: 1,
+    missingRequiredRolesById: {
+      client: {
+        roleId: 'client',
+        label: 'Client',
+        count: 1,
+        failures: [{
+          id: 'bundle',
+          query: 'длительная операция',
+          fixtureKey: 'demo-unit',
+          intent: 'long-operation-navigation',
+          domain: 'bsp-long-operations',
+          queryPurpose: 'task-implementation',
+          pathPrefixes: ['CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl'],
+        }],
+      },
+    },
     incompleteQueries: [{
       id: 'bundle',
       query: 'длительная операция',
@@ -1276,6 +1322,8 @@ test('scores and reports required bundle roles separately from strict hits', () 
   const markdown = fs.readFileSync(outPath, 'utf8');
   assert.match(markdown, /Bundle roles: 0\/1 complete/);
   assert.match(markdown, /## Bundle role coverage/);
+  assert.match(markdown, /## Missing required bundle roles/);
+  assert.match(markdown, /\| Client \| 1 \| demo-unit::bundle \|/);
   assert.match(markdown, /\| bundle \| no \| 1\/2 \| Client \|/);
 });
 
@@ -1293,6 +1341,7 @@ test('preserves not-applicable reasons in universal matrix summaries and markdow
         kind: 'positive',
         intent: 'object-card-navigation',
         domain: 'counterparties',
+        queryPurpose: 'navigation',
         controlClass: 'source-inspected',
         targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['Catalogs/Контрагенты'] } },
       },
@@ -1302,6 +1351,7 @@ test('preserves not-applicable reasons in universal matrix summaries and markdow
         kind: 'positive',
         intent: 'sales-order',
         domain: 'trade',
+        queryPurpose: 'applied-usage',
         controlClass: 'source-inspected',
         targets: {
           'demo-unit': {
@@ -1327,6 +1377,7 @@ test('preserves not-applicable reasons in universal matrix summaries and markdow
     intent: 'sales-order',
     domain: 'trade',
     controlClass: 'source-inspected',
+    queryPurpose: 'applied-usage',
     targetStatus: 'not-applicable',
     reason: 'В этой фикстуре нет торгового заказа.',
   }]);
@@ -1353,6 +1404,7 @@ test('uses actual universal matrix query counts in threshold recommendations', (
       kind: 'positive',
       intent: 'module',
       domain: 'common',
+      queryPurpose: 'navigation',
       controlClass: 'source-inspected',
       targets: { 'demo-unit': { status: 'applicable', expectedPathPrefixes: ['CommonModules/Strict'] } },
     }],
@@ -1384,6 +1436,8 @@ test('keeps universal matrix labels out of production ranking code', () => {
 
   for (const forbidden of [
     'universal-1c-search-matrix',
+    'queryPurpose',
+    'requiredResultRoles',
     'demo-bp30-1c',
     'demo-ut-1c',
     'demo-unf-1c',
