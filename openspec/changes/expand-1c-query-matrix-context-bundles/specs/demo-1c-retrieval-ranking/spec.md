@@ -5,14 +5,14 @@ The universal 1C evaluation SHALL include source-inspected task scenarios that r
 
 #### Scenario: Task bundle scenario count is expanded
 - **WHEN** the universal 1C matrix is reviewed after this change
-- **THEN** it SHALL contain at least 8 task-oriented scenarios with required result roles
-- **AND** the preferred target range SHALL be 8-12 scenarios unless source inspection shows that fewer high-quality scenarios are available
-- **AND** each scenario SHALL document enough fixture-specific path evidence to validate its role labels
+- **THEN** it SHALL contain at least 8 task-oriented matrix rows with `queryPurpose` set to `task-implementation` and with required result roles on at least one applicable target
+- **AND** the preferred target range SHALL be 8-12 task-oriented matrix rows unless source inspection shows that fewer high-quality rows are available
+- **AND** each applicable role-bearing target SHALL document enough fixture-specific path evidence to validate its role labels
 
 #### Scenario: Primary fixtures receive role coverage
 - **WHEN** role-based scenarios are assigned to the primary demo fixtures
-- **THEN** each primary configuration fixture SHALL have at least 2 role-based applicable scenarios where source-inspected labels are available
-- **AND** the implementation SHOULD target 2-3 scenarios per primary fixture before increasing breadth elsewhere
+- **THEN** each primary configuration fixture (`demo-do30-1c`, `demo-bp30-1c`, `demo-ut-1c`, and `demo-unf-1c`) SHALL have at least 2 role-based applicable targets where source-inspected labels are available
+- **AND** the implementation SHOULD target 2-3 role-based applicable targets per primary fixture before increasing breadth elsewhere
 - **AND** fixtures without a relevant subsystem SHALL mark the target `not-applicable` with an audit reason rather than carrying empty or guessed labels
 
 #### Scenario: Role bundles represent implementation context
@@ -26,8 +26,8 @@ The universal 1C matrix SHALL classify rows by query purpose so coverage can be 
 
 #### Scenario: Query purpose is explicit
 - **WHEN** a universal matrix row is loaded
-- **THEN** it SHALL expose a machine-readable purpose classification
-- **AND** supported purpose values SHALL include navigation, task implementation, negative control, library-oriented, and applied usage
+- **THEN** it SHALL expose a machine-readable `queryPurpose` classification
+- **AND** supported `queryPurpose` values SHALL be `navigation`, `task-implementation`, `negative-control`, `library-oriented`, and `applied-usage`
 - **AND** the purpose SHALL remain evaluation metadata only
 
 #### Scenario: Purpose coverage is reported
@@ -40,7 +40,8 @@ The universal scoring report SHALL aggregate missing required result roles acros
 
 #### Scenario: Missing roles are aggregated
 - **WHEN** live or saved universal results are scored
-- **THEN** the scored JSON and Markdown report SHALL include missing required role counts grouped by role identifier
+- **THEN** the scored JSON SHALL include `bundleRoles.missingRequiredRolesById`, grouped by role identifier
+- **AND** the Markdown report SHALL include a missing-required-role aggregate section derived from that grouped summary
 - **AND** they SHALL include enough query and fixture context to identify where each role failed
 - **AND** ordinary strict Hit@k metrics SHALL remain unchanged
 

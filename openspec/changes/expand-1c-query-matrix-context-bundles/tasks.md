@@ -1,21 +1,21 @@
 ## 1. Matrix Audit And Scenario Selection
 
 - [ ] 1.1 Inventory current universal matrix rows by fixture, domain, intent, kind, control class, and result-role coverage.
-- [ ] 1.2 Select 8-12 source-inspectable task scenarios that require multi-role context bundles.
-- [ ] 1.3 Define the target primary fixture coverage plan, aiming for 2-3 role-based scenarios per primary configuration where applicable.
+- [ ] 1.2 Select 8-12 source-inspectable task rows that require multi-role context bundles.
+- [ ] 1.3 Define the target primary fixture coverage plan, aiming for 2-3 role-based applicable targets per primary configuration where applicable.
 - [ ] 1.4 Identify not-applicable cases and record audit reasons instead of leaving ambiguous empty targets.
 
 ## 2. Matrix Data Expansion
 
 - [ ] 2.1 Add or update matrix rows with required result roles for the selected task scenarios.
 - [ ] 2.2 Source-inspect and record path prefixes for library API, client usage, server usage, applied examples, and metadata roles where relevant.
-- [ ] 2.3 Add or normalize machine-readable query purpose values for navigation, task implementation, negative control, library-oriented, and applied usage rows.
+- [ ] 2.3 Add machine-readable `queryPurpose` values for `navigation`, `task-implementation`, `negative-control`, `library-oriented`, and `applied-usage` rows without overloading `intent`.
 - [ ] 2.4 Keep all new labels as evaluation metadata only and avoid production ranking/query-rewrite changes.
 
 ## 3. Validation And Reporting
 
 - [ ] 3.1 Extend matrix validation to count and report query-purpose coverage and unknown purpose values.
-- [ ] 3.2 Extend scoring summaries with missing required role counts grouped by role identifier.
+- [ ] 3.2 Extend scoring summaries with `bundleRoles.missingRequiredRolesById` grouped by role identifier.
 - [ ] 3.3 Include missing-role aggregates in Markdown reports while preserving existing strict and acceptable Hit@k metrics.
 - [ ] 3.4 Add tests for purpose validation, role coverage counts, missing-role aggregation, and production-boundary enforcement.
 

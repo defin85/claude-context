@@ -30,15 +30,15 @@ The production retrieval stack is not part of this change. Dense-only BGE-M3, fu
 
 2. **Introduce query-purpose classification in the matrix.**
 
-   Rows will keep existing `intent`, `domain`, `kind`, and `controlClass`, and add or normalize a purpose classification such as navigation, task implementation, negative control, library-oriented, and applied usage. This gives maintainers a way to audit coverage gaps without reading every path label.
+   Rows will keep existing `intent`, `domain`, `kind`, and `controlClass`, and add a `queryPurpose` classification with one of `navigation`, `task-implementation`, `negative-control`, `library-oriented`, or `applied-usage`. `intent` remains the domain-specific user intent, while `queryPurpose` is the coarse audit bucket. This gives maintainers a way to audit coverage gaps without reading every path label.
 
-3. **Start with 8-12 source-inspected scenarios.**
+3. **Start with 8-12 source-inspected task rows.**
 
-   The matrix should grow enough to represent real agent tasks without turning the first implementation pass into exhaustive taxonomy work. Candidate scenarios should be selected from already-indexed and source-inspected fixtures first.
+   The matrix should grow enough to represent real agent tasks without turning the first implementation pass into exhaustive taxonomy work. A task row is a matrix query with `queryPurpose: "task-implementation"` and at least one applicable target declaring non-optional `requiredResultRoles`. Fixture coverage is counted per applicable target, so one reusable row may contribute to several fixtures when each target has source-inspected role labels.
 
 4. **Prefer aggregate missing-role reporting over hard role thresholds initially.**
 
-   Reports will show which roles most often fail across a run. Hard gates should only be added after live baselines exist, because current semantic-search quality varies by fixture, profile, and index freshness.
+   Reports will show which roles most often fail across a run through a machine-readable `missingRequiredRolesById` summary and a Markdown section derived from it. Hard gates should only be added after live baselines exist, because current semantic-search quality varies by fixture, profile, and index freshness.
 
 5. **Keep live evaluation external to production search.**
 
