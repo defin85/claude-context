@@ -838,11 +838,11 @@ test('validates demo-zup-1c matrix labels and unresolved classifications', () =>
 
   assert.equal(validation.fixtureKey, 'demo-zup-1c');
   assert.equal(validation.applicableTargetCount, 48);
-  assert.equal(validation.notApplicableTargetCount, 27);
-  assert.equal(validation.needsInspectionCount, 3);
+  assert.equal(validation.notApplicableTargetCount, 30);
+  assert.equal(validation.needsInspectionCount, 0);
   assert.equal(validation.unreachablePrefixCount, 0);
   assert.equal(validation.issueCount, 0);
-  assert.equal(validation.strictAcceptanceReady, false);
+  assert.equal(validation.strictAcceptanceReady, true);
   assert.equal(collection.queries.filter((query) => query.kind !== 'negative-control').length, 40);
   assert.equal(collection.queries.filter((query) => query.kind === 'negative-control').length, 8);
   assert.equal(collection.queries.some((query) => query.id === 'zupn01'), true);
@@ -850,10 +850,7 @@ test('validates demo-zup-1c matrix labels and unresolved classifications', () =>
     validation.notApplicable.find((row) => row.id === 'u24').reason,
     /Хозрасчетный/,
   );
-  assert.deepEqual(
-    validation.unresolved.map((row) => row.id),
-    ['u03', 'u04', 'u05'],
-  );
+  assert.deepEqual(validation.unresolved, []);
 });
 
 test('validates demo-ssl-1c and demo-led-1c matrix labels', () => {
