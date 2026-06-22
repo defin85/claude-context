@@ -513,11 +513,16 @@ export class Context {
 
     private buildEffectiveExtensions(
         customExtensions: string[] = [],
+        oneCIndexScopeProfile?: OneCIndexScopeProfile,
     ): string[] {
+        const profileExtensions = oneCIndexScopeProfile === "v8unpack"
+            ? [".json"]
+            : [];
         return [
             ...new Set([
                 ...this.defaultSupportedExtensions,
                 ...customExtensions,
+                ...profileExtensions,
             ]),
         ];
     }
@@ -566,6 +571,7 @@ export class Context {
     private updateSessionEffectiveState(session: CodebaseSessionState): void {
         session.effectiveExtensions = this.buildEffectiveExtensions(
             session.customExtensions,
+            session.oneCIndexScopeProfile,
         );
         session.effectiveIgnorePatterns = this.buildEffectiveIgnorePatterns(
             session.customIgnorePatterns,

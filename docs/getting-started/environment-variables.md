@@ -129,7 +129,7 @@ paths are Milvus/MinIO implementation details and are not safe cleanup targets.
 | `INDEX_EMBEDDING_MAX_CONTENT_CHARS` | Optional payload-safe cap on total chunk content characters per embedding request. `auto`/unset leaves dense-only providers unchanged; BGE-M3 full applies its conservative effective default. | `auto` |
 | `INDEX_EMBEDDING_MAX_ESTIMATED_TOKENS` | Optional payload-safe cap on estimated tokens per embedding request. `auto`/unset leaves dense-only providers unchanged; BGE-M3 full applies its conservative effective default. | `auto` |
 | `CODE_CHUNK_LIMIT` | Maximum number of code chunks to index per codebase. Increase for very large repositories when you accept extra indexing time and vector database storage. If a previous run stopped at a lower limit, run a force reindex after raising this value to include chunks that were skipped before. | `450000` |
-| `1C_INDEX_SCOPE_PROFILE` | Scope profile for exported 1C configuration trees: `full`, `developer`, or `minimal`. Reduced profiles must be selected explicitly and require `force=true` when changing an existing index profile. | `full` |
+| `1C_INDEX_SCOPE_PROFILE` | Scope profile for exported 1C configuration trees: `full`, `developer`, `minimal`, or `v8unpack`. Reduced/scoped profiles must be selected explicitly and require `force=true` when changing an existing index profile. | `full` |
 | `CODE_SYMBOL_RETRIEVAL` | Enable code-symbol lexical/provider fusion during search. Set to `false` to return to semantic-only ranking. | `true` |
 | `CODE_SYMBOL_MAX_LEXICAL_CANDIDATES` | Max no-reindex lexical candidates fetched from stored `content` and `relativePath` fields. | `max(50, topK * 10)` |
 | `CODE_SYMBOL_MAX_PROVIDER_CANDIDATES` | Max candidates requested from configured code-symbol providers. | `max(20, topK * 5)` |
@@ -180,6 +180,11 @@ left at `full`.
 | `full` | Preserve existing include/exclude behavior for all supported files. | Complete indexing and compatibility with existing users. |
 | `developer` | Include BSL modules and developer-relevant metadata such as `Configuration.xml`; exclude documented generated or low-value export files. | Faster 1C code search with visible reduced-coverage warning. |
 | `minimal` | Include only high-value BSL module artifacts such as common, object, manager, form, and command modules. | Fastest scoped code search when metadata search is not needed. |
+| `v8unpack` | Include BSL modules plus useful JSON object/form metadata from ordinary-form `v8unpack` exports; exclude `.mxl`, `.bin`, `.c1b64`, `.c1brace`, and image-like resources. | Index `v8unpack` trees with paths such as `Document/.../Document.obj.bsl` and `Form/.../Form.elem.json`. |
+
+Use `full` with explicit `CUSTOM_EXTENSIONS`, `customExtensions`, and ignore
+patterns when you deliberately need heavy `v8unpack` resources such as tabular
+templates or binary payloads.
 
 MCP `index_codebase` also accepts `oneCIndexScopeProfile` for a per-call
 override. Search and indexing status expose `oneCIndexScopeProfile`,

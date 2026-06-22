@@ -351,8 +351,8 @@ Index a codebase directory to enable semantic search using a configurable code s
                             },
                             oneCIndexScopeProfile: {
                                 type: 'string',
-                                description: "Optional 1C exported-configuration scope profile. 'full' preserves existing behavior; 'developer' excludes generated or low-value 1C export files; 'minimal' indexes only developer-maintained BSL modules. Changing the profile for an existing index requires force=true.",
-                                enum: ['full', 'developer', 'minimal'],
+                                description: "Optional 1C exported-configuration scope profile. 'full' preserves existing behavior; 'developer' excludes generated or low-value 1C export files; 'minimal' indexes only developer-maintained BSL modules; 'v8unpack' indexes BSL plus useful JSON metadata from ordinary-form v8unpack exports while excluding heavy resources. Changing the profile for an existing index requires force=true.",
+                                enum: ['full', 'developer', 'minimal', 'v8unpack'],
                                 default: 'full'
                             },
                             retrievalProfile: {

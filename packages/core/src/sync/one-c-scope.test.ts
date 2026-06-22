@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {
+    Context,
     classifyOneCExportPath,
     resolveOneCIndexScopeProfile,
     traversePreIndex,
@@ -90,6 +91,78 @@ describe('1C indexing scope profiles', () => {
         expect(developer.diagnostics?.oneCIndexScope?.excludedByReason['one-c-generated-or-low-value']).toBe(1);
         expect(developer.diagnostics?.oneCIndexScope?.excludedByReason['one-c-non-configuration-file']).toBe(1);
         expect(minimal.diagnostics?.oneCIndexScope?.excludedFiles).toBe(3);
+    });
+
+    it('filters v8unpack exports to BSL modules and JSON metadata while excluding heavy resources', async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), 'one-c-scope-v8unpack-'));
+        await writeFixtureFile(root, 'CommonModule/Обмен/CommonModule.obj.bsl');
+        await writeFixtureFile(root, 'Document/Реализация/Document.obj.bsl');
+        await writeFixtureFile(root, 'Document/Реализация/Document.mgr.bsl');
+        await writeFixtureFile(root, 'Document/Реализация/Command/Печать/Command.cmd.bsl');
+        await writeFixtureFile(root, 'DataProcessor/Настройка/Form/Форма/Form.obj.bsl');
+        await writeFixtureFile(root, 'Document/Реализация/Document.json', '{}');
+        await writeFixtureFile(root, 'Document/Реализация/Document.id.json', '{}');
+        await writeFixtureFile(root, 'DataProcessor/Настройка/Form/Форма/Form.json', '{}');
+        await writeFixtureFile(root, 'DataProcessor/Настройка/Form/Форма/Form.elem.json', '{}');
+        await writeFixtureFile(root, 'Document/Реализация/Templates/ПечатнаяФорма.mxl', 'template');
+        await writeFixtureFile(root, 'Document/Реализация/Payload.bin', 'binary');
+        await writeFixtureFile(root, 'Document/Реализация/Payload.c1b64', 'binary');
+        await writeFixtureFile(root, 'Document/Реализация/Payload.c1brace', 'binary');
+        await writeFixtureFile(root, 'CommonPicture/Логотип/Логотип.png', 'png');
+        await writeFixtureFile(root, 'notes.md', '# note');
+
+        const traversal = await traversePreIndex(root, {
+            supportedExtensions: ['.bsl', '.json', '.mxl', '.bin', '.c1b64', '.c1brace', '.png', '.md'],
+            diagnostics: true,
+            oneCIndexScopeProfile: 'v8unpack',
+        });
+
+        expect(resolveOneCIndexScopeProfile('v8unpack')).toBe('v8unpack');
+        expect(traversal.files.map((file) => file.relativePath)).toEqual([
+            'CommonModule/Обмен/CommonModule.obj.bsl',
+            'DataProcessor/Настройка/Form/Форма/Form.elem.json',
+            'DataProcessor/Настройка/Form/Форма/Form.json',
+            'DataProcessor/Настройка/Form/Форма/Form.obj.bsl',
+            'Document/Реализация/Command/Печать/Command.cmd.bsl',
+            'Document/Реализация/Document.id.json',
+            'Document/Реализация/Document.json',
+            'Document/Реализация/Document.mgr.bsl',
+            'Document/Реализация/Document.obj.bsl',
+        ]);
+        expect(traversal.diagnostics?.oneCIndexScope).toEqual(expect.objectContaining({
+            profile: 'v8unpack',
+            active: true,
+            recognized: true,
+        }));
+        expect(traversal.diagnostics?.oneCIndexScope?.warning).toMatch(/v8unpack/);
+        expect(traversal.diagnostics?.oneCIndexScope?.excludedByReason['one-c-v8unpack-heavy-resource']).toBe(5);
+        expect(traversal.diagnostics?.oneCIndexScope?.excludedByReason['one-c-non-configuration-file']).toBe(1);
+    });
+
+    it('adds JSON to the effective codebase extensions for v8unpack sessions only', async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), 'one-c-scope-v8unpack-json-'));
+        const context = new Context({
+            embedding: {
+                getProvider: () => 'fake',
+            } as any,
+            vectorDatabase: {} as any,
+            codeSplitter: {} as any,
+            supportedExtensions: ['.bsl'],
+        });
+
+        context.configureCodebaseSession(root, {
+            oneCIndexScopeProfile: 'v8unpack',
+        });
+
+        expect(context.getSupportedExtensions(root)).toContain('.bsl');
+        expect(context.getSupportedExtensions(root)).toContain('.json');
+
+        context.configureCodebaseSession(root, {
+            oneCIndexScopeProfile: 'developer',
+        });
+
+        expect(context.getSupportedExtensions(root)).toContain('.bsl');
+        expect(context.getSupportedExtensions(root)).not.toContain('.json');
     });
 
     it('keeps non-1C repositories unchanged when no reduced profile is selected', async () => {

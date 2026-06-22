@@ -38,17 +38,23 @@ The flow diagram above shows the complete indexing workflow, illustrating how th
 ## 1C Scope Status
 
 For exported 1C configuration trees, `index_codebase` can use
-`oneCIndexScopeProfile` (`full`, `developer`, or `minimal`) or the
+`oneCIndexScopeProfile` (`full`, `developer`, `minimal`, or `v8unpack`) or the
 `1C_INDEX_SCOPE_PROFILE` environment variable. `full` is the default and keeps
 existing traversal behavior.
 
-Reduced profiles are persisted with the codebase index metadata.
+Use `v8unpack` for ordinary-form exports produced by `v8unpack`. It includes
+BSL modules and useful JSON object/form metadata without requiring
+`customExtensions: ['.json']`, while excluding heavy resources such as `.mxl`,
+`.bin`, `.c1b64`, `.c1brace`, and image files. Use `full` with explicit
+`customExtensions` and ignore patterns when those heavy resources are required.
+
+Reduced/scoped profiles are persisted with the codebase index metadata.
 `get_indexing_status` and `search_code` include:
 
 - `oneCIndexScopeProfile` - the selected profile for the persisted index.
 - `oneCIndexScope` - include/exclude counts by reason when traversal statistics
   are available.
-- `reducedCoverageWarning` - warning text for `developer` and `minimal`
+- `reducedCoverageWarning` - warning text for `developer`, `minimal`, and `v8unpack`
   indexes.
 
 Changing between profiles changes indexed coverage, so `index_codebase` rejects

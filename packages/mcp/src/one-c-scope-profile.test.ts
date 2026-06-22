@@ -171,7 +171,7 @@ function createFakeContext(
         getLastAcceleratorSnapshot: () => undefined,
         getLoadedIgnorePatterns: async () => undefined,
         getIgnorePatterns: () => [],
-        getSupportedExtensions: () => ['.ts'],
+        getSupportedExtensions: () => ['.ts', '.bsl', '.json'],
         getPreparedCollection: async () => undefined,
         setSynchronizerForCodebase: () => undefined,
         indexCodebase: indexCodebase || (async () => {
@@ -190,7 +190,7 @@ function getStructuredContent(result: unknown): Record<string, unknown> {
 }
 
 async function createIndexedCodebase(
-    previousProfile?: 'full' | 'developer' | 'minimal',
+    previousProfile?: 'full' | 'developer' | 'minimal' | 'v8unpack',
     context?: Context,
     retrievalConfig?: {
         retrievalProfile?: RetrievalProfile;
@@ -418,6 +418,35 @@ test('index_codebase rejects incompatible 1C scope changes without force', async
     assert.equal(structuredContent.persistedOneCIndexScopeProfile, 'developer');
 });
 
+test('index_codebase accepts v8unpack 1C scope profile and persists it', async () => {
+    const context = createFakeContext(false, undefined, async () => ({
+        indexedFiles: 3,
+        totalChunks: 5,
+        status: 'completed',
+    }));
+    const { codebasePath, handlers } = await createIndexedCodebase(undefined, context);
+    await fs.mkdir(path.join(codebasePath, 'CommonModule', 'Обмен'), { recursive: true });
+    await fs.writeFile(path.join(codebasePath, 'CommonModule', 'Обмен', 'CommonModule.obj.bsl'), 'Процедура Обмен() КонецПроцедуры');
+
+    const result = await handlers.handleIndexCodebase({
+        path: codebasePath,
+        force: true,
+        oneCIndexScopeProfile: 'v8unpack',
+    });
+
+    assert.equal((result as { isError?: boolean }).isError, undefined);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const configManager = (handlers as unknown as { codebaseConfigManager: CodebaseConfigManager }).codebaseConfigManager;
+    const loaded = await configManager.getConfig(codebasePath);
+    assert.equal(loaded?.oneCIndexScopeProfile, 'v8unpack');
+});
+
+test('index_codebase MCP schema lists v8unpack 1C scope profile', async () => {
+    const indexSource = await fs.readFile(new URL('./index.ts', import.meta.url), 'utf8');
+
+    assert.match(indexSource, /enum: \['full', 'developer', 'minimal', 'v8unpack'\]/);
+});
+
 test('index_codebase rejects full-to-reduced 1C scope changes without force', async () => {
     const { codebasePath, handlers } = await createIndexedCodebase();
 
@@ -460,6 +489,19 @@ test('get_indexing_status reports reduced 1C scope warning', async () => {
     assert.match(String(structuredContent.reducedCoverageWarning), /developer/);
     assert.match(String(structuredContent.reducedCoverageWarning), /may not contain all files/);
     assert.match(result.content[0].text, /1C scope/);
+});
+
+test('get_indexing_status reports v8unpack as scoped 1C coverage', async () => {
+    const { codebasePath, handlers } = await createIndexedCodebase('v8unpack');
+
+    const result = await handlers.handleGetIndexingStatus({
+        path: codebasePath,
+    });
+
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.oneCIndexScopeProfile, 'v8unpack');
+    assert.match(String(structuredContent.reducedCoverageWarning), /v8unpack/);
+    assert.match(String(structuredContent.reducedCoverageWarning), /may not contain all files/);
 });
 
 test('search_code accepts ranking profile and reports resolved profile', async () => {
@@ -601,7 +643,7 @@ test('search_code keeps ranking profile independent from 1C indexing scope', asy
         content: 'Процедура Обработка() КонецПроцедуры',
         metadata: { rankingProfile: args.rankingProfile },
     }]);
-    const { codebasePath, handlers } = await createIndexedCodebase('developer', context);
+    const { codebasePath, handlers } = await createIndexedCodebase('v8unpack', context);
 
     const result = await handlers.handleSearchCode({
         path: codebasePath,
@@ -611,5 +653,5 @@ test('search_code keeps ranking profile independent from 1C indexing scope', asy
 
     const structuredContent = getStructuredContent(result);
     assert.equal(structuredContent.rankingProfile, 'generic');
-    assert.equal(structuredContent.oneCIndexScopeProfile, 'developer');
+    assert.equal(structuredContent.oneCIndexScopeProfile, 'v8unpack');
 });
