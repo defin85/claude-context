@@ -1,0 +1,320 @@
+{
+  "dataset": "one-c-runbook-scenario-matrix",
+  "version": "2026-06-21",
+  "matrix": "one-c-runbook-scenarios",
+  "labelsAreProductionRules": false,
+  "fixtures": {
+    "demo-bp30-1c": {
+      "path": "examples/demo-bp30-1c",
+      "label": "1C BP 3.0 demo exported configuration"
+    }
+  },
+  "roleCatalog": {
+    "library-api": "Exported library or platform-facing entry points.",
+    "client-usage": "Client common modules, forms, waiting, progress, and UI callbacks.",
+    "server-usage": "Server wrappers, completion checks, background-job handling, and validation.",
+    "applied-usage": "Real forms, data processors, documents, reports, or configuration-level examples.",
+    "metadata": "Metadata objects that store state or configuration."
+  },
+  "scenarios": [
+    {
+      "id": "sms-settings-context",
+      "sourceUniversalQueryId": "ssl02",
+      "userTask": "настроить отправку SMS через провайдера с логином, паролем и формой настройки",
+      "domain": "bsp-sms",
+      "targets": {
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "requiredRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP SMS sending API.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMS/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ОтправкаSMS НастройкаОтправкиSMS провайдер логин пароль"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client-side SMS settings and sending helpers.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSКлиент/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ОтправкаSMSКлиент ОткрытьФормуНастроек ПроверитьНаличиеНастроекДляОтправкиSMS"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Reusable server-side SMS sending implementation.",
+              "pathPrefixes": [
+                "CommonModules/ОтправкаSMSПовтИсп/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ОтправкаSMSПовтИсп ДоступнаОтправкаSMS СтатусыДоставки"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "SMS provider settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкаОтправкиSMS/Ext/Form/Module.bsl"
+              ],
+              "searchHints": [
+                "ОбщаяФорма НастройкаОтправкиSMS провайдер SMS"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "report-variants-context",
+      "sourceUniversalQueryId": "ssl05",
+      "userTask": "найти как сохраняются варианты отчетов и быстрые настройки отчета",
+      "domain": "bsp-reports",
+      "targets": {
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "requiredRoles": [
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Settings storage manager module for report variants.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Ext/ManagerModule.bsl"
+              ],
+              "searchHints": [
+                "ХранилищеВариантовОтчетов ManagerModule сохранить вариант отчета"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Quick report settings form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/БыстрыеНастройкиОтчета"
+              ],
+              "searchHints": [
+                "ХранилищеВариантовОтчетов БыстрыеНастройкиОтчета форма"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Report variant save form.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов/Forms/СохранениеВариантаОтчета"
+              ],
+              "searchHints": [
+                "ХранилищеВариантовОтчетов СохранениеВариантаОтчета"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "Report variants settings storage metadata.",
+              "pathPrefixes": [
+                "SettingsStorages/ХранилищеВариантовОтчетов.xml"
+              ],
+              "searchHints": [
+                "SettingsStorages ХранилищеВариантовОтчетов metadata"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "file-volume-cleanup-context",
+      "sourceUniversalQueryId": "ssl06",
+      "userTask": "разобраться где настроена очистка файлов в томах хранения по дате",
+      "domain": "bsp-files",
+      "targets": {
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "requiredRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP file subsystem API.",
+              "pathPrefixes": [
+                "CommonModules/РаботаСФайлами/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "РаботаСФайлами очистка файлов тома хранения"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "File storage information register manager module.",
+              "pathPrefixes": [
+                "InformationRegisters/ХранилищеФайлов/Ext/ManagerModule.bsl"
+              ],
+              "searchHints": [
+                "ХранилищеФайлов ManagerModule том хранения файл"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "File cleanup condition by date form.",
+              "pathPrefixes": [
+                "InformationRegisters/НастройкиОчисткиФайлов/Forms/ДобавлениеУсловияПоДате"
+              ],
+              "searchHints": [
+                "НастройкиОчисткиФайлов ДобавлениеУсловияПоДате очистка по дате"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "File volumes catalog manager module.",
+              "pathPrefixes": [
+                "Catalogs/ТомаХраненияФайлов/Ext/ManagerModule.bsl"
+              ],
+              "searchHints": [
+                "ТомаХраненияФайлов ManagerModule каталог"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "crypto-dss-settings-context",
+      "sourceUniversalQueryId": "ssl08",
+      "userTask": "найти настройки криптографии, DSS и хранилища сертификатов электронной подписи",
+      "domain": "bsp-crypto",
+      "targets": {
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "requiredRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "DSS and certificate storage APIs.",
+              "pathPrefixes": [
+                "CommonModules/СервисКриптографииDSS/Ext/Module.bsl",
+                "CommonModules/ХранилищеСертификатов/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "СервисКриптографииDSS ХранилищеСертификатов электронная подпись"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Electronic signature client module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьКлиент/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ЭлектроннаяПодписьКлиент сертификат подпись"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Electronic signature service module.",
+              "pathPrefixes": [
+                "CommonModules/ЭлектроннаяПодписьСлужебный/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ЭлектроннаяПодписьСлужебный криптография сертификат"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Electronic signature and encryption settings form.",
+              "pathPrefixes": [
+                "CommonForms/НастройкиЭлектроннойПодписиИШифрования/Ext/Form/Module.bsl"
+              ],
+              "searchHints": [
+                "НастройкиЭлектроннойПодписиИШифрования форма"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "long-operation-context",
+      "sourceUniversalQueryId": "ssl09",
+      "userTask": "реализовать длительную операцию с фоновым выполнением, ожиданием завершения и прогрессом",
+      "domain": "bsp-long-operations",
+      "targets": {
+        "demo-bp30-1c": {
+          "status": "applicable",
+          "requiredRoles": [
+            {
+              "id": "library-api",
+              "label": "Library API",
+              "description": "BSP background execution entry point.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперации/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ДлительныеОперации ВыполнитьВФоне ПараметрыВыполненияВФоне"
+              ]
+            },
+            {
+              "id": "client-usage",
+              "label": "Client usage",
+              "description": "Client waiting and progress helpers.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ДлительныеОперацииКлиент ОжидатьЗавершение ПараметрыОжидания прогресс"
+              ]
+            },
+            {
+              "id": "server-usage",
+              "label": "Server usage",
+              "description": "Server-side completion and result checks.",
+              "pathPrefixes": [
+                "CommonModules/ДлительныеОперацииВызовСервера/Ext/Module.bsl"
+              ],
+              "searchHints": [
+                "ДлительныеОперацииВызовСервера состояние завершение результат"
+              ]
+            },
+            {
+              "id": "applied-usage",
+              "label": "Applied usage",
+              "description": "Source-backed applied form that starts and waits for a background operation.",
+              "pathPrefixes": [
+                "CommonForms/ЗаполнениеРеквизитовКонтрагента/Ext/Form/Module.bsl"
+              ],
+              "searchHints": [
+                "ЗаполнениеРеквизитовКонтрагента длительная операция ожидать завершение"
+              ]
+            },
+            {
+              "id": "metadata",
+              "label": "Metadata",
+              "description": "State objects used by long-running operations.",
+              "optional": true,
+              "pathPrefixes": [
+                "InformationRegisters/ДлительныеОперации",
+                "SessionParameters/ДлительныеОперации.xml"
+              ],
+              "searchHints": [
+                "InformationRegisters ДлительныеОперации SessionParameters"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

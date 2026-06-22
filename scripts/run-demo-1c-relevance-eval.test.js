@@ -17,6 +17,10 @@ const {
   validateLabels,
   writeMarkdownReport,
 } = require('./run-demo-1c-relevance-eval.js');
+const {
+  scoreScenarioMatrix,
+  validateScenarioMatrix,
+} = require('./run-1c-runbook-scenario-eval.js');
 
 const repoRoot = path.resolve(__dirname, '..');
 
@@ -103,6 +107,132 @@ test('rejects unsupported live result schemas explicitly', () => {
     () => normalizeResults([{ id: 'q1', query: 'запрос', rows: [] }], dataset),
     /Unsupported live result schema/,
   );
+});
+
+test('validates runbook scenario matrix labels for the demo BP fixture', () => {
+  const dataset = readJson(path.join(repoRoot, 'evaluation', 'retrieval', 'one-c-runbook-scenario-matrix.json'));
+  const validation = validateScenarioMatrix(dataset, {
+    fixture: 'demo-bp30-1c',
+    codebasePath: path.join(repoRoot, 'examples', 'demo-bp30-1c'),
+  });
+
+  assert.equal(validation.scenarioCount, 5);
+  assert.equal(validation.applicableTargetCount, 5);
+  assert.equal(validation.unreachableRequiredRolePrefixCount, 0);
+  assert.equal(validation.unreachableOptionalRolePrefixCount, 0);
+  assert.equal(validation.strictAcceptanceReady, true);
+});
+
+test('runbook scenario validation reports unreachable required and optional labels separately', () => {
+  const dataset = {
+    dataset: 'one-c-runbook-scenario-matrix',
+    version: 'unit',
+    fixtures: {
+      unit: { path: path.join(repoRoot, 'examples', 'demo-bp30-1c') },
+    },
+    scenarios: [{
+      id: 'unit-scenario',
+      userTask: 'найти контекст',
+      domain: 'unit',
+      targets: {
+        unit: {
+          status: 'applicable',
+          requiredRoles: [{
+            id: 'required',
+            pathPrefixes: ['Missing/Required.bsl'],
+          }, {
+            id: 'optional-inline',
+            optional: true,
+            pathPrefixes: ['Missing/OptionalInline.bsl'],
+          }],
+          optionalRoles: [{
+            id: 'optional',
+            pathPrefixes: ['Missing/Optional.bsl'],
+          }],
+        },
+      },
+    }],
+  };
+
+  const validation = validateScenarioMatrix(dataset, { fixture: 'unit' });
+
+  assert.equal(validation.strictAcceptanceReady, false);
+  assert.equal(validation.unreachableRequiredRolePrefixCount, 1);
+  assert.equal(validation.unreachableOptionalRolePrefixCount, 2);
+});
+
+test('runbook scenario scoring separates broad search from final workflow coverage', () => {
+  const dataset = {
+    dataset: 'one-c-runbook-scenario-matrix',
+    version: 'unit',
+    labelsAreProductionRules: false,
+    fixtures: {
+      unit: { path: 'examples/demo-bp30-1c' },
+    },
+    scenarios: [{
+      id: 'unit-scenario',
+      userTask: 'реализовать длительную операцию',
+      domain: 'unit',
+      targets: {
+        unit: {
+          status: 'applicable',
+          requiredRoles: [{
+            id: 'library-api',
+            label: 'Library API',
+            pathPrefixes: ['CommonModules/ДлительныеОперации/Ext/Module.bsl'],
+          }, {
+            id: 'client-usage',
+            label: 'Client usage',
+            pathPrefixes: ['CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl'],
+          }],
+        },
+      },
+    }],
+  };
+  const rawResults = {
+    fixtureKey: 'unit',
+    codebasePath: 'examples/demo-bp30-1c',
+    backendLabel: 'unit',
+    retrievalMode: 'bge_m3_full',
+    rankingProfile: 'one-c',
+    requestedLimit: 30,
+    maxSearchesPerScenario: 3,
+    searches: [{
+      scenarioId: 'unit-scenario',
+      fixtureKey: 'unit',
+      searchIndex: 1,
+      phase: 'broad',
+      query: 'реализовать длительную операцию',
+      requestedLimit: 30,
+      effectiveResultCount: 1,
+      results: [{
+        path: 'CommonModules/ДлительныеОперации/Ext/Module.bsl',
+      }],
+    }, {
+      scenarioId: 'unit-scenario',
+      fixtureKey: 'unit',
+      searchIndex: 2,
+      phase: 'focused',
+      roleIntent: 'client-usage',
+      query: 'ДлительныеОперацииКлиент ОжидатьЗавершение',
+      requestedLimit: 30,
+      effectiveResultCount: 1,
+      results: [{
+        path: 'CommonModules/ДлительныеОперацииКлиент/Ext/Module.bsl',
+      }],
+    }],
+  };
+
+  const summary = scoreScenarioMatrix(dataset, rawResults, { fixture: 'unit' });
+
+  assert.equal(summary.metrics.firstQueryCompleteCount, 0);
+  assert.equal(summary.metrics.finalCompleteCount, 1);
+  assert.equal(summary.metrics.workflowGainTotal, 1);
+  assert.equal(summary.perScenario[0].firstQueryRoleCoverage.foundRequiredRoleCount, 1);
+  assert.equal(summary.perScenario[0].finalRoleCoverage.foundRequiredRoleCount, 2);
+  assert.equal(summary.perScenario[0].searchesToComplete, 2);
+  assert.deepEqual(summary.perScenario[0].requestedResultLimits, [30, 30]);
+  assert.deepEqual(summary.perScenario[0].effectiveResultCounts, [1, 1]);
 });
 
 test('scores the preserved fixed Qdrant live report as the 18 of 30 baseline', () => {

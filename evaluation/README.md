@@ -135,6 +135,63 @@ only; `queryPurpose`, expected path prefixes, required result roles, and live
 artifacts must not be used by production `search_code` ranking or query
 rewriting.
 
+### 1C Runbook Scenario Check
+
+The runbook scenario matrix lives in
+[`retrieval/one-c-runbook-scenario-matrix.json`](./retrieval/one-c-runbook-scenario-matrix.json).
+It evaluates the multi-search workflow from the
+[1C Semantic Search Runbook](../docs/dive-deep/one-c-semantic-search-runbook.md):
+first search the user task as written, then run focused searches for missing
+context roles.
+
+Validate source-inspected labels before using the scenario matrix as evidence:
+
+```bash
+node scripts/run-1c-runbook-scenario-eval.js \
+  --validate-only \
+  --fixture demo-bp30-1c
+```
+
+Score a saved scenario run without a live MCP daemon:
+
+```bash
+node scripts/run-1c-runbook-scenario-eval.js \
+  --fixture demo-bp30-1c \
+  --results .artifacts/hybrid-code-symbol-retrieval/<run-name>/raw-results.json
+```
+
+Run a live scenario check through MCP:
+
+```bash
+node scripts/run-1c-runbook-scenario-eval.js \
+  --fixture demo-bp30-1c \
+  --ranking-profile one-c \
+  --retrieval-mode bge_m3_full \
+  --limit 10
+```
+
+Scenario reports are written under
+`.artifacts/hybrid-code-symbol-retrieval/<run-name>/`:
+
+- `raw-results.json`: broad and focused searches with requested result limit,
+  effective returned result count, latency, role intent, result paths, scores,
+  and metadata;
+- `summary.json`: first-query coverage, final workflow coverage, workflow gain,
+  missing roles, search counts, backend context, and result-depth evidence;
+- `summary.md`: human-readable scenario report;
+- `label-validation.json`: source-backed validation when validation is
+  requested.
+
+Interpretation:
+
+- First-query misses with final workflow hits indicate that decomposition and
+  focused searches are working as intended.
+- Final workflow misses indicate a need to inspect fixture labels, indexing
+  coverage, result-depth caps, or ranking behavior.
+- Requested result limits and effective returned result counts must be reviewed
+  together; do not assume that a requested `limit` was honored unless the raw
+  results show that many returned items.
+
 ## Results Visualization
 
 ![MCP Efficiency Analysis](../assets/mcp_efficiency_analysis_chart.png)

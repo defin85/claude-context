@@ -78,6 +78,19 @@ background jobs. The API-oriented searches above usually retrieve the BSP
 modules first; applied-usage searches then show how the target configuration
 wires those modules into real forms.
 
+## Evaluation Evidence
+
+The runbook can be checked with the runbook scenario evaluation, but the
+evaluation matrix is not part of the workflow itself. Treat scenario reports as
+dated evidence that the broad-search plus focused-role-search pattern can
+collect context bundles for selected exported configurations.
+
+When a scenario report shows low first-query coverage but higher final workflow
+coverage, prefer improving task decomposition or focused follow-up searches
+before changing production ranking. When focused searches also fail to retrieve
+source-inspected role targets, inspect indexing coverage, fixture labels,
+result-depth caps, and ranking behavior.
+
 ## RLM Boundary
 
 Use semantic search first. RLM is a follow-up inspection tool after semantic
