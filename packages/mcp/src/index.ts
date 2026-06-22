@@ -55,6 +55,7 @@ import { migrateWorkspaceStateToDaemon } from './daemon-state-migration.js';
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
 import { ToolHandlers } from './handlers.js';
 import { RuntimeStatusManager } from './runtime-status.js';
+import { SEARCH_CODE_TOOL_DESCRIPTION } from './search-code-guidance.js';
 import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
 import { getErrorMessage } from './utils.js';
@@ -309,28 +310,6 @@ Index a codebase directory to enable semantic search using a configurable code s
 - If indexing is attempted on an already indexed path, and a conflict is detected, you MUST prompt the user to confirm whether to proceed with a force index (i.e., re-indexing and overwriting the previous index).
 `;
 
-        const searchDescription = `
-Search the indexed codebase using natural language queries within a specified absolute path.
-
-⚠️ **IMPORTANT**:
-- You MUST provide a canonical absolute path.
-- Prefer POSIX form (for example, /home/egor/code/repo). WSL UNC paths are normalized automatically, but POSIX form is recommended.
-
-🎯 **When to Use**:
-This tool is versatile and can be used before completing various tasks to retrieve relevant context:
-- **Code search**: Find specific functions, classes, or implementations
-- **Context-aware assistance**: Gather relevant code context before making changes
-- **Issue identification**: Locate problematic code sections or bugs
-- **Code review**: Understand existing implementations and patterns
-- **Refactoring**: Find all related code pieces that need to be updated
-- **Feature development**: Understand existing architecture and similar implementations
-- **Duplicate detection**: Identify redundant or duplicated code patterns across the codebase
-
-✨ **Usage Guidance**:
-- If the codebase is not indexed, this tool will return a clear error message indicating that indexing is required first.
-- You can then use the index_codebase tool to index the codebase before searching again.
-`;
-
         server.setRequestHandler(ListToolsRequestSchema, async () => {
             const tools: Array<Record<string, unknown>> = [
                 {
@@ -387,7 +366,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                 },
                 {
                     name: 'search_code',
-                    description: searchDescription,
+                    description: SEARCH_CODE_TOOL_DESCRIPTION,
                     inputSchema: {
                         type: 'object',
                         properties: {

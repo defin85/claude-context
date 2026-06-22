@@ -834,6 +834,8 @@ Search the indexed codebase using natural language queries with hybrid search (B
 
 Structured search responses include `profileState.search` when profile diagnostics are available. It reports the requested and resolved ranking profile as request-time state and does not persist ranking profile as codebase configuration.
 
+For non-trivial 1C exported-configuration tasks, treat `search_code` as context-bundle discovery rather than a single-result lookup. Search the original user task first, then focused roles for library API, client usage, server usage, applied usage, and metadata/state. Some metadata/state context can be outside the current indexed scope/profile, so check coverage or filesystem context when expected metadata is missing. This is agent search guidance only; it does not change ranking, scoring, schemas, providers, or collection requirements. See the maintained runbook at [`docs/dive-deep/one-c-semantic-search-runbook.md`](../../docs/dive-deep/one-c-semantic-search-runbook.md).
+
 ### 3. `clear_index`
 
 Clear the search index for a specific codebase.
