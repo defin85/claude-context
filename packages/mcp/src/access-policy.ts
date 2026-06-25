@@ -17,7 +17,7 @@ interface CodebaseAccessPolicyOptions {
 
 export class CodebaseAccessPolicy {
     private readonly mode: McpRuntimeMode;
-    private readonly allowedRoots: string[];
+    private allowedRoots: string[];
 
     constructor(options: CodebaseAccessPolicyOptions) {
         this.mode = options.mode;
@@ -30,6 +30,10 @@ export class CodebaseAccessPolicy {
 
     public getAllowedRoots(): string[] {
         return [...this.allowedRoots];
+    }
+
+    public setAllowedRoots(allowedRoots: string[]): void {
+        this.allowedRoots = [...new Set(allowedRoots.map((root) => normalizeCodebasePath(root)))];
     }
 
     public evaluateCodebasePath(inputPath: string): CodebaseAccessDecision {

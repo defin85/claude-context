@@ -30,6 +30,7 @@ interface DashboardApiAdapterOptions {
     toolHandlers: DashboardToolHandlers;
     getDaemonStatus(): Promise<ToolResult>;
     listCodebases(): Promise<Array<{ path: string; status: string }>>;
+    isCodebaseAllowed?(path: string): boolean;
     cancelCodebaseWorkload(args: ToolArgs): Promise<ToolResult>;
 }
 
@@ -37,12 +38,14 @@ export class DashboardApiAdapter {
     private readonly toolHandlers: DashboardToolHandlers;
     private readonly getDaemonStatus: () => Promise<ToolResult>;
     private readonly listCodebases: () => Promise<Array<{ path: string; status: string }>>;
+    private readonly isCodebaseAllowed: (path: string) => boolean;
     private readonly cancelCodebaseWorkload: (args: ToolArgs) => Promise<ToolResult>;
 
     constructor(options: DashboardApiAdapterOptions) {
         this.toolHandlers = options.toolHandlers;
         this.getDaemonStatus = options.getDaemonStatus;
         this.listCodebases = options.listCodebases;
+        this.isCodebaseAllowed = options.isCodebaseAllowed || (() => true);
         this.cancelCodebaseWorkload = options.cancelCodebaseWorkload;
     }
 
@@ -53,7 +56,7 @@ export class DashboardApiAdapter {
             }
 
             if (request.method === 'GET' && request.path === '/api/codebases') {
-                return this.ok(await this.listCodebases());
+                return this.ok((await this.listCodebases()).filter((codebase) => this.isCodebaseAllowed(codebase.path)));
             }
 
             if (request.method === 'GET' && request.path === '/api/codebases/status') {

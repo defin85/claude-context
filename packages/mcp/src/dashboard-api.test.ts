@@ -5,6 +5,7 @@ import { DashboardApiAdapter } from './dashboard-api.js';
 function createAdapter(overrides: {
     statusResult?: Record<string, unknown>;
     codebases?: Array<{ path: string; status: string }>;
+    isCodebaseAllowed?: (path: string) => boolean;
     handlerError?: { name: 'index' | 'search' | 'clear' | 'status'; message: string };
     searchResult?: { isError?: boolean; text?: string; structuredContent?: unknown };
 } = {}) {
@@ -52,6 +53,7 @@ function createAdapter(overrides: {
             structuredContent: overrides.statusResult || { runtimes: [] },
         }),
         listCodebases: async () => overrides.codebases || [{ path: '/repo/a', status: 'indexed' }],
+        isCodebaseAllowed: overrides.isCodebaseAllowed,
         cancelCodebaseWorkload: async (args) => {
             calls.push({ name: 'cancel', args });
             return { content: [{ type: 'text', text: 'cancelled' }], structuredContent: { queued: [], active: [] } };
@@ -88,6 +90,25 @@ test('dashboard API maps read routes to daemon status and codebase status handle
     assert.equal(status.statusCode, 200);
     assert.deepEqual(status.body, { ok: true, data: { status: 'indexed' } });
     assert.deepEqual(calls, [{ name: 'status', args: { path: '/repo/a' } }]);
+});
+
+test('dashboard API hides codebases outside the daemon allowlist', async () => {
+    const { adapter } = createAdapter({
+        codebases: [
+            { path: '/repo/current', status: 'indexed' },
+            { path: '/repo/old', status: 'indexed' },
+        ],
+        isCodebaseAllowed: (path) => path === '/repo/current',
+    });
+
+    const codebases = await adapter.handle({
+        method: 'GET',
+        path: '/api/codebases',
+        query: new URLSearchParams(),
+    });
+
+    assert.equal(codebases.statusCode, 200);
+    assert.deepEqual(codebases.body, { ok: true, data: [{ path: '/repo/current', status: 'indexed' }] });
 });
 
 test('dashboard API maps mutation routes to existing handlers and preserves request bodies', async () => {

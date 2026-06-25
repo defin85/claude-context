@@ -18,6 +18,7 @@ const trackedEnv = [
     'VECTOR_DATABASE_BACKEND',
     'MCP_RUNTIME_MODE',
     'MCP_DAEMON_ALLOW_ROOTS',
+    'MCP_DAEMON_ALLOW_ROOTS_FILE',
     'MCP_DAEMON_TOKEN',
     'MCP_DASHBOARD_ENABLED',
     'MCP_DASHBOARD_ROUTE',
@@ -217,6 +218,18 @@ test('daemon dashboard is disabled by default and can be enabled from CLI', () =
         assert.equal(enabled.daemon?.dashboard.routePrefix, '/ops');
         assert.equal(enabled.daemon?.dashboard.apiPrefix, '/ops/api');
         assert.equal(enabled.daemon?.dashboard.staticDir, '/tmp/dashboard');
+    });
+});
+
+test('daemon runtime allow roots file can be configured from environment', () => {
+    withEnv({
+        MCP_DAEMON_ALLOW_ROOTS: '/repo',
+        MCP_DAEMON_ALLOW_ROOTS_FILE: '/tmp/daemon-allow-roots.json',
+        MCP_DAEMON_TOKEN: 'test-token',
+    }, () => {
+        const config = createMcpRuntimeConfig(['--mode', 'daemon']);
+
+        assert.equal(config.daemon?.runtimeAllowRootsPath, '/tmp/daemon-allow-roots.json');
     });
 });
 

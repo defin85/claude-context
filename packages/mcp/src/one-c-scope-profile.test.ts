@@ -445,6 +445,8 @@ test('index_codebase MCP schema lists v8unpack 1C scope profile', async () => {
     const indexSource = await fs.readFile(new URL('./index.ts', import.meta.url), 'utf8');
 
     assert.match(indexSource, /enum: \['full', 'developer', 'minimal', 'v8unpack'\]/);
+    assert.match(indexSource, /For non-1C repositories, omit this parameter or use the default 'full'/);
+    assert.match(indexSource, /For ordinary Designer\/EDT 1C exports, prefer 'developer'/);
 });
 
 test('index_codebase rejects full-to-reduced 1C scope changes without force', async () => {

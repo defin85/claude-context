@@ -55,6 +55,7 @@ import { migrateWorkspaceStateToDaemon } from './daemon-state-migration.js';
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
 import { ToolHandlers } from './handlers.js';
 import { RuntimeStatusManager } from './runtime-status.js';
+import { readRuntimeAllowRoots } from './runtime-allow-roots.js';
 import { SEARCH_CODE_TOOL_DESCRIPTION } from './search-code-guidance.js';
 import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
@@ -99,6 +100,8 @@ class ContextMcpServer {
     private readonly toolHandlers: ToolHandlers;
     private readonly runtimeStatusManager: RuntimeStatusManager;
     private readonly accessPolicy: CodebaseAccessPolicy;
+    private readonly startupAllowedRoots: string[];
+    private readonly runtimeAllowRootsPath?: string;
     private readonly workloadManager?: WorkloadManager;
     private readonly managedBgeM3WorkerManager?: ManagedBgeM3WorkerManager;
     private readonly daemonRegistryManager?: DaemonRegistryManager;
@@ -106,6 +109,8 @@ class ContextMcpServer {
     private stdioServer?: Server;
     private stdioTransport?: StdioServerTransport;
     private daemonHttpServer?: http.Server;
+    private runtimeAllowRootsTimer?: ReturnType<typeof setInterval>;
+    private runtimeAllowRootsFingerprint = '';
     private isClosed = false;
 
     constructor(
@@ -116,6 +121,8 @@ class ContextMcpServer {
         this.config = config;
         this.runtimeConfig = runtimeConfig;
         this.managedBgeM3WorkerManager = managedBgeM3WorkerManager;
+        this.startupAllowedRoots = runtimeConfig.daemon?.allowRoots || [];
+        this.runtimeAllowRootsPath = runtimeConfig.daemon?.runtimeAllowRootsPath;
 
         console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
         console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
@@ -351,7 +358,7 @@ Index a codebase directory to enable semantic search using a configurable code s
                             },
                             oneCIndexScopeProfile: {
                                 type: 'string',
-                                description: "Optional 1C exported-configuration scope profile. 'full' preserves existing behavior; 'developer' excludes generated or low-value 1C export files; 'minimal' indexes only developer-maintained BSL modules; 'v8unpack' indexes BSL plus useful JSON metadata from ordinary-form v8unpack exports while excluding heavy resources. Changing the profile for an existing index requires force=true.",
+                                description: "Optional 1C exported-configuration scope profile. For non-1C repositories, omit this parameter or use the default 'full'. For ordinary Designer/EDT 1C exports, prefer 'developer'. Use 'v8unpack' for ordinary-form v8unpack exports, 'minimal' for BSL-module-only coverage, and 'full' when unsure or full coverage is required. Changing the profile for an existing index requires force=true.",
                                 enum: ['full', 'developer', 'minimal', 'v8unpack'],
                                 default: 'full'
                             },
@@ -867,6 +874,7 @@ Index a codebase directory to enable semantic search using a configurable code s
             toolHandlers: this.toolHandlers,
             getDaemonStatus: () => this.handleGetDaemonStatusTool(),
             listCodebases: () => this.listDashboardCodebases(),
+            isCodebaseAllowed: (codebasePath) => this.accessPolicy.evaluateCodebasePath(codebasePath).allowed,
             cancelCodebaseWorkload: (args) => this.handleCancelCodebaseWorkloadTool(args),
         });
 
@@ -1186,11 +1194,67 @@ Index a codebase directory to enable semantic search using a configurable code s
         }));
     }
 
+    private startRuntimeAllowRootsWatcher(): void {
+        if (!this.runtimeAllowRootsPath || this.runtimeAllowRootsTimer) {
+            return;
+        }
+
+        this.runtimeAllowRootsTimer = setInterval(() => {
+            void this.reloadRuntimeAllowRoots('allow-roots-reload');
+        }, 2_000);
+        this.runtimeAllowRootsTimer.unref?.();
+    }
+
+    private stopRuntimeAllowRootsWatcher(): void {
+        if (!this.runtimeAllowRootsTimer) {
+            return;
+        }
+
+        clearInterval(this.runtimeAllowRootsTimer);
+        this.runtimeAllowRootsTimer = undefined;
+    }
+
+    private async reloadRuntimeAllowRoots(reason: string): Promise<void> {
+        if (!this.runtimeAllowRootsPath) {
+            return;
+        }
+
+        const result = await readRuntimeAllowRoots(this.runtimeAllowRootsPath);
+        if (result.error) {
+            const fingerprint = `error:${result.error}`;
+            if (fingerprint !== this.runtimeAllowRootsFingerprint) {
+                this.runtimeAllowRootsFingerprint = fingerprint;
+                console.warn(`[MCP] Failed to reload runtime allow roots from '${this.runtimeAllowRootsPath}': ${result.error}`);
+                await this.runtimeStatusManager.refresh('allow-roots-reload-failed');
+            }
+            return;
+        }
+
+        const effectiveRoots = [...new Set([...this.startupAllowedRoots, ...result.roots])];
+        const fingerprint = `roots:${JSON.stringify(effectiveRoots)}`;
+        if (fingerprint === this.runtimeAllowRootsFingerprint) {
+            return;
+        }
+
+        this.runtimeAllowRootsFingerprint = fingerprint;
+        this.accessPolicy.setAllowedRoots(effectiveRoots);
+        this.daemonRegistryManager?.setAllowedRoots(effectiveRoots);
+        this.daemonClientConfigManager?.setAllowedRoots(effectiveRoots);
+        this.runtimeStatusManager.setDaemonAllowedRoots(effectiveRoots);
+
+        await this.runtimeStatusManager.refresh(reason);
+        await this.daemonRegistryManager?.refresh();
+        await this.daemonClientConfigManager?.refresh();
+        console.log(`[MCP] Runtime allow roots reloaded from '${this.runtimeAllowRootsPath}'. Allowed roots: ${effectiveRoots.join(', ')}`);
+    }
+
     public async start(): Promise<void> {
         console.log('[SYNC-DEBUG] MCP server start() method called');
         console.log('Starting Context MCP server...');
 
         if (this.runtimeConfig.mode === 'daemon') {
+            await this.reloadRuntimeAllowRoots('allow-roots-startup');
+            this.startRuntimeAllowRootsWatcher();
             await this.startDaemon();
             return;
         }
@@ -1205,6 +1269,7 @@ Index a codebase directory to enable semantic search using a configurable code s
         this.isClosed = true;
 
         this.syncManager.stopBackgroundSync();
+        this.stopRuntimeAllowRootsWatcher();
         this.daemonRegistryManager?.stopHeartbeat();
         this.daemonClientConfigManager?.stopHeartbeat();
         const cancelledWork = this.workloadManager?.cancelAllWork('Cancelled by daemon shutdown.');

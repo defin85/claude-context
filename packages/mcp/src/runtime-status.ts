@@ -81,7 +81,7 @@ export class RuntimeStatusManager {
     private readonly mode: McpRuntimeMode;
     private readonly startedAt: string;
     private readonly runtimeStatusFilePath: string;
-    private readonly daemonInfo?: {
+    private daemonInfo?: {
         host: string;
         port: number;
         endpointPath: string;
@@ -103,6 +103,12 @@ export class RuntimeStatusManager {
 
     public getRuntimeStatusFilePath(): string {
         return this.runtimeStatusFilePath;
+    }
+
+    public setDaemonAllowedRoots(allowedRoots: string[]): void {
+        if (this.daemonInfo) {
+            this.daemonInfo.allowedRoots = [...allowedRoots];
+        }
     }
 
     public async refresh(reason: string): Promise<void> {

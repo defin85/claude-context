@@ -11,6 +11,7 @@ import type { ResolvedRetrievalProfile, RetrievalProfile } from "@zilliz/claude-
 import type { RlmBslEnrichmentConfig } from "@zilliz/claude-context-core";
 import type { OneCIndexScopeProfile, OneCIndexScopeSummary } from "@zilliz/claude-context-core";
 import { McpRuntimeMode } from './access-policy.js';
+import { getDefaultRuntimeAllowRootsPath } from './runtime-allow-roots.js';
 import { normalizeCodebasePath } from './utils.js';
 
 export type EmbeddingProviderName = 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama' | 'BGE_M3';
@@ -96,6 +97,7 @@ export interface McpDaemonConfig {
     endpointPath: string;
     dashboard: McpDashboardConfig;
     allowRoots: string[];
+    runtimeAllowRootsPath: string;
     maxIndexingConcurrency: number;
     maxSearchConcurrency: number;
     bearerToken: string;
@@ -125,6 +127,7 @@ interface ParsedCliOptions {
     daemonMaxIndexingConcurrency?: number;
     daemonMaxSearchConcurrency?: number;
     daemonAllowRoots: string[];
+    daemonRuntimeAllowRootsPath?: string;
     dashboardEnabled?: boolean;
     dashboardRoute?: string;
     dashboardStaticDir?: string;
@@ -552,6 +555,9 @@ function parseCliOptions(args: string[]): ParsedCliOptions {
             case '--allow-root':
                 parsed.daemonAllowRoots.push(next());
                 break;
+            case '--allow-roots-file':
+                parsed.daemonRuntimeAllowRootsPath = next();
+                break;
             case '--dashboard':
                 parsed.dashboardEnabled = true;
                 break;
@@ -686,6 +692,11 @@ export function createMcpRuntimeConfig(args: string[] = []): McpRuntimeConfig {
             endpointPath,
             dashboard: dashboardConfig,
             allowRoots,
+            runtimeAllowRootsPath: path.resolve(
+                cliOptions.daemonRuntimeAllowRootsPath
+                || envManager.get('MCP_DAEMON_ALLOW_ROOTS_FILE')
+                || getDefaultRuntimeAllowRootsPath()
+            ),
             maxIndexingConcurrency: cliOptions.daemonMaxIndexingConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_INDEXING_CONCURRENCY'), 1, 'daemon max indexing concurrency'),
             maxSearchConcurrency: cliOptions.daemonMaxSearchConcurrency || parsePositiveInteger(envManager.get('MCP_DAEMON_MAX_SEARCH_CONCURRENCY'), 4, 'daemon max search concurrency'),
             bearerToken,
@@ -844,6 +855,7 @@ Options:
   --daemon-max-indexing <count>       Max concurrent indexing/sync jobs in daemon mode
   --daemon-max-search <count>         Max concurrent search requests in daemon mode
   --allow-root <absolute-path>        Allowed codebase root for daemon mode; repeatable
+  --allow-roots-file <path>           Runtime JSON file with extra daemon allowed roots
   --dashboard                         Enable the local web dashboard in daemon mode
   --dashboard-route <path>            Dashboard route prefix (default: /dashboard)
   --dashboard-static-dir <path>       Static dashboard build directory
@@ -859,6 +871,7 @@ Environment Variables:
   MCP_DAEMON_MAX_INDEXING_CONCURRENCY Max concurrent indexing/sync jobs in daemon mode
   MCP_DAEMON_MAX_SEARCH_CONCURRENCY   Max concurrent search requests in daemon mode
   MCP_DAEMON_ALLOW_ROOTS  Allowed codebase roots for daemon mode, separated by '${path.delimiter}'
+  MCP_DAEMON_ALLOW_ROOTS_FILE Runtime JSON file with extra daemon allowed roots
   MCP_DASHBOARD_ENABLED   Enable the local web dashboard in daemon mode
   MCP_DASHBOARD_ROUTE     Dashboard route prefix (default: /dashboard)
   MCP_DASHBOARD_STATIC_DIR Static dashboard build directory

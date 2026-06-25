@@ -42,6 +42,14 @@ For exported 1C configuration trees, `index_codebase` can use
 `1C_INDEX_SCOPE_PROFILE` environment variable. `full` is the default and keeps
 existing traversal behavior.
 
+For non-1C repositories, omit `oneCIndexScopeProfile` or use the default
+`full`; reduced profiles are only for recognized 1C export trees.
+
+For ordinary Designer/EDT 1C exports, prefer `developer`: it keeps useful
+source and metadata while excluding generated or low-value files. Use `minimal`
+when only developer-maintained BSL modules matter. Use `full` when unsure or
+when complete export coverage is required.
+
 Use `v8unpack` for ordinary-form exports produced by `v8unpack`. It includes
 BSL modules and useful JSON object/form metadata without requiring
 `customExtensions: ['.json']`, while excluding heavy resources such as `.mxl`,

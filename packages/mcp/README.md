@@ -819,7 +819,7 @@ Index a codebase directory for hybrid search (BM25 + dense vector).
 - `splitter` (optional): Code splitter to use - 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting (default: "ast")
 - `customExtensions` (optional): Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added (default: [])
 - `ignorePatterns` (optional): Additional ignore patterns to exclude specific files/directories beyond defaults (e.g., ['static/**', '*.tmp', 'private/**']) (default: [])
-- `oneCIndexScopeProfile` (optional): 1C exported-configuration scope profile: `full`, `developer`, `minimal`, or `v8unpack`. Use `v8unpack` for ordinary-form `v8unpack` exports; it includes BSL plus useful JSON metadata/form files and excludes heavy resources such as `.mxl`, `.bin`, `.c1b64`, `.c1brace`, and images. Use `full` with explicit `customExtensions` and ignore patterns when those heavy resources are required.
+- `oneCIndexScopeProfile` (optional): 1C exported-configuration scope profile: `full`, `developer`, `minimal`, or `v8unpack`. For non-1C repositories, omit this parameter or use the default `full`. For ordinary Designer/EDT 1C exports, prefer `developer`. Use `v8unpack` for ordinary-form `v8unpack` exports, `minimal` for BSL-module-only coverage, and `full` when unsure or full coverage is required.
 
 ### 2. `search_code`
 

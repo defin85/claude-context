@@ -473,3 +473,109 @@ The system SHALL include generic ranking behavior and tests for the failure clas
 - **THEN** the archive-transfer manager or object module matching that action SHALL receive bounded ranking support
 - **AND** generic certificate or storage-object forms SHALL NOT outrank it solely through shared archive or signature words
 
+### Requirement: MCP search guidance exposes 1C context-bundle workflow
+The MCP `search_code` tool SHALL include agent-facing guidance for exported 1C configurations that presents non-trivial 1C implementation tasks as context-bundle searches rather than single-result lookups.
+
+#### Scenario: Search-code description includes generic 1C workflow guidance
+- **WHEN** MCP clients discover the `search_code` tool
+- **THEN** the tool description SHALL tell agents that non-trivial 1C tasks often require a context bundle
+- **AND** it SHALL recommend starting with the user task as written and then using focused searches for library API, client usage, server usage, applied usage, and metadata/state roles
+
+#### Scenario: Guidance stays independent from ranking behavior
+- **WHEN** the 1C guidance is presented for `search_code`
+- **THEN** it SHALL state or imply guidance for agent search strategy only
+- **AND** it SHALL NOT change `rankingProfile` behavior, retrieval scoring, provider behavior, or indexed collection requirements
+
+### Requirement: MCP search guidance avoids scenario-label leakage
+The MCP 1C search guidance SHALL remain generic and SHALL NOT expose evaluation-specific labels, query IDs, expected path prefixes, or fixture answers as production instructions.
+
+#### Scenario: Tool guidance excludes evaluation labels
+- **WHEN** MCP clients discover the `search_code` tool
+- **THEN** the tool description SHALL NOT include scenario matrix IDs, expected result path prefixes, query labels, or hard-coded fixture answers
+- **AND** it SHALL NOT instruct production search to route, filter, boost, or rank using evaluation labels
+
+#### Scenario: Documentation distinguishes runbook guidance from eval truth
+- **WHEN** MCP documentation links to the 1C semantic search runbook
+- **THEN** it SHALL describe the runbook as agent search guidance
+- **AND** it SHALL keep scenario matrices and expected paths as validation evidence rather than runtime search instructions
+
+### Requirement: MCP search guidance explains 1C metadata coverage limits
+The MCP 1C search guidance SHALL warn that some 1C metadata or configuration-state context can be outside the current indexed search coverage and may require checking index scope or filesystem context.
+
+#### Scenario: Missing metadata result directs agent to coverage checks
+- **WHEN** an agent needs 1C metadata/state context and `search_code` does not return a plausible metadata target
+- **THEN** the guidance SHALL direct the agent to inspect index scope/profile coverage or filesystem context
+- **AND** it SHALL NOT require an index migration, rebuild, or new MCP parameter solely to follow the guidance
+
+### Requirement: MCP documentation links the 1C semantic search runbook
+MCP-facing documentation for `search_code` SHALL include a pointer to the repo-local 1C semantic search runbook when describing 1C search usage.
+
+#### Scenario: Search-code docs point to the maintained runbook
+- **WHEN** a developer reads MCP documentation for `search_code`
+- **THEN** the documentation SHALL link or refer to `docs/dive-deep/one-c-semantic-search-runbook.md`
+- **AND** it SHALL summarize the context-bundle workflow without duplicating the full runbook
+
+### Requirement: Hybrid retrieval uses stored RLM BSL enrichment metadata
+The system SHALL use stored RLM BSL enrichment metadata as a code-symbol ranking signal when the indexed collection contains that metadata.
+
+#### Scenario: Stored RLM symbol metadata boosts matching chunks
+- **WHEN** a search query matches a method, procedure, object, module, form, command, or synonym stored in `metadata.bsl`
+- **THEN** matching chunks SHALL receive bounded structural ranking support from the stored enrichment metadata
+- **AND** the result diagnostics SHALL identify stored RLM enrichment as a retrieval or ranking source
+
+#### Scenario: Stored enrichment is preferred over search-time RLM provider
+- **WHEN** the current indexed collection contains compatible RLM BSL enrichment metadata
+- **THEN** ranking SHALL use the stored enrichment fields without requiring a search-time `rlm-tools-bsl` subprocess query
+- **AND** the search-time RLM provider SHALL remain available only as fallback behavior for unenriched indexes or explicitly configured experimental runs
+- **AND** the default search path SHALL decide whether to call the search-time provider from collection-level enrichment compatibility metadata before dispatching provider queries
+
+#### Scenario: Enrichment metadata does not replace semantic retrieval
+- **WHEN** stored RLM BSL enrichment metadata is present
+- **THEN** search SHALL still include semantic BGE-M3 results and existing lexical candidates
+- **AND** enrichment-derived boosts SHALL remain bounded ranking signals rather than hard filters
+
+### Requirement: Search remains backward-compatible for unenriched indexes
+The system SHALL preserve current hybrid retrieval behavior for indexes that do not contain RLM BSL enrichment metadata.
+
+#### Scenario: Existing collection without RLM enrichment remains searchable
+- **WHEN** searching a collection indexed before RLM BSL enrichment was added
+- **THEN** search SHALL continue using semantic retrieval, no-reindex lexical fallback, path/module boosts, and configured search-time providers as before
+- **AND** missing stored enrichment SHALL NOT be treated as a search failure
+
+#### Scenario: Diagnostics distinguish stored enrichment from provider candidates
+- **WHEN** a search result is influenced by stored RLM BSL enrichment metadata
+- **THEN** result metadata SHALL distinguish that source from search-time provider candidates
+- **AND** diagnostics SHALL NOT claim that a live `rlm-tools-bsl` provider contributed unless it was actually queried for that search
+
+### Requirement: RLM-enriched ranking is evaluated without production label leakage
+The system SHALL validate RLM-enriched ranking through the 1C relevance evaluation while keeping evaluation labels out of production ranking.
+
+#### Scenario: Evaluation reports enriched versus baseline quality
+- **WHEN** a 1C relevance evaluation runs against an RLM-enriched index
+- **THEN** the report SHALL include enrichment status and quality metrics such as Hit@1, Hit@3, Hit@5, Hit@10, MRR@10, Precision@k, per-query first relevant rank, top paths, latency, and failures
+- **AND** it SHALL compare the enriched run against the selected non-enriched baseline
+
+#### Scenario: Production ranking ignores evaluation expected paths
+- **WHEN** stored RLM enrichment fields are used by production search
+- **THEN** production ranking SHALL use only query text, indexed content, paths, vector scores, lexical scores, and stored enrichment metadata
+- **AND** it SHALL NOT read evaluation query IDs, expected path prefixes, or fixture labels to route, filter, boost, or rank results
+
+### Requirement: Ranking profile state is observable
+The system SHALL expose ranking profile observability through profile state without coupling it to retrieval performance profile or 1C indexing scope.
+
+#### Scenario: Search response includes ranking profile state
+- **WHEN** `search_code` runs with ranking profile `auto`, `generic`, or `one-c`
+- **THEN** the response profile state SHALL identify the requested ranking profile
+- **AND** it SHALL identify the resolved ranking profile when resolution differs from the request or is otherwise known
+
+#### Scenario: Ranking profile remains request-time state
+- **WHEN** a search request sets `rankingProfile`
+- **THEN** profile state SHALL report it under latest-search state
+- **AND** it SHALL NOT persist it as codebase profile state
+- **AND** it SHALL NOT require reindexing
+
+#### Scenario: One-C ranking signals are visible
+- **WHEN** ranking profile resolution activates 1C-specific ranking behavior
+- **THEN** profile state SHALL expose a non-secret indicator that 1C ranking signals are active
+- **AND** it SHALL keep this indicator separate from `oneCIndexScopeProfile`
+

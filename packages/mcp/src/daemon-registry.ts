@@ -40,7 +40,7 @@ export class DaemonRegistryManager {
     private readonly host: string;
     private readonly port: number;
     private readonly endpointPath: string;
-    private readonly allowedRoots: string[];
+    private allowedRoots: string[];
     private readonly tokenSha256: string;
     private readonly runtimeStatusFilePath: string;
     private readonly snapshotFilePath: string;
@@ -70,6 +70,10 @@ export class DaemonRegistryManager {
 
     public getRegistryFilePath(): string {
         return this.registryFilePath;
+    }
+
+    public setAllowedRoots(allowedRoots: string[]): void {
+        this.allowedRoots = [...allowedRoots];
     }
 
     public async refresh(): Promise<void> {
