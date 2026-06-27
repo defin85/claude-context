@@ -118,6 +118,26 @@ test('worker telemetry highlights fallback, stop reason, and rejected endpoint h
     assert.ok(view.alerts.includes('http://127.0.0.1:8001: health unhealthy'));
 });
 
+test('worker telemetry treats disabled background sync acceleration as neutral policy', () => {
+    const view = buildWorkerTelemetryView({
+        accelerator: {
+            fallbackReason: 'background sync acceleration disabled',
+        },
+        managedBgeM3Workers: {
+            primaryEndpoint: 'http://127.0.0.1:8000',
+            configuredEndpoints: [],
+            managedEndpoints: [],
+            plannedEndpoints: [],
+            runningWorkers: [],
+            totalPoolEndpoints: ['http://127.0.0.1:8000'],
+        },
+    });
+
+    assert.equal(view.available, true);
+    assert.equal(view.degraded, false);
+    assert.deepEqual(view.alerts, []);
+});
+
 test('formatMiB tolerates absent or invalid memory readings', () => {
     assert.equal(formatMiB(undefined), '—');
     assert.equal(formatMiB(Number.NaN), '—');

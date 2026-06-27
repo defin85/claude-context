@@ -8,6 +8,7 @@ import { ContextMcpConfig } from './config.js';
 
 const DEFAULT_BGE_M3_WORKER_VRAM_ESTIMATE_MIB = 2048;
 const MIN_VALID_BGE_M3_WORKER_VRAM_DELTA_MIB = 256;
+const SYSTEMD_USER_UNAVAILABLE_REASON = 'systemd --user is unavailable';
 const CALIBRATION_CACHE_PATH = path.join(os.homedir(), '.context', 'mcp', 'bge-m3-worker-vram.json');
 
 export interface ManagedBgeM3Worker {
@@ -406,6 +407,15 @@ export async function createManagedBgeM3WorkerManager(
         if (!config.acceleratorManagedBgeM3Workers) {
             return [];
         }
+        if (config.acceleratorManagedWorkerLifecycle === 'systemd') {
+            if (!await checkSystemdUserAvailable()) {
+                fallbackReason = SYSTEMD_USER_UNAVAILABLE_REASON;
+                return [];
+            }
+            if (fallbackReason === SYSTEMD_USER_UNAVAILABLE_REASON) {
+                fallbackReason = undefined;
+            }
+        }
         if (workers.length > 0) {
             return plannedEndpoints;
         }
@@ -655,7 +665,7 @@ export async function createManagedBgeM3WorkerManager(
     }
 
     if (config.acceleratorManagedWorkerLifecycle === 'systemd' && !await checkSystemdUserAvailable()) {
-        fallbackReason = 'systemd --user is unavailable';
+        fallbackReason = SYSTEMD_USER_UNAVAILABLE_REASON;
         return manager;
     }
 

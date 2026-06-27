@@ -1743,7 +1743,8 @@ export class ToolHandlers {
                 recoveredFromCloud,
                 hasPersistedSyncConfig
             };
-            const accelerator = this.context.getLastAcceleratorSnapshot();
+            const lastAccelerator = this.context.getLastAcceleratorSnapshot();
+            const accelerator = lastAccelerator?.codebasePath === absolutePath ? lastAccelerator : undefined;
             if (accelerator) {
                 structuredStatus.accelerator = accelerator;
             }

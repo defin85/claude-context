@@ -451,6 +451,7 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        acceleratorRuntime.recordCodebasePath(codebasePath);
         acceleratorRuntime.recordPreIndex({
             ...preIndexTraversal.timings,
             selectedFileCount: preIndexTraversal.selectedFileCount,
@@ -485,6 +486,7 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        acceleratorRuntime.recordCodebasePath(codebasePath);
         acceleratorRuntime.recordPreIndexStart();
         this.updateAcceleratorWorkerSnapshot(acceleratorRuntime);
         this.lastAcceleratorSnapshot = acceleratorRuntime.getSnapshot();
@@ -2277,6 +2279,7 @@ export class Context {
             accelerationDecision.active,
             accelerationDecision.fallbackReason,
         );
+        acceleratorRuntime.recordCodebasePath(codebasePath);
         const vectorWriteCapabilities = this.vectorDatabase.getWriteCapabilities?.();
         const vectorWritePolicy = resolveVectorWritePolicy({
             backend: vectorWriteCapabilities?.backend,

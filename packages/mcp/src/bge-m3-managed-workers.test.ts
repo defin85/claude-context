@@ -147,6 +147,31 @@ test('managed worker manager plans endpoints at request time without starting wo
     assert.equal(manager.workers.length, 0);
 });
 
+test('managed worker manager rechecks systemd before starting workers', async () => {
+    let started = 0;
+    let systemdAvailable = false;
+    const manager = await createManagedBgeM3WorkerManager(createConfig(), {
+        isSystemdUserAvailable: async () => systemdAvailable,
+        isPortAvailable: async () => true,
+        readVram: async () => ({ usedMiB: 1000, totalMiB: 10000, percentUsed: 10 }),
+        startWorker: async (_config, port) => {
+            started++;
+            return { endpoint: `http://127.0.0.1:${port}`, port };
+        },
+        calibrationPath: await createTempCalibrationPath(),
+    });
+
+    assert.equal(manager.fallbackReason, 'systemd --user is unavailable');
+    await manager.ensureStarted('still unavailable');
+    assert.equal(started, 0);
+    assert.equal(manager.fallbackReason, 'systemd --user is unavailable');
+
+    systemdAvailable = true;
+    await manager.ensureStarted('recovered');
+    assert.equal(started, 2);
+    assert.equal(manager.fallbackReason, undefined);
+});
+
 test('managed worker manager keeps running workers when runtime VRAM rises after startup', async () => {
     let reads = 0;
     let stopped = 0;

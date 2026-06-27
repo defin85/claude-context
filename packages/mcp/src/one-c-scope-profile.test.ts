@@ -15,6 +15,7 @@ import {
     type HybridSearchOptions,
     type HybridSearchRequest,
     type HybridSearchResult,
+    type IndexingAcceleratorSnapshot,
     type MultiVectorEmbedding,
     type RankingProfile,
     type RetrievalProfile,
@@ -121,6 +122,7 @@ function createFakeContext(
         rankingProfile?: RankingProfile;
     }) => SemanticSearchResult[],
     indexCodebase?: () => Promise<{ indexedFiles: number; totalChunks: number; status: 'completed'; codeChunkLimit?: number }>,
+    acceleratorSnapshot?: IndexingAcceleratorSnapshot,
 ): Context {
     let currentSessionConfig: CodebaseSessionConfig = {};
     return {
@@ -168,7 +170,7 @@ function createFakeContext(
             getDimension: () => 3,
         }),
         clearIndex: async () => undefined,
-        getLastAcceleratorSnapshot: () => undefined,
+        getLastAcceleratorSnapshot: () => acceleratorSnapshot,
         getLoadedIgnorePatterns: async () => undefined,
         getIgnorePatterns: () => [],
         getSupportedExtensions: () => ['.ts', '.bsl', '.json'],
@@ -351,6 +353,20 @@ test('get_indexing_status reports persisted retrieval profile', async () => {
     assert.equal(structuredContent.retrievalMode, 'dense');
     assert.equal(structuredContent.retrievalSchemaVersion, 1);
     assert.match(result.content[0].text, /Retrieval profile: fast/);
+});
+
+test('get_indexing_status omits accelerator snapshot from a different codebase', async () => {
+    const otherPath = path.join(os.tmpdir(), 'other-codebase');
+    const context = createFakeContext(true, undefined, undefined, {
+        codebasePath: otherPath,
+        batches: [{ id: 1, chunkCount: 1, attempts: 1, state: 'queued', firstFile: path.join(otherPath, 'src', 'other.ts') }],
+    } as IndexingAcceleratorSnapshot);
+    const { codebasePath, handlers } = await createIndexedCodebase(undefined, context);
+
+    const result = await handlers.handleGetIndexingStatus({ path: codebasePath });
+
+    const structuredContent = getStructuredContent(result);
+    assert.equal(structuredContent.accelerator, undefined);
 });
 
 test('force retrieval profile change preserves old config when indexing fails', async () => {

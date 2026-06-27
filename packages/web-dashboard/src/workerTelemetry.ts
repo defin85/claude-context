@@ -67,6 +67,10 @@ export interface WorkerTelemetryView {
     vram: Array<[string, string]>;
 }
 
+const neutralFallbackReasons = new Set([
+    'background sync acceleration disabled',
+]);
+
 export function buildWorkerTelemetryView(status: WorkerTelemetryStatus | undefined): WorkerTelemetryView {
     const managed = status?.managedBgeM3Workers || undefined;
     const vramPlanning = managed?.vramPlanning;
@@ -76,7 +80,9 @@ export function buildWorkerTelemetryView(status: WorkerTelemetryStatus | undefin
         managed?.fallbackReason,
         vramPlanning?.stopReason,
         ...endpoints.flatMap((endpoint) => endpointAlerts(endpoint)),
-    ].filter((value): value is string => Boolean(value)));
+    ]
+        .filter((value): value is string => Boolean(value))
+        .filter((value) => !neutralFallbackReasons.has(value)));
 
     return {
         available: Boolean(managed),

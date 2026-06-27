@@ -178,6 +178,7 @@ export interface VectorWritePolicy {
 }
 
 export interface IndexingAcceleratorSnapshot {
+    codebasePath?: string;
     mode: IndexingAcceleratorMode;
     active: boolean;
     fallbackReason?: string;
@@ -341,6 +342,7 @@ export class IndexingAcceleratorRuntime {
 
     constructor(config: IndexingAcceleratorConfig, active: boolean, fallbackReason?: string) {
         this.snapshot = {
+            codebasePath: undefined,
             mode: config.mode,
             active,
             fallbackReason,
@@ -427,6 +429,10 @@ export class IndexingAcceleratorRuntime {
             embeddingMs: 0,
             insertMs: 0,
         };
+    }
+
+    recordCodebasePath(codebasePath: string): void {
+        this.snapshot.codebasePath = codebasePath;
     }
 
     getSnapshot(): IndexingAcceleratorSnapshot {
