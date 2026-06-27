@@ -8,6 +8,7 @@
 ## 2. Manifest Persistence
 
 - [ ] 2.1 Implement atomic manifest read/write helpers with corruption handling.
+- [ ] 2.1.1 Write manifest updates through a same-directory temporary file, flushed contents, and rename; reject corrupt manifests for resume.
 - [ ] 2.2 Persist manifest creation at initial indexing start.
 - [ ] 2.3 Persist batch lifecycle transitions without marking unconfirmed work as inserted.
 - [ ] 2.4 Persist confirmed inserted document identifiers only after successful vector write.
@@ -21,6 +22,7 @@
 - [ ] 3.3 Route compatible interrupted targets to `initial_resume`.
 - [ ] 3.4 Route compatible completed targets to ordinary changed-file indexing.
 - [ ] 3.5 Preserve existing `force=true` rebuild behavior and make its interaction with manifests explicit.
+- [ ] 3.5.1 Delete or mark previous manifests `superseded` before force-mode collection drops/recreates.
 
 ## 4. Resume Execution
 
@@ -29,6 +31,7 @@
 - [ ] 4.3 Skip only chunks confirmed inserted in the compatible manifest.
 - [ ] 4.4 Reprocess planned, embedding, inserting, failed, cancelled, and missing chunks.
 - [ ] 4.5 Ensure coalesced writes retain per-document or per-batch confirmation data.
+- [ ] 4.6 Treat `CODE_CHUNK_LIMIT` as `limit_reached`, not completed, and keep incremental sync ineligible until every selected chunk is confirmed.
 
 ## 5. Backend Safety
 

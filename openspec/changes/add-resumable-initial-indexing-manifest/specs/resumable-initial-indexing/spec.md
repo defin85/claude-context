@@ -41,6 +41,12 @@ The system SHALL persist enough initial-indexing state to distinguish confirmed 
 - **WHEN** chunk batches are planned, embedded, inserted, failed, or cancelled
 - **THEN** the manifest SHALL record batch states that distinguish `planned`, `embedding`, `inserting`, `inserted`, `failed`, and `cancelled`
 
+#### Scenario: Force reindex invalidates previous manifest
+
+- **WHEN** `index_codebase` is called with `force=true`
+- **THEN** the system SHALL NOT resume a previous interrupted manifest
+- **AND** any previous manifest for the same codebase and collection identity SHALL be deleted or marked `superseded` before the target collection is dropped or recreated
+
 #### Scenario: Confirmed state is written after vector insertion
 
 - **WHEN** a vector insert or upsert operation succeeds for a batch
@@ -51,6 +57,7 @@ The system SHALL persist enough initial-indexing state to distinguish confirmed 
 
 - **WHEN** the manifest is updated
 - **THEN** the update SHALL either be fully visible or leave the previous valid manifest intact
+- **AND** readers SHALL treat corrupt or partially written manifest content as unusable for resume
 
 ### Requirement: Initial resume skips only confirmed inserted chunks
 
@@ -72,6 +79,12 @@ The system SHALL skip only chunks whose stable document identifiers are confirme
 - **WHEN** every selected chunk is confirmed inserted after an `initial_resume` run
 - **THEN** the system SHALL mark the manifest and codebase index state as completed
 - **AND** ordinary changed-file indexing SHALL be eligible on the next compatible request
+
+#### Scenario: Chunk limit does not publish completed initial state
+
+- **WHEN** `initial_full` or `initial_resume` stops because `CODE_CHUNK_LIMIT` is reached before every selected chunk is confirmed inserted
+- **THEN** the system SHALL mark the manifest state as `limit_reached`
+- **AND** ordinary changed-file indexing SHALL NOT be eligible until a later run confirms every selected chunk or a force reindex completes under a sufficient limit
 
 ### Requirement: Resume works across indexing profiles
 

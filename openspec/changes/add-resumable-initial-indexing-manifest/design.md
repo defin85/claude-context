@@ -42,13 +42,13 @@ Outputs:
 - `incremental_changes`: completed index and synchronizer snapshot are compatible.
 - `incompatible_requires_reindex`: persisted completed or partial state exists but compatibility checks fail.
 
-`force=true` keeps its existing meaning of rebuilding the target index. It must not silently resume an old manifest unless an explicit future option requests that behavior.
+`force=true` keeps its existing meaning of rebuilding the target index. It must not silently resume an old manifest unless an explicit future option requests that behavior. Before dropping or recreating collections, force mode must mark any compatible interrupted manifest as superseded or delete it so a later failure cannot resume against documents from the pre-force collection.
 
 The planner must run before collection preparation or synchronizer snapshot writes. In the current flow, collection preparation can drop data in force mode and `FileSynchronizer.initializeFromTraversal()` writes the merkle snapshot before vector insertion completes; V2 must defer any completed-index snapshot commit until the manifest reaches `completed`.
 
 ## Manifest Model
 
-Store one manifest per codebase/configuration/collection identity under the existing persistence root. The manifest should be written atomically.
+Store one manifest per codebase/configuration/collection identity under the existing persistence root. The manifest should be written atomically with a temporary file, flushed file contents, and a same-directory rename so readers either see the previous valid manifest or the next complete manifest.
 
 Required fields:
 
@@ -60,7 +60,7 @@ Required fields:
 - effective supported extensions, ignore patterns, and 1C scope profile;
 - chunker/splitter fingerprint;
 - selected-file fingerprint and traversal counters;
-- run state: `planning`, `indexing`, `interrupted`, `failed`, `completed`, `cancelled`;
+- run state: `planning`, `indexing`, `interrupted`, `failed`, `completed`, `cancelled`, `limit_reached`, `superseded`;
 - batch records with stable batch identifier, file paths, chunk/document identifiers, state, timestamps, and error context;
 - confirmed inserted document identifiers or confirmed inserted document ranges;
 - last completed synchronizer snapshot pointer when the run completes.
@@ -93,6 +93,8 @@ For `initial_resume`:
 5. Process only missing, failed, cancelled, or unconfirmed chunks.
 6. Persist newly confirmed inserted document IDs only after vector insertion succeeds.
 7. Write the synchronizer snapshot and mark the manifest `completed` only when all selected chunks are confirmed.
+
+If `CODE_CHUNK_LIMIT` stops an initial run before every selected chunk is confirmed, the manifest must be marked `limit_reached` instead of `completed`. That state may expose partial search results, but it must not make `incremental_changes` eligible because skipped files would otherwise be hidden by a completed synchronizer snapshot.
 
 If traversal output, profile, schema, collection, or embedding compatibility no longer matches, planner must return `incompatible_requires_reindex`.
 
