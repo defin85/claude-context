@@ -189,8 +189,14 @@ class TestVectorDatabase implements VectorDatabase {
         return (this.documents.get(collectionName) || []).slice(0, 1);
     }
 
-    async getCollectionDescription(): Promise<string> {
-        return '';
+    async getCollectionDescription(collectionName: string): Promise<string> {
+        if (collectionName.startsWith('bge_m3_code_chunks_')) {
+            return 'retrievalMode:bge_m3_full\nretrievalSchemaVersion:1';
+        }
+        if (collectionName.startsWith('hybrid_code_chunks_')) {
+            return 'retrievalMode:hybrid_bm25\nretrievalSchemaVersion:1';
+        }
+        return 'retrievalMode:dense\nretrievalSchemaVersion:1';
     }
 
     async checkCollectionLimit(): Promise<boolean> {
@@ -221,6 +227,22 @@ class FailOnNthInsertVectorDatabase extends TestVectorDatabase {
             throw new Error(`simulated insert failure ${this.insertCalls}`);
         }
         await super.insert(collectionName, documents);
+    }
+}
+
+class FailOnNthBgeM3UpsertVectorDatabase extends TestVectorDatabase {
+    bgeM3UpsertCalls = 0;
+
+    constructor(public failOnNthUpsert: number) {
+        super();
+    }
+
+    async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        this.bgeM3UpsertCalls++;
+        if (this.bgeM3UpsertCalls === this.failOnNthUpsert) {
+            throw new Error(`simulated BGE-M3 upsert failure ${this.bgeM3UpsertCalls}`);
+        }
+        await super.upsertBgeM3(collectionName, documents);
     }
 }
 
@@ -637,6 +659,41 @@ describe('Context per-codebase options and ignore handling', () => {
             runState: 'completed',
             confirmedDocumentIds: expect.any(Array),
         }));
+        expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test('completed index rejects incompatible file selection before incremental sync', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await context.indexCodebase(project, undefined, true);
+        context.configureCodebaseSession(project, { customIgnorePatterns: ['ignored/'] });
+
+        await expect(context.indexCodebase(project))
+            .rejects.toThrow(/ignorePatterns changed|fileSelectionFingerprint changed/);
+    });
+
+    test('BGE-M3 resume without accelerator retries unconfirmed chunks through upsert', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'off';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new FailOnNthBgeM3UpsertVectorDatabase(2);
+        const context = createContext(vectorDatabase, new BgeM3TestEmbedding());
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+        context.configureCodebaseSession(project, { retrievalProfile: 'quality' });
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated BGE-M3 upsert failure 2');
+
+        vectorDatabase.failOnNthUpsert = Number.POSITIVE_INFINITY;
+        await context.indexCodebase(project);
+
+        expect(vectorDatabase.insertRecords.some((record) => record.mode === 'bge_m3_upsert')).toBe(true);
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
     });
 

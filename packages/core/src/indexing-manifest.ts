@@ -50,6 +50,7 @@ export interface InitialIndexingBatchRecord {
 export interface InitialIndexingManifest {
     manifestVersion: typeof INITIAL_INDEXING_MANIFEST_VERSION;
     identity: InitialIndexingIdentity;
+    selectedMode?: 'initial_full' | 'initial_resume';
     runState: InitialIndexingRunState;
     traversal: {
         selectedFileCount: number;
@@ -107,6 +108,44 @@ export class InitialIndexingManifestStore {
             }
             return undefined;
         }
+    }
+
+    async findLatestForCodebaseCollection(
+        codebasePath: string,
+        collectionName: string,
+    ): Promise<InitialIndexingManifest | undefined> {
+        let entries: string[];
+        try {
+            entries = await fs.readdir(this.rootDir);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                return undefined;
+            }
+            throw error;
+        }
+
+        const manifests: InitialIndexingManifest[] = [];
+        for (const entry of entries) {
+            if (!entry.endsWith('.json')) {
+                continue;
+            }
+            try {
+                const parsed = JSON.parse(
+                    await fs.readFile(path.join(this.rootDir, entry), 'utf8'),
+                ) as InitialIndexingManifest;
+                if (
+                    this.isUsableManifest(parsed) &&
+                    parsed.identity.codebasePath === codebasePath &&
+                    parsed.identity.collectionName === collectionName
+                ) {
+                    manifests.push(parsed);
+                }
+            } catch {
+                // Corrupt manifests are unusable for resume.
+            }
+        }
+
+        return manifests.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0];
     }
 
     async write(manifest: InitialIndexingManifest): Promise<void> {

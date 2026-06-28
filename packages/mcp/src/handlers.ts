@@ -1763,6 +1763,7 @@ export class ToolHandlers {
             }
             const initialIndexingManifest = (this.context as typeof this.context & {
                 getLastInitialIndexingManifest?: () => {
+                    selectedMode?: 'initial_full' | 'initial_resume';
                     runState: string;
                     identity: { codebasePath: string };
                     confirmedDocumentIds: string[];
@@ -1781,12 +1782,15 @@ export class ToolHandlers {
                 const unconfirmedDocumentCount = [...plannedDocumentIds]
                     .filter((documentId) => !confirmedDocumentIds.has(documentId))
                     .length;
+                const resumeEligible = ['indexing', 'interrupted', 'failed', 'cancelled', 'limit_reached'].includes(initialIndexingManifest.runState);
                 structuredStatus.initialIndexing = {
+                    mode: initialIndexingManifest.selectedMode || (resumeEligible ? 'initial_resume' : 'initial_full'),
                     runState: initialIndexingManifest.runState,
-                    resumeEligible: ['indexing', 'interrupted', 'failed', 'cancelled', 'limit_reached'].includes(initialIndexingManifest.runState),
+                    resumeEligible,
                     manifestCompatibility: 'compatible',
                     plannedDocumentCount: plannedDocumentIds.size,
                     confirmedDocumentCount: confirmedDocumentIds.size,
+                    skippedDocumentCount: confirmedDocumentIds.size,
                     unconfirmedDocumentCount,
                     remainingDocumentCount: unconfirmedDocumentCount,
                     batchCount: initialIndexingManifest.batches.length,

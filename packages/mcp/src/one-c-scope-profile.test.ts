@@ -355,6 +355,37 @@ test('get_indexing_status reports persisted retrieval profile', async () => {
     assert.match(result.content[0].text, /Retrieval profile: fast/);
 });
 
+test('get_indexing_status reports initial indexing mode and resume counters', async () => {
+    let codebasePath = '';
+    const context = {
+        ...createFakeContext(true),
+        getLastInitialIndexingManifest: () => ({
+            selectedMode: 'initial_resume',
+            runState: 'indexing',
+            identity: { codebasePath },
+            confirmedDocumentIds: ['doc-1'],
+            batches: [
+                { state: 'inserted', documentIds: ['doc-1'] },
+                { state: 'failed', documentIds: ['doc-2'] },
+            ],
+            traversal: {
+                selectedFileCount: 2,
+                hashedFileCount: 2,
+            },
+        }),
+    } as unknown as Context;
+    const indexed = await createIndexedCodebase(undefined, context);
+    codebasePath = indexed.codebasePath;
+
+    const result = await indexed.handlers.handleGetIndexingStatus({ path: indexed.codebasePath });
+
+    const initialIndexing = getStructuredContent(result).initialIndexing as Record<string, unknown>;
+    assert.equal(initialIndexing.mode, 'initial_resume');
+    assert.equal(initialIndexing.confirmedDocumentCount, 1);
+    assert.equal(initialIndexing.remainingDocumentCount, 1);
+    assert.equal(initialIndexing.failedBatchCount, 1);
+});
+
 test('get_indexing_status omits accelerator snapshot from a different codebase', async () => {
     const otherPath = path.join(os.tmpdir(), 'other-codebase');
     const context = createFakeContext(true, undefined, undefined, {

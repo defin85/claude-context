@@ -73,7 +73,10 @@ import {
     InitialIndexingManifest,
     InitialIndexingManifestStore,
 } from "./indexing-manifest";
-import { planIndexingMode } from "./indexing-mode-planner";
+import {
+    getInitialIndexingIdentityIncompatibility,
+    planIndexingMode,
+} from "./indexing-mode-planner";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 
@@ -1539,15 +1542,28 @@ export class Context {
             session,
             preIndexTraversal,
         );
-        const previousManifest = await this.initialIndexingManifestStore.read(initialIndexingManifest.identity);
         const collectionName = this.getCollectionName(codebasePath);
+        const previousManifest = await this.initialIndexingManifestStore.read(initialIndexingManifest.identity);
+        const collectionManifest = previousManifest || await this.initialIndexingManifestStore.findLatestForCodebaseCollection(
+            initialIndexingManifest.identity.codebasePath,
+            collectionName,
+        );
         const collectionExists = !forceReindex && await this.vectorDatabase.hasCollection(collectionName);
-        const hasCompletedIndexCandidate = collectionExists && (!previousManifest || previousManifest.runState === "completed");
-        const completedIndex = hasCompletedIndexCandidate
+        const collectionManifestIncompatibility = collectionManifest
+            ? getInitialIndexingIdentityIncompatibility(initialIndexingManifest.identity, collectionManifest.identity)
+            : undefined;
+        const completedIndex = collectionExists && (
+            collectionManifestIncompatibility ||
+            (!previousManifest && collectionManifest && collectionManifest.runState !== "completed") ||
+            (!previousManifest || previousManifest.runState === "completed")
+        )
             ? {
-                compatible: true,
+                compatible: !collectionManifestIncompatibility && (!collectionManifest || collectionManifest.runState === "completed"),
                 hasSynchronizerSnapshot: await this.hasSynchronizerSnapshot(codebasePath),
-                reason: "completed index is missing synchronizer snapshot",
+                reason: collectionManifestIncompatibility
+                    || (collectionManifest && collectionManifest.runState !== "completed"
+                        ? `initial-indexing manifest state '${collectionManifest.runState}' is not completed`
+                        : "completed index is missing synchronizer snapshot"),
             }
             : undefined;
         const modeDecision = planIndexingMode({
@@ -1559,6 +1575,7 @@ export class Context {
         });
         if (modeDecision.mode === "initial_resume" && previousManifest) {
             initialIndexingManifest = previousManifest;
+            initialIndexingManifest.selectedMode = "initial_resume";
             initialIndexingManifest.runState = "indexing";
             initialIndexingManifest.traversal = {
                 selectedFileCount: preIndexTraversal.selectedFileCount,
@@ -1572,6 +1589,9 @@ export class Context {
             throw new Error(
                 `Initial indexing cannot resume for '${codebasePath}': ${modeDecision.reason || "incompatible persisted state"}. Re-run index_codebase with force=true to start a full reindex.`,
             );
+        }
+        if (modeDecision.mode === "initial_full") {
+            initialIndexingManifest.selectedMode = "initial_full";
         }
         if (modeDecision.mode === "incremental_changes") {
             const changes = await this.reindexByChange(codebasePath, progressCallback, abortSignal);
@@ -1626,11 +1646,11 @@ export class Context {
 
         if (codeFiles.length === 0) {
             const codeChunkLimit = getCodeChunkLimit();
+            await synchronizer.persistSnapshot();
             initialIndexingManifest.runState = "completed";
             initialIndexingManifest.lastCompletedSynchronizerSnapshot = FileSynchronizer.getSnapshotPathForCodebase(codebasePath);
             await this.initialIndexingManifestStore.write(initialIndexingManifest);
             this.lastInitialIndexingManifest = initialIndexingManifest;
-            await synchronizer.persistSnapshot();
             progressCallback?.({
                 phase: "No files to index",
                 current: 100,
@@ -3339,7 +3359,7 @@ export class Context {
                 collectionName: this.getCollectionName(codebasePath),
                 documents,
                 insertMode: "bge_m3",
-                useBgeM3Upsert: Boolean(acceleratorRuntime?.getSnapshot().active && this.vectorDatabase.upsertBgeM3),
+                useBgeM3Upsert: Boolean(this.vectorDatabase.upsertBgeM3),
             };
         }
 

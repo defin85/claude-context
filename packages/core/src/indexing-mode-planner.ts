@@ -65,7 +65,7 @@ export function planIndexingMode(input: IndexingModePlannerInput): IndexingModeD
         };
     }
 
-    const incompatibility = findIdentityIncompatibility(input.currentIdentity, input.manifest.identity);
+    const incompatibility = getInitialIndexingIdentityIncompatibility(input.currentIdentity, input.manifest.identity);
     if (incompatibility) {
         return {
             mode: 'incompatible_requires_reindex',
@@ -100,7 +100,7 @@ export function planIndexingMode(input: IndexingModePlannerInput): IndexingModeD
     };
 }
 
-function findIdentityIncompatibility(
+export function getInitialIndexingIdentityIncompatibility(
     current: InitialIndexingIdentity,
     previous: InitialIndexingIdentity,
 ): string | undefined {
