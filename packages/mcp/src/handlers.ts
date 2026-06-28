@@ -1761,7 +1761,7 @@ export class ToolHandlers {
             if (accelerator) {
                 structuredStatus.accelerator = accelerator;
             }
-            const initialIndexingManifest = (this.context as typeof this.context & {
+            const initialIndexingContext = this.context as typeof this.context & {
                 getLastInitialIndexingManifest?: () => {
                     selectedMode?: 'initial_full' | 'initial_resume';
                     runState: string;
@@ -1773,7 +1773,22 @@ export class ToolHandlers {
                         hashedFileCount: number;
                     };
                 } | undefined;
-            }).getLastInitialIndexingManifest?.();
+                getInitialIndexingManifestForCodebase?: (codebasePath: string) => Promise<{
+                    selectedMode?: 'initial_full' | 'initial_resume';
+                    runState: string;
+                    identity: { codebasePath: string };
+                    confirmedDocumentIds: string[];
+                    batches: Array<{ state: string; documentIds: string[] }>;
+                    traversal: {
+                        selectedFileCount: number;
+                        hashedFileCount: number;
+                    };
+                } | undefined>;
+            };
+            const lastInitialIndexingManifest = initialIndexingContext.getLastInitialIndexingManifest?.();
+            const initialIndexingManifest = lastInitialIndexingManifest?.identity.codebasePath === absolutePath
+                ? lastInitialIndexingManifest
+                : await initialIndexingContext.getInitialIndexingManifestForCodebase?.(absolutePath);
             if (initialIndexingManifest?.identity.codebasePath === absolutePath) {
                 const plannedDocumentIds = new Set(
                     initialIndexingManifest.batches.flatMap((batch) => batch.documentIds),

@@ -114,12 +114,19 @@ export class InitialIndexingManifestStore {
         codebasePath: string,
         collectionName: string,
     ): Promise<InitialIndexingManifest | undefined> {
+        return (await this.findForCodebaseCollection(codebasePath, collectionName))[0];
+    }
+
+    async findForCodebaseCollection(
+        codebasePath: string,
+        collectionName: string,
+    ): Promise<InitialIndexingManifest[]> {
         let entries: string[];
         try {
             entries = await fs.readdir(this.rootDir);
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-                return undefined;
+                return [];
             }
             throw error;
         }
@@ -145,7 +152,7 @@ export class InitialIndexingManifestStore {
             }
         }
 
-        return manifests.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0];
+        return manifests.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     }
 
     async write(manifest: InitialIndexingManifest): Promise<void> {

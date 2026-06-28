@@ -20,6 +20,7 @@ import {
     VectorWriteCapabilities,
     getCodeChunkLimit,
     parseCodeChunkLimit,
+    InitialIndexingManifestStore,
 } from './index';
 
 class TestEmbedding extends Embedding {
@@ -265,12 +266,16 @@ class FailOnNthBgeM3UpsertVectorDatabase extends TestVectorDatabase {
     }
 }
 
-function createContext(vectorDatabase = new TestVectorDatabase(), embedding: Embedding = new TestEmbedding()): Context {
+function createContext(
+    vectorDatabase = new TestVectorDatabase(),
+    embedding: Embedding = new TestEmbedding(),
+    manifestRoot = path.join(os.tmpdir(), `claude-context-core-manifests-${process.pid}`),
+): Context {
     return new Context({
         embedding,
         vectorDatabase,
         codeSplitter: new TestSplitter(),
-        initialIndexingManifestRoot: path.join(os.tmpdir(), `claude-context-core-manifests-${process.pid}`),
+        initialIndexingManifestRoot: manifestRoot,
     });
 }
 
@@ -679,6 +684,55 @@ describe('Context per-codebase options and ignore handling', () => {
             confirmedDocumentIds: expect.any(Array),
         }));
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test('force reindex supersedes previous manifest for same codebase collection even after scope change', async () => {
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const manifestRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'initial-manifest-force-'));
+        const vectorDatabase = new FailOnNthInsertVectorDatabase(2);
+        const context = createContext(vectorDatabase, new TestEmbedding(), manifestRoot);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await fs.writeFile(path.join(project, 'Configuration.xml'), '<MetaDataObject />');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated insert failure 2');
+        const oldIdentity = context.getLastInitialIndexingManifest()!.identity;
+
+        vectorDatabase.failOnNthInsert = Number.POSITIVE_INFINITY;
+        context.configureCodebaseSession(project, {
+            customExtensions: ['.xml'],
+            oneCIndexScopeProfile: 'minimal',
+        });
+        await context.indexCodebase(project, undefined, true);
+
+        const oldManifest = await new InitialIndexingManifestStore(manifestRoot).read(oldIdentity);
+        expect(oldManifest?.runState).toBe('superseded');
+    });
+
+    test('aborted initial indexing persists cancelled manifest state', async () => {
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const context = createContext();
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+        const controller = new AbortController();
+
+        await expect(context.indexCodebase(
+            project,
+            (progress) => {
+                if (progress.phase.includes('Processing files (1/2)')) {
+                    controller.abort(new Error('test cancellation'));
+                }
+            },
+            true,
+            controller.signal,
+        )).rejects.toThrow(/test cancellation|Operation cancelled/);
+
+        expect(context.getLastInitialIndexingManifest()?.runState).toBe('cancelled');
     });
 
     test('resume fails closed when regular writes are not retry safe', async () => {

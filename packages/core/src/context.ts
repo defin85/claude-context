@@ -168,7 +168,10 @@ function throwIfOperationAborted(abortSignal?: AbortSignal): void {
 
     const reason = abortSignal.reason;
     if (reason instanceof Error) {
-        throw reason;
+        if (reason instanceof IndexAbortError) {
+            throw reason;
+        }
+        throw new IndexAbortError(reason.message);
     }
 
     if (typeof reason === "string" && reason.trim().length > 0) {
@@ -237,6 +240,7 @@ interface InitialIndexingManifestRecorder {
     onBatchInserting(batchId: string): Promise<void>;
     onBatchInserted(batchId: string, documentIds: string[]): Promise<void>;
     onBatchFailed(batchId: string, error: unknown): Promise<void>;
+    onBatchCancelled(batchId: string, error: unknown): Promise<void>;
 }
 
 interface CodebaseSessionState {
@@ -421,6 +425,19 @@ export class Context {
         };
     }
 
+    async getInitialIndexingManifestForCodebase(codebasePath: string): Promise<InitialIndexingManifest | undefined> {
+        codebasePath = normalizeCodebasePath(codebasePath);
+        const manifest = await this.initialIndexingManifestStore.findLatestForCodebaseCollection(
+            codebasePath,
+            this.getCollectionName(codebasePath),
+        );
+        if (!manifest) {
+            return undefined;
+        }
+        this.lastInitialIndexingManifest = manifest;
+        return this.getLastInitialIndexingManifest();
+    }
+
     private getCurrentAcceleratorWorkerSnapshot(): IndexingAcceleratorWorkerSnapshot[] | undefined {
         const candidate = this.embedding as Embedding & Partial<WorkerSnapshotProvider>;
         if (typeof candidate.getWorkerSnapshot !== "function") {
@@ -570,6 +587,17 @@ export class Context {
                 batch.error = error instanceof Error ? error.message : String(error);
                 batch.updatedAt = new Date().toISOString();
                 manifest.runState = "failed";
+                await persist();
+            },
+            onBatchCancelled: async (batchId, error) => {
+                const batch = findBatch(batchId);
+                if (!batch) {
+                    return;
+                }
+                batch.state = "cancelled";
+                batch.error = error instanceof Error ? error.message : String(error);
+                batch.updatedAt = new Date().toISOString();
+                manifest.runState = "cancelled";
                 await persist();
             },
         };
@@ -1568,7 +1596,7 @@ export class Context {
             : undefined;
         const modeDecision = planIndexingMode({
             currentIdentity: initialIndexingManifest.identity,
-            manifest: previousManifest,
+            manifest: forceReindex ? collectionManifest : previousManifest,
             completedIndex,
             force: forceReindex,
             writeSafety: this.getInitialIndexingWriteSafety(collectionName),
@@ -1582,9 +1610,17 @@ export class Context {
                 hashedFileCount: preIndexTraversal.hashedFileCount,
                 selectedFileFingerprint: initialIndexingManifest.identity.fileSelectionFingerprint,
             };
-        } else if (modeDecision.supersedeManifest && previousManifest) {
-            previousManifest.runState = "superseded";
-            await this.initialIndexingManifestStore.write(previousManifest);
+        } else if (modeDecision.supersedeManifest) {
+            const manifests = await this.initialIndexingManifestStore.findForCodebaseCollection(
+                initialIndexingManifest.identity.codebasePath,
+                collectionName,
+            );
+            for (const manifest of manifests) {
+                if (manifest.runState !== "superseded") {
+                    manifest.runState = "superseded";
+                    await this.initialIndexingManifestStore.write(manifest);
+                }
+            }
         } else if (modeDecision.mode === "incompatible_requires_reindex") {
             throw new Error(
                 `Initial indexing cannot resume for '${codebasePath}': ${modeDecision.reason || "incompatible persisted state"}. Re-run index_codebase with force=true to start a full reindex.`,
@@ -1738,7 +1774,7 @@ export class Context {
                 },
             );
         } catch (error) {
-            initialIndexingManifest.runState = "failed";
+            initialIndexingManifest.runState = error instanceof IndexAbortError ? "cancelled" : "failed";
             await this.initialIndexingManifestStore.write(initialIndexingManifest);
             this.lastInitialIndexingManifest = initialIndexingManifest;
             throw error;
@@ -2770,7 +2806,11 @@ export class Context {
                         },
                     });
                 } catch (error) {
-                    await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                    if (error instanceof IndexAbortError) {
+                        await options.manifestRecorder?.onBatchCancelled(manifestBatchId, error);
+                    } else {
+                        await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                    }
                     recordAcceleratedBatchFailure(error);
                     throw error;
                 }
@@ -2784,7 +2824,11 @@ export class Context {
                         console.error("[Context] Stack trace:", error.stack);
                     }
                     batchErrors.push(error);
-                    await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                    if (error instanceof IndexAbortError) {
+                        await options.manifestRecorder?.onBatchCancelled(manifestBatchId, error);
+                    } else {
+                        await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                    }
                     recordAcceleratedBatchFailure(error);
                 }).finally(() => {
                     publishBatchProgress();
@@ -2808,7 +2852,11 @@ export class Context {
                 if (error instanceof Error) {
                     console.error("[Context] Stack trace:", error.stack);
                 }
-                await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                if (error instanceof IndexAbortError) {
+                    await options.manifestRecorder?.onBatchCancelled(manifestBatchId, error);
+                } else {
+                    await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
+                }
                 throw error;
             }).finally(() => {
                 publishBatchProgress();

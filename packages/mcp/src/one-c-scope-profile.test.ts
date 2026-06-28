@@ -16,6 +16,7 @@ import {
     type HybridSearchRequest,
     type HybridSearchResult,
     type IndexingAcceleratorSnapshot,
+    type InitialIndexingManifest,
     type MultiVectorEmbedding,
     type RankingProfile,
     type RetrievalProfile,
@@ -384,6 +385,52 @@ test('get_indexing_status reports initial indexing mode and resume counters', as
     assert.equal(initialIndexing.confirmedDocumentCount, 1);
     assert.equal(initialIndexing.remainingDocumentCount, 1);
     assert.equal(initialIndexing.failedBatchCount, 1);
+});
+
+test('get_indexing_status reports persisted initial indexing manifest when last in-memory manifest is absent', async () => {
+    let codebasePath = '';
+    const context = {
+        ...createFakeContext(true),
+        getInitialIndexingManifestForCodebase: async () => ({
+            selectedMode: 'initial_resume',
+            runState: 'failed',
+            identity: {
+                codebasePath,
+                collectionName: 'code_chunks_test',
+                vectorBackend: 'test',
+                retrievalMode: 'dense',
+                vectorSchemaFingerprint: 'schema-v1',
+                embeddingProfileFingerprint: 'test:dense',
+                splitterFingerprint: 'test',
+                fileSelectionFingerprint: 'files-v1',
+                supportedExtensions: ['.ts'],
+                ignorePatterns: [],
+            },
+            confirmedDocumentIds: ['doc-1'],
+            batches: [
+                { id: '1', state: 'inserted', filePaths: ['first.ts'], documentIds: ['doc-1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+                { id: '2', state: 'failed', filePaths: ['second.ts'], documentIds: ['doc-2'], updatedAt: '2026-01-01T00:00:00.000Z' },
+            ],
+            traversal: {
+                selectedFileCount: 2,
+                hashedFileCount: 2,
+                selectedFileFingerprint: 'files-v1',
+            },
+            manifestVersion: 1,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        } satisfies InitialIndexingManifest),
+    } as unknown as Context;
+    const indexed = await createIndexedCodebase(undefined, context);
+    codebasePath = indexed.codebasePath;
+
+    const result = await indexed.handlers.handleGetIndexingStatus({ path: indexed.codebasePath });
+
+    const initialIndexing = getStructuredContent(result).initialIndexing as Record<string, unknown>;
+    assert.equal(initialIndexing.mode, 'initial_resume');
+    assert.equal(initialIndexing.runState, 'failed');
+    assert.equal(initialIndexing.confirmedDocumentCount, 1);
+    assert.equal(initialIndexing.remainingDocumentCount, 1);
 });
 
 test('get_indexing_status omits accelerator snapshot from a different codebase', async () => {
