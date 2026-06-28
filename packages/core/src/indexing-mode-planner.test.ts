@@ -59,6 +59,17 @@ describe('planIndexingMode', () => {
         expect(decision.reason).toMatch(/retrievalMode/);
     });
 
+    it('fails closed when the current write path is not retry safe', () => {
+        const decision = planIndexingMode({
+            currentIdentity: identity,
+            manifest: manifest('interrupted'),
+            writeSafety: { regular: true, hybrid: true, bge_m3: false },
+        });
+
+        expect(decision.mode).toBe('incompatible_requires_reindex');
+        expect(decision.reason).toMatch(/No safe retry path/);
+    });
+
     it('keeps force mode as a full rebuild and supersedes old manifests', () => {
         const decision = planIndexingMode({
             currentIdentity: identity,

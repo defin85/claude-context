@@ -3,7 +3,7 @@
 - [x] 1.1 Inventory current initial, force, and incremental indexing entry points in `packages/core` and `packages/mcp`.
 - [x] 1.2 Define `IndexingMode` and planner inputs/outputs for `initial_full`, `initial_resume`, `incremental_changes`, and `incompatible_requires_reindex`.
 - [x] 1.3 Define manifest version, compatibility fingerprint fields, batch states, and atomic persistence location.
-- [ ] 1.4 Add migration behavior for existing completed indexes and pre-manifest failed/partial indexes.
+- [x] 1.4 Add migration behavior for existing completed indexes and pre-manifest failed/partial indexes.
 
 ## 2. Manifest Persistence
 
@@ -16,11 +16,11 @@
 
 ## 3. Mode Planner Integration
 
-- [ ] 3.1 Integrate planner before `index_codebase` starts indexing work.
+- [x] 3.1 Integrate planner before `index_codebase` starts indexing work.
 - [x] 3.1.1 Ensure planner runs before collection preparation, force-mode drops, and completed synchronizer snapshot writes.
-- [ ] 3.2 Route new/incompatible targets to `initial_full` or explicit reindex-required errors.
-- [ ] 3.3 Route compatible interrupted targets to `initial_resume`.
-- [ ] 3.4 Route compatible completed targets to ordinary changed-file indexing.
+- [x] 3.2 Route new/incompatible targets to `initial_full` or explicit reindex-required errors.
+- [x] 3.3 Route compatible interrupted targets to `initial_resume`.
+- [x] 3.4 Route compatible completed targets to ordinary changed-file indexing.
 - [x] 3.5 Preserve existing `force=true` rebuild behavior and make its interaction with manifests explicit.
 - [x] 3.5.1 Delete or mark previous manifests `superseded` before force-mode collection drops/recreates.
 
@@ -35,10 +35,10 @@
 
 ## 5. Backend Safety
 
-- [ ] 5.1 Identify vector adapter paths that support upsert or equivalent idempotent writes.
-- [ ] 5.1.1 Record write safety per insert mode: dense, hybrid, and BGE-M3 full.
+- [x] 5.1 Identify vector adapter paths that support upsert or equivalent idempotent writes.
+- [x] 5.1.1 Record write safety per insert mode: dense, hybrid, and BGE-M3 full.
 - [x] 5.2 Fail closed for ambiguous insert outcomes when no safe retry path exists.
-- [ ] 5.3 Add safeguards for backend-specific duplicate or partial-write behavior.
+- [x] 5.3 Add safeguards for backend-specific duplicate or partial-write behavior.
 
 ## 6. Status and Operator Output
 
@@ -52,7 +52,7 @@
 - [x] 7.1 Add planner unit tests for empty, completed, interrupted, incompatible, force, and legacy partial states.
 - [x] 7.2 Add manifest persistence tests for atomic writes, state transitions, and corruption handling.
 - [x] 7.3 Add resume tests proving confirmed chunks are skipped and unconfirmed chunks are reprocessed.
-- [ ] 7.4 Add retry-safety tests for ambiguous insert outcomes and idempotent backend paths.
+- [x] 7.4 Add retry-safety tests for ambiguous insert outcomes and idempotent backend paths.
 - [ ] 7.5 Add matrix tests for dense, hybrid, BGE-M3 full, accelerated and non-accelerated execution.
 - [ ] 7.6 Add 1C scope profile tests for `full`, `developer`, `minimal`, and `v8unpack`.
 - [ ] 7.7 Add status tests proving mode and resume counters are reported without cross-codebase leakage.

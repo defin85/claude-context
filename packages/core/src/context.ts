@@ -14,6 +14,7 @@ import {
     HybridSearchResult,
     RetrievalMode,
     RetrievalSchemaMetadata,
+    VectorWriteCapabilities,
 } from "./vectordb";
 import { SemanticSearchResult } from "./types";
 import {
@@ -72,6 +73,7 @@ import {
     InitialIndexingManifest,
     InitialIndexingManifestStore,
 } from "./indexing-manifest";
+import { planIndexingMode } from "./indexing-mode-planner";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 
@@ -453,6 +455,30 @@ export class Context {
             selectedFileFingerprint: identity.fileSelectionFingerprint,
         };
         return manifest;
+    }
+
+    private async hasSynchronizerSnapshot(codebasePath: string): Promise<boolean> {
+        try {
+            await fs.promises.access(FileSynchronizer.getSnapshotPathForCodebase(codebasePath));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private getInitialIndexingWriteSafety(collectionName: string): {
+        regular: boolean;
+        hybrid: boolean;
+        bge_m3: boolean;
+    } {
+        const capabilities: VectorWriteCapabilities | undefined =
+            this.vectorDatabase.getWriteCapabilities?.(collectionName);
+        const idempotentWrite = capabilities?.idempotentUpsert === true;
+        return {
+            regular: idempotentWrite,
+            hybrid: idempotentWrite,
+            bge_m3: idempotentWrite && typeof this.vectorDatabase.upsertBgeM3 === "function",
+        };
     }
 
     private createPreIndexTraversalFingerprint(preIndexTraversal: PreIndexTraversalResult): string {
@@ -1413,10 +1439,10 @@ export class Context {
         oneCIndexScopeProfile?: OneCIndexScopeProfile;
         oneCIndexScope?: OneCIndexScopeSummary;
         initialIndexing?: {
-            mode: "initial_full" | "initial_resume";
+            mode: "initial_full" | "initial_resume" | "incremental_changes";
             resumeEligible: boolean;
-            manifestCompatibility: "compatible" | "missing";
-            manifestRunState: InitialIndexingManifest["runState"];
+            manifestCompatibility: "compatible" | "missing" | "incompatible" | "ignored_force";
+            manifestRunState?: InitialIndexingManifest["runState"];
             confirmedDocumentCount: number;
             skippedDocumentCount: number;
             batchCount: number;
@@ -1514,14 +1540,24 @@ export class Context {
             preIndexTraversal,
         );
         const previousManifest = await this.initialIndexingManifestStore.read(initialIndexingManifest.identity);
-        const resumableStates: Array<InitialIndexingManifest["runState"]> = [
-            "interrupted",
-            "failed",
-            "cancelled",
-            "indexing",
-            "limit_reached",
-        ];
-        if (!forceReindex && previousManifest && resumableStates.includes(previousManifest.runState)) {
+        const collectionName = this.getCollectionName(codebasePath);
+        const collectionExists = !forceReindex && await this.vectorDatabase.hasCollection(collectionName);
+        const hasCompletedIndexCandidate = collectionExists && (!previousManifest || previousManifest.runState === "completed");
+        const completedIndex = hasCompletedIndexCandidate
+            ? {
+                compatible: true,
+                hasSynchronizerSnapshot: await this.hasSynchronizerSnapshot(codebasePath),
+                reason: "completed index is missing synchronizer snapshot",
+            }
+            : undefined;
+        const modeDecision = planIndexingMode({
+            currentIdentity: initialIndexingManifest.identity,
+            manifest: previousManifest,
+            completedIndex,
+            force: forceReindex,
+            writeSafety: this.getInitialIndexingWriteSafety(collectionName),
+        });
+        if (modeDecision.mode === "initial_resume" && previousManifest) {
             initialIndexingManifest = previousManifest;
             initialIndexingManifest.runState = "indexing";
             initialIndexingManifest.traversal = {
@@ -1529,13 +1565,34 @@ export class Context {
                 hashedFileCount: preIndexTraversal.hashedFileCount,
                 selectedFileFingerprint: initialIndexingManifest.identity.fileSelectionFingerprint,
             };
-        } else if (forceReindex && previousManifest) {
+        } else if (modeDecision.supersedeManifest && previousManifest) {
             previousManifest.runState = "superseded";
             await this.initialIndexingManifestStore.write(previousManifest);
+        } else if (modeDecision.mode === "incompatible_requires_reindex") {
+            throw new Error(
+                `Initial indexing cannot resume for '${codebasePath}': ${modeDecision.reason || "incompatible persisted state"}. Re-run index_codebase with force=true to start a full reindex.`,
+            );
+        }
+        if (modeDecision.mode === "incremental_changes") {
+            const changes = await this.reindexByChange(codebasePath, progressCallback, abortSignal);
+            return {
+                indexedFiles: changes.added + changes.modified,
+                totalChunks: 0,
+                status: "completed",
+                codeChunkLimit: getCodeChunkLimit(),
+                oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
+                oneCIndexScope: preIndexTraversal.oneCIndexScope,
+                initialIndexing: {
+                    mode: "incremental_changes",
+                    resumeEligible: false,
+                    manifestCompatibility: modeDecision.manifestCompatibility,
+                    confirmedDocumentCount: previousManifest?.confirmedDocumentIds.length ?? 0,
+                    skippedDocumentCount: 0,
+                    batchCount: previousManifest?.batches.length ?? 0,
+                },
+            };
         }
         const skipDocumentIds = new Set(initialIndexingManifest.confirmedDocumentIds);
-        const initialIndexingMode = skipDocumentIds.size > 0 ? "initial_resume" : "initial_full";
-        const manifestCompatibility = previousManifest ? "compatible" : "missing";
         const startingBatchSequence = initialIndexingManifest.batches.reduce((max, batch) => {
             const parsed = Number.parseInt(batch.id, 10);
             return Number.isInteger(parsed) ? Math.max(max, parsed) : max;
@@ -1588,9 +1645,9 @@ export class Context {
                 oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
                 oneCIndexScope: preIndexTraversal.oneCIndexScope,
                 initialIndexing: {
-                    mode: initialIndexingMode,
-                    resumeEligible: initialIndexingMode === "initial_resume",
-                    manifestCompatibility,
+                    mode: modeDecision.mode === "initial_resume" ? "initial_resume" : "initial_full",
+                    resumeEligible: modeDecision.resumeEligible,
+                    manifestCompatibility: modeDecision.manifestCompatibility,
                     manifestRunState: initialIndexingManifest.runState,
                     confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
                     skippedDocumentCount: 0,
@@ -1695,9 +1752,9 @@ export class Context {
             oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
             oneCIndexScope: preIndexTraversal.oneCIndexScope,
             initialIndexing: {
-                mode: initialIndexingMode,
-                resumeEligible: initialIndexingMode === "initial_resume",
-                manifestCompatibility,
+                mode: modeDecision.mode === "initial_resume" ? "initial_resume" : "initial_full",
+                resumeEligible: modeDecision.resumeEligible,
+                manifestCompatibility: modeDecision.manifestCompatibility,
                 manifestRunState: initialIndexingManifest.runState,
                 confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
                 skippedDocumentCount: result.skippedDocumentCount,

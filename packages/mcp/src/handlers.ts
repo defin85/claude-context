@@ -242,7 +242,7 @@ export class ToolHandlers {
         status: 'completed' | 'limit_reached';
         codeChunkLimit?: number;
         initialIndexing?: {
-            mode: 'initial_full' | 'initial_resume';
+            mode: 'initial_full' | 'initial_resume' | 'incremental_changes';
             manifestRunState: string;
             confirmedDocumentCount: number;
             skippedDocumentCount: number;
@@ -1170,9 +1170,9 @@ export class ToolHandlers {
             let message = `Background indexing completed for '${absolutePath}' using ${splitterType.toUpperCase()} splitter.\nIndexed ${stats.indexedFiles} files, ${stats.totalChunks} chunks.`;
             const initialIndexingStats = (stats as typeof stats & {
                 initialIndexing?: {
-                    mode: 'initial_full' | 'initial_resume';
+                    mode: 'initial_full' | 'initial_resume' | 'incremental_changes';
                     resumeEligible: boolean;
-                    manifestCompatibility: 'compatible' | 'missing';
+                    manifestCompatibility: 'compatible' | 'missing' | 'incompatible' | 'ignored_force';
                     confirmedDocumentCount: number;
                     skippedDocumentCount: number;
                     batchCount: number;
@@ -1181,7 +1181,9 @@ export class ToolHandlers {
             if (initialIndexingStats) {
                 const modeLabel = initialIndexingStats.mode === 'initial_resume'
                     ? 'resume'
-                    : 'full';
+                    : initialIndexingStats.mode === 'incremental_changes'
+                        ? 'incremental'
+                        : 'full';
                 message += `\nInitial indexing mode: ${modeLabel}; manifest=${initialIndexingStats.manifestCompatibility}, resumeEligible=${initialIndexingStats.resumeEligible}; confirmed=${initialIndexingStats.confirmedDocumentCount}, skipped=${initialIndexingStats.skippedDocumentCount}, batches=${initialIndexingStats.batchCount}.`;
             }
             if (stats.status === 'limit_reached') {

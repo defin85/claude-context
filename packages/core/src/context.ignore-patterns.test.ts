@@ -16,6 +16,7 @@ import {
     HybridSearchRequest,
     HybridSearchOptions,
     HybridSearchResult,
+    VectorWriteCapabilities,
     getCodeChunkLimit,
     parseCodeChunkLimit,
 } from './index';
@@ -107,6 +108,23 @@ class TestVectorDatabase implements VectorDatabase {
 
     async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
         await this.insert(collectionName, documents);
+    }
+
+    async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.insert(collectionName, documents);
+    }
+
+    getWriteCapabilities(): VectorWriteCapabilities {
+        return {
+            backend: 'test',
+            parallelWritesToSameCollection: true,
+            idempotentUpsert: true,
+            recommendedInsertConcurrency: 1,
+            targetCoalescedDocumentCount: 100,
+            maxCoalescedDocumentCount: 100,
+            writeCoalescingRecommended: false,
+            ambiguousWriteFailureMode: 'retry_safe',
+        };
     }
 
     async search(): Promise<VectorSearchResult[]> {
