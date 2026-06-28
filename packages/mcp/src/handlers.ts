@@ -6,6 +6,7 @@ import {
     CodebaseSessionConfig,
     Context,
     COLLECTION_LIMIT_MESSAGE,
+    getInitialIndexingManifestIdentifier,
     isReducedOneCIndexScopeProfile,
     parseRankingProfile,
     parseRetrievalProfile,
@@ -35,21 +36,6 @@ import {
 type ToolArgs = Record<string, unknown>;
 type StructuredContent = Record<string, unknown>;
 
-function getInitialIndexingManifestIdentifier(identity: {
-    codebasePath: string;
-    supportedExtensions: string[];
-    ignorePatterns: string[];
-} & object): string {
-    return crypto
-        .createHash('sha256')
-        .update(JSON.stringify({
-            ...identity,
-            supportedExtensions: [...identity.supportedExtensions].sort(),
-            ignorePatterns: [...identity.ignorePatterns].sort(),
-        }))
-        .digest('hex')
-        .slice(0, 32);
-}
 type CountQueryRow = Record<string, unknown>;
 type SearchResultSummary = {
     relativePath: string;

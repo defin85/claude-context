@@ -728,7 +728,7 @@ function scoreExactSymbol(tokens: CodeSymbolQueryTokens, content: string): numbe
     return tokens.exactTerms.some((term) => normalizedContent.includes(normalizeText(term))) ? 6 : 0;
 }
 
-function scoreStoredBslMetadata(tokens: CodeSymbolQueryTokens, metadata?: Record<string, any>): { exactSymbolBoost: number; symbolName?: string } {
+function scoreStoredBslMetadata(_tokens: CodeSymbolQueryTokens, _metadata?: Record<string, any>): { exactSymbolBoost: number; symbolName?: string } {
     return { exactSymbolBoost: 0 };
 }
 
