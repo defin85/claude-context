@@ -23,6 +23,11 @@ export interface VectorWriteCapabilities {
     backend?: string;
     parallelWritesToSameCollection: boolean;
     idempotentUpsert: boolean;
+    retrySafeInsertModes?: {
+        regular?: boolean;
+        hybrid?: boolean;
+        bge_m3?: boolean;
+    };
     recommendedInsertConcurrency: number;
     targetCoalescedDocumentCount: number;
     maxCoalescedDocumentCount: number;

@@ -850,10 +850,16 @@ export class MilvusVectorDatabase implements VectorDatabase {
     }
 
     getWriteCapabilities(_collectionName?: string): VectorWriteCapabilities {
+        const hasUpsert = Boolean((this.client as unknown as { upsert?: unknown } | null)?.upsert);
         return {
             backend: 'milvus',
             parallelWritesToSameCollection: false,
-            idempotentUpsert: Boolean((this.client as unknown as { upsert?: unknown } | null)?.upsert),
+            idempotentUpsert: hasUpsert,
+            retrySafeInsertModes: {
+                regular: false,
+                hybrid: false,
+                bge_m3: hasUpsert,
+            },
             recommendedInsertConcurrency: 1,
             targetCoalescedDocumentCount: 100,
             maxCoalescedDocumentCount: 300,

@@ -96,6 +96,11 @@ class TestVectorDatabase implements VectorDatabase {
         backend: 'test',
         parallelWritesToSameCollection: true,
         idempotentUpsert: true,
+        retrySafeInsertModes: {
+            regular: true,
+            hybrid: true,
+            bge_m3: true,
+        },
         recommendedInsertConcurrency: 1,
         targetCoalescedDocumentCount: 100,
         maxCoalescedDocumentCount: 100,
@@ -227,6 +232,20 @@ class FailOnNthInsertVectorDatabase extends TestVectorDatabase {
             throw new Error(`simulated insert failure ${this.insertCalls}`);
         }
         await super.insert(collectionName, documents);
+    }
+}
+
+class UnsafeRegularResumeVectorDatabase extends TestVectorDatabase {
+    constructor() {
+        super();
+        this.writeCapabilities = {
+            ...this.writeCapabilities,
+            retrySafeInsertModes: {
+                regular: false,
+                hybrid: true,
+                bge_m3: true,
+            },
+        };
     }
 }
 
@@ -660,6 +679,25 @@ describe('Context per-codebase options and ignore handling', () => {
             confirmedDocumentIds: expect.any(Array),
         }));
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test('resume fails closed when regular writes are not retry safe', async () => {
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new FailOnNthInsertVectorDatabase(2);
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated insert failure 2');
+
+        const unsafeVectorDatabase = vectorDatabase as unknown as UnsafeRegularResumeVectorDatabase;
+        unsafeVectorDatabase.writeCapabilities = new UnsafeRegularResumeVectorDatabase().writeCapabilities;
+
+        await expect(context.indexCodebase(project))
+            .rejects.toThrow(/No safe retry path for regular writes/);
     });
 
     test('completed index rejects incompatible file selection before incremental sync', async () => {

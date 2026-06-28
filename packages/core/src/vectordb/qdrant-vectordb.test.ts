@@ -191,6 +191,11 @@ describe('QdrantVectorDatabase BGE-M3 full retrieval', () => {
         expect(db.getWriteCapabilities('chunks')).toEqual(expect.objectContaining({
             parallelWritesToSameCollection: true,
             idempotentUpsert: true,
+            retrySafeInsertModes: {
+                regular: true,
+                hybrid: true,
+                bge_m3: true,
+            },
             recommendedInsertConcurrency: 4,
             writeCoalescingRecommended: true,
             ambiguousWriteFailureMode: 'retry_safe',

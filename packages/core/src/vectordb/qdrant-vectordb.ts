@@ -97,6 +97,11 @@ export class QdrantVectorDatabase implements VectorDatabase {
             backend: 'qdrant',
             parallelWritesToSameCollection: true,
             idempotentUpsert: true,
+            retrySafeInsertModes: {
+                regular: true,
+                hybrid: true,
+                bge_m3: true,
+            },
             recommendedInsertConcurrency: 4,
             targetCoalescedDocumentCount: 200,
             maxCoalescedDocumentCount: 400,

@@ -476,11 +476,11 @@ export class Context {
     } {
         const capabilities: VectorWriteCapabilities | undefined =
             this.vectorDatabase.getWriteCapabilities?.(collectionName);
-        const idempotentWrite = capabilities?.idempotentUpsert === true;
+        const safeModes = capabilities?.retrySafeInsertModes;
         return {
-            regular: idempotentWrite,
-            hybrid: idempotentWrite,
-            bge_m3: idempotentWrite && typeof this.vectorDatabase.upsertBgeM3 === "function",
+            regular: safeModes?.regular === true,
+            hybrid: safeModes?.hybrid === true,
+            bge_m3: safeModes?.bge_m3 === true && typeof this.vectorDatabase.upsertBgeM3 === "function",
         };
     }
 

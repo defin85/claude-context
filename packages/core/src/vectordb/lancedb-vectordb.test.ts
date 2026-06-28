@@ -7,6 +7,11 @@ describe('LanceDbVectorDatabase write capabilities', () => {
         expect(db.getWriteCapabilities('chunks')).toEqual(expect.objectContaining({
             parallelWritesToSameCollection: false,
             idempotentUpsert: true,
+            retrySafeInsertModes: {
+                regular: false,
+                hybrid: false,
+                bge_m3: false,
+            },
             recommendedInsertConcurrency: 1,
             writeCoalescingRecommended: true,
             ambiguousWriteFailureMode: 'fail_fast',

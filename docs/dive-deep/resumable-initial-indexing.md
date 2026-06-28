@@ -20,6 +20,7 @@ Resume is conservative:
 - only document ids listed in `confirmedDocumentIds` are skipped;
 - batches left in `planned`, `embedding`, `inserting`, `failed`, or `cancelled` state are reprocessed;
 - vector insert errors fail the run instead of being treated as skipped files;
+- resume only retries unconfirmed chunks when the current insert mode declares an idempotent write path;
 - the synchronizer snapshot is written only after all selected chunks are confirmed.
 
 `CODE_CHUNK_LIMIT` produces `limit_reached`, not `completed`. The partial index can remain searchable, but incremental sync stays ineligible until a later run confirms every selected chunk and writes the synchronizer snapshot.

@@ -902,6 +902,11 @@ export class MilvusRestfulVectorDatabase implements VectorDatabase {
             backend: 'milvus-restful',
             parallelWritesToSameCollection: false,
             idempotentUpsert: true,
+            retrySafeInsertModes: {
+                regular: false,
+                hybrid: false,
+                bge_m3: true,
+            },
             recommendedInsertConcurrency: 1,
             targetCoalescedDocumentCount: 100,
             maxCoalescedDocumentCount: 300,

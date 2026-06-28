@@ -66,6 +66,7 @@ describe('RLM BSL vector adapter compatibility', () => {
         db.initializationPromise = Promise.resolve();
         db.initializationError = null;
         db.client = {
+            upsert: jest.fn(),
             describeCollection: jest.fn().mockResolvedValue({
                 schema: {
                     description: 'retrievalMode:bge_m3_full\nenrichmentProvider:rlm-tools-bsl',
@@ -76,6 +77,11 @@ describe('RLM BSL vector adapter compatibility', () => {
         const [entity] = db.toBgeM3Entities([document()]);
 
         expect(JSON.parse(entity.metadata).bsl).toEqual(bslMetadata);
+        expect(db.getWriteCapabilities('chunks').retrySafeInsertModes).toEqual({
+            regular: false,
+            hybrid: false,
+            bge_m3: true,
+        });
         await expect(db.getCollectionDescription('bge_m3_code_chunks_demo'))
             .resolves.toContain('enrichmentProvider:rlm-tools-bsl');
     });
@@ -92,6 +98,11 @@ describe('RLM BSL vector adapter compatibility', () => {
         const [entity] = db.toBgeM3Entities([document()]);
 
         expect(JSON.parse(entity.metadata).bsl).toEqual(bslMetadata);
+        expect(db.getWriteCapabilities('chunks').retrySafeInsertModes).toEqual({
+            regular: false,
+            hybrid: false,
+            bge_m3: true,
+        });
         await expect(db.getCollectionDescription('bge_m3_code_chunks_demo'))
             .resolves.toContain('enrichmentProvider:rlm-tools-bsl');
         expect(db.makeRequest).toHaveBeenCalledWith('/collections/describe', 'POST', {

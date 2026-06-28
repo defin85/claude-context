@@ -109,6 +109,11 @@ export class LanceDbVectorDatabase implements VectorDatabase {
             backend: 'lancedb',
             parallelWritesToSameCollection: false,
             idempotentUpsert: true,
+            retrySafeInsertModes: {
+                regular: false,
+                hybrid: false,
+                bge_m3: false,
+            },
             recommendedInsertConcurrency: 1,
             targetCoalescedDocumentCount: 100,
             maxCoalescedDocumentCount: 300,
