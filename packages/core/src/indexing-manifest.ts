@@ -89,12 +89,7 @@ export class InitialIndexingManifestStore {
     }
 
     getManifestPath(identity: InitialIndexingIdentity): string {
-        const hash = crypto
-            .createHash('sha256')
-            .update(JSON.stringify(this.normalizeIdentity(identity)))
-            .digest('hex')
-            .slice(0, 32);
-        return path.join(this.rootDir, `${hash}.json`);
+        return path.join(this.rootDir, `${getInitialIndexingManifestIdentifier(this.normalizeIdentity(identity))}.json`);
     }
 
     async read(identity: InitialIndexingIdentity): Promise<InitialIndexingManifest | undefined> {
@@ -211,4 +206,16 @@ export class InitialIndexingManifestStore {
             await handle?.close();
         }
     }
+}
+
+export function getInitialIndexingManifestIdentifier(identity: InitialIndexingIdentity): string {
+    return crypto
+        .createHash('sha256')
+        .update(JSON.stringify({
+            ...identity,
+            supportedExtensions: [...identity.supportedExtensions].sort(),
+            ignorePatterns: [...identity.ignorePatterns].sort(),
+        }))
+        .digest('hex')
+        .slice(0, 32);
 }

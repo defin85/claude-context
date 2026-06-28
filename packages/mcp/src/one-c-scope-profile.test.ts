@@ -192,6 +192,21 @@ function getStructuredContent(result: unknown): Record<string, unknown> {
     return structuredContent as Record<string, unknown>;
 }
 
+function createManifestIdentity(codebasePath: string): InitialIndexingManifest['identity'] {
+    return {
+        codebasePath,
+        collectionName: 'code_chunks_test',
+        vectorBackend: 'test',
+        retrievalMode: 'dense',
+        vectorSchemaFingerprint: 'schema-v1',
+        embeddingProfileFingerprint: 'test:dense',
+        splitterFingerprint: 'test',
+        fileSelectionFingerprint: 'files-v1',
+        supportedExtensions: ['.ts'],
+        ignorePatterns: [],
+    };
+}
+
 async function createIndexedCodebase(
     previousProfile?: 'full' | 'developer' | 'minimal' | 'v8unpack',
     context?: Context,
@@ -363,7 +378,7 @@ test('get_indexing_status reports initial indexing mode and resume counters', as
         getLastInitialIndexingManifest: () => ({
             selectedMode: 'initial_resume',
             runState: 'indexing',
-            identity: { codebasePath },
+            identity: createManifestIdentity(codebasePath),
             confirmedDocumentIds: ['doc-1'],
             batches: [
                 { state: 'inserted', documentIds: ['doc-1'] },
@@ -382,6 +397,7 @@ test('get_indexing_status reports initial indexing mode and resume counters', as
 
     const initialIndexing = getStructuredContent(result).initialIndexing as Record<string, unknown>;
     assert.equal(initialIndexing.mode, 'initial_resume');
+    assert.equal(typeof initialIndexing.manifestIdentifier, 'string');
     assert.equal(initialIndexing.confirmedDocumentCount, 1);
     assert.equal(initialIndexing.remainingDocumentCount, 1);
     assert.equal(initialIndexing.failedBatchCount, 1);
@@ -394,18 +410,7 @@ test('get_indexing_status reports persisted initial indexing manifest when last 
         getInitialIndexingManifestForCodebase: async () => ({
             selectedMode: 'initial_resume',
             runState: 'failed',
-            identity: {
-                codebasePath,
-                collectionName: 'code_chunks_test',
-                vectorBackend: 'test',
-                retrievalMode: 'dense',
-                vectorSchemaFingerprint: 'schema-v1',
-                embeddingProfileFingerprint: 'test:dense',
-                splitterFingerprint: 'test',
-                fileSelectionFingerprint: 'files-v1',
-                supportedExtensions: ['.ts'],
-                ignorePatterns: [],
-            },
+            identity: createManifestIdentity(codebasePath),
             confirmedDocumentIds: ['doc-1'],
             batches: [
                 { id: '1', state: 'inserted', filePaths: ['first.ts'], documentIds: ['doc-1'], updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -429,8 +434,64 @@ test('get_indexing_status reports persisted initial indexing manifest when last 
     const initialIndexing = getStructuredContent(result).initialIndexing as Record<string, unknown>;
     assert.equal(initialIndexing.mode, 'initial_resume');
     assert.equal(initialIndexing.runState, 'failed');
+    assert.equal(typeof initialIndexing.manifestIdentifier, 'string');
     assert.equal(initialIndexing.confirmedDocumentCount, 1);
     assert.equal(initialIndexing.remainingDocumentCount, 1);
+});
+
+test('index_codebase lets existing compatible indexes reach core mode planner', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-existing-index-planner-'));
+    const rawCodebasePath = path.join(workspacePath, 'cf');
+    await fs.mkdir(rawCodebasePath, { recursive: true });
+    const codebasePath = await fs.realpath(rawCodebasePath);
+    const snapshotManager = new SnapshotManager({
+        workspacePath,
+        saveDebounceMs: 10,
+    });
+    snapshotManager.setCodebaseIndexed(codebasePath, {
+        indexedFiles: 2,
+        totalChunks: 2,
+        status: 'completed',
+    });
+    const codebaseConfigManager = new CodebaseConfigManager({ workspacePath });
+    await codebaseConfigManager.saveConfig(codebasePath, {
+        retrievalProfile: 'fast',
+        retrievalMode: 'dense',
+        retrievalSchemaVersion: 1,
+    });
+    let indexCalled = false;
+    const context = createFakeContext(true, undefined, async () => {
+        indexCalled = true;
+        return {
+            indexedFiles: 0,
+            totalChunks: 0,
+            status: 'completed',
+            codeChunkLimit: 900000,
+            initialIndexing: {
+                mode: 'incremental_changes',
+                resumeEligible: false,
+                manifestCompatibility: 'missing',
+                confirmedDocumentCount: 2,
+                skippedDocumentCount: 0,
+                remainingDocumentCount: 0,
+                unconfirmedDocumentCount: 0,
+                failedBatchCount: 0,
+                batchCount: 1,
+            },
+        };
+    });
+    const handlers = new ToolHandlers(context, snapshotManager, codebaseConfigManager);
+
+    const result = await handlers.handleIndexCodebase({
+        path: codebasePath,
+        retrievalProfile: 'fast',
+    });
+
+    assert.equal(result.isError, undefined);
+    for (let attempt = 0; attempt < 20 && !indexCalled; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(indexCalled, true);
 });
 
 test('get_indexing_status omits accelerator snapshot from a different codebase', async () => {

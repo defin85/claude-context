@@ -69,6 +69,7 @@ import {
     RlmBslCompatibilityProof,
 } from "./rlm-bsl-enrichment";
 import {
+    getInitialIndexingManifestIdentifier,
     InitialIndexingManifest,
     InitialIndexingManifestStore,
 } from "./indexing-manifest";
@@ -240,6 +241,15 @@ interface InitialIndexingManifestRecorder {
     onBatchInserted(batchId: string, documentIds: string[]): Promise<void>;
     onBatchFailed(batchId: string, error: unknown): Promise<void>;
     onBatchCancelled(batchId: string, error: unknown): Promise<void>;
+}
+
+interface InitialIndexingRunSummary {
+    manifestIdentifier: string;
+    confirmedDocumentCount: number;
+    unconfirmedDocumentCount: number;
+    remainingDocumentCount: number;
+    failedBatchCount: number;
+    batchCount: number;
 }
 
 interface CodebaseSessionState {
@@ -622,6 +632,22 @@ export class Context {
                 manifest.runState = "cancelled";
                 await persist();
             },
+        };
+    }
+
+    private summarizeInitialIndexingManifest(manifest: InitialIndexingManifest): InitialIndexingRunSummary {
+        const plannedDocumentIds = new Set(manifest.batches.flatMap((batch) => batch.documentIds));
+        const confirmedDocumentIds = new Set(manifest.confirmedDocumentIds);
+        const unconfirmedDocumentCount = [...plannedDocumentIds]
+            .filter((documentId) => !confirmedDocumentIds.has(documentId))
+            .length;
+        return {
+            manifestIdentifier: getInitialIndexingManifestIdentifier(manifest.identity),
+            confirmedDocumentCount: confirmedDocumentIds.size,
+            unconfirmedDocumentCount,
+            remainingDocumentCount: unconfirmedDocumentCount,
+            failedBatchCount: manifest.batches.filter((batch) => batch.state === "failed").length,
+            batchCount: manifest.batches.length,
         };
     }
 
@@ -1496,8 +1522,12 @@ export class Context {
             resumeEligible: boolean;
             manifestCompatibility: "compatible" | "missing" | "incompatible" | "ignored_force";
             manifestRunState?: InitialIndexingManifest["runState"];
+            manifestIdentifier?: string;
             confirmedDocumentCount: number;
             skippedDocumentCount: number;
+            remainingDocumentCount: number;
+            unconfirmedDocumentCount: number;
+            failedBatchCount: number;
             batchCount: number;
         };
     }> {
@@ -1678,8 +1708,14 @@ export class Context {
                     mode: "incremental_changes",
                     resumeEligible: false,
                     manifestCompatibility: modeDecision.manifestCompatibility,
+                    manifestIdentifier: previousManifest
+                        ? getInitialIndexingManifestIdentifier(previousManifest.identity)
+                        : undefined,
                     confirmedDocumentCount: previousManifest?.confirmedDocumentIds.length ?? 0,
                     skippedDocumentCount: 0,
+                    remainingDocumentCount: 0,
+                    unconfirmedDocumentCount: 0,
+                    failedBatchCount: previousManifest?.batches.filter((batch) => batch.state === "failed").length ?? 0,
                     batchCount: previousManifest?.batches.length ?? 0,
                 },
             };
@@ -1723,6 +1759,7 @@ export class Context {
             initialIndexingManifest.lastCompletedSynchronizerSnapshot = FileSynchronizer.getSnapshotPathForCodebase(codebasePath);
             await this.initialIndexingManifestStore.write(initialIndexingManifest);
             this.lastInitialIndexingManifest = initialIndexingManifest;
+            const manifestSummary = this.summarizeInitialIndexingManifest(initialIndexingManifest);
             progressCallback?.({
                 phase: "No files to index",
                 current: 100,
@@ -1741,9 +1778,13 @@ export class Context {
                     resumeEligible: modeDecision.resumeEligible,
                     manifestCompatibility: modeDecision.manifestCompatibility,
                     manifestRunState: initialIndexingManifest.runState,
-                    confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
+                    manifestIdentifier: manifestSummary.manifestIdentifier,
+                    confirmedDocumentCount: manifestSummary.confirmedDocumentCount,
                     skippedDocumentCount: 0,
-                    batchCount: initialIndexingManifest.batches.length,
+                    remainingDocumentCount: manifestSummary.remainingDocumentCount,
+                    unconfirmedDocumentCount: manifestSummary.unconfirmedDocumentCount,
+                    failedBatchCount: manifestSummary.failedBatchCount,
+                    batchCount: manifestSummary.batchCount,
                 },
             };
         }
@@ -1828,6 +1869,7 @@ export class Context {
         }
         await this.initialIndexingManifestStore.write(initialIndexingManifest);
         this.lastInitialIndexingManifest = initialIndexingManifest;
+        const manifestSummary = this.summarizeInitialIndexingManifest(initialIndexingManifest);
 
         progressCallback?.({
             phase: "Indexing complete!",
@@ -1848,9 +1890,13 @@ export class Context {
                 resumeEligible: modeDecision.resumeEligible,
                 manifestCompatibility: modeDecision.manifestCompatibility,
                 manifestRunState: initialIndexingManifest.runState,
-                confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
+                manifestIdentifier: manifestSummary.manifestIdentifier,
+                confirmedDocumentCount: manifestSummary.confirmedDocumentCount,
                 skippedDocumentCount: result.skippedDocumentCount,
-                batchCount: initialIndexingManifest.batches.length,
+                remainingDocumentCount: manifestSummary.remainingDocumentCount,
+                unconfirmedDocumentCount: manifestSummary.unconfirmedDocumentCount,
+                failedBatchCount: manifestSummary.failedBatchCount,
+                batchCount: manifestSummary.batchCount,
             },
         };
     }
@@ -3117,7 +3163,7 @@ export class Context {
         );
         if (limitReachedBeforeTraversalComplete) {
             console.warn(
-                `[Context] ⚠️  Indexing completed with status=limit_reached. Indexed ${processedFiles} files and ${totalChunks} chunks before CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT}; search remains available but results may be incomplete. Raise CODE_CHUNK_LIMIT and run a force reindex to include chunks skipped by this run.`,
+                `[Context] ⚠️  Indexing completed with status=limit_reached. Indexed ${processedFiles} files and ${totalChunks} chunks before CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT}; search remains available but results may be incomplete. Raise CODE_CHUNK_LIMIT and run index_codebase again to resume chunks skipped by this run.`,
             );
         }
 

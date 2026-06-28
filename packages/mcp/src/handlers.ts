@@ -34,6 +34,22 @@ import {
 
 type ToolArgs = Record<string, unknown>;
 type StructuredContent = Record<string, unknown>;
+
+function getInitialIndexingManifestIdentifier(identity: {
+    codebasePath: string;
+    supportedExtensions: string[];
+    ignorePatterns: string[];
+} & object): string {
+    return crypto
+        .createHash('sha256')
+        .update(JSON.stringify({
+            ...identity,
+            supportedExtensions: [...identity.supportedExtensions].sort(),
+            ignorePatterns: [...identity.ignorePatterns].sort(),
+        }))
+        .digest('hex')
+        .slice(0, 32);
+}
 type CountQueryRow = Record<string, unknown>;
 type SearchResultSummary = {
     relativePath: string;
@@ -243,9 +259,13 @@ export class ToolHandlers {
         codeChunkLimit?: number;
         initialIndexing?: {
             mode: 'initial_full' | 'initial_resume' | 'incremental_changes';
+            manifestIdentifier?: string;
             manifestRunState: string;
             confirmedDocumentCount: number;
             skippedDocumentCount: number;
+            remainingDocumentCount?: number;
+            unconfirmedDocumentCount?: number;
+            failedBatchCount?: number;
             batchCount: number;
         };
     } | null> {
@@ -864,22 +884,11 @@ export class ToolHandlers {
                 };
             }
 
-            // Check if already indexed in cloud (unless force is true)
-            if (!forceReindex && cloudHasIndex) {
-                if (!hasPersistedSyncConfig) {
-                    return {
-                        content: [{
-                            type: "text",
-                            text: `Codebase '${absolutePath}' is already indexed, but its local per-codebase sync config is missing. Re-run index_codebase with force=true to restore restart-safe incremental sync.`
-                        }],
-                        isError: true
-                    };
-                }
-
+            if (!forceReindex && cloudHasIndex && !hasPersistedSyncConfig) {
                 return {
                     content: [{
                         type: "text",
-                        text: `Codebase '${absolutePath}' is already indexed. Use force=true to re-index.`
+                        text: `Codebase '${absolutePath}' is already indexed, but its local per-codebase sync config is missing. Re-run index_codebase with force=true to restore restart-safe incremental sync.`
                     }],
                     isError: true
                 };
@@ -1173,8 +1182,12 @@ export class ToolHandlers {
                     mode: 'initial_full' | 'initial_resume' | 'incremental_changes';
                     resumeEligible: boolean;
                     manifestCompatibility: 'compatible' | 'missing' | 'incompatible' | 'ignored_force';
+                    manifestIdentifier?: string;
                     confirmedDocumentCount: number;
                     skippedDocumentCount: number;
+                    remainingDocumentCount?: number;
+                    unconfirmedDocumentCount?: number;
+                    failedBatchCount?: number;
                     batchCount: number;
                 };
             }).initialIndexing;
@@ -1184,10 +1197,10 @@ export class ToolHandlers {
                     : initialIndexingStats.mode === 'incremental_changes'
                         ? 'incremental'
                         : 'full';
-                message += `\nInitial indexing mode: ${modeLabel}; manifest=${initialIndexingStats.manifestCompatibility}, resumeEligible=${initialIndexingStats.resumeEligible}; confirmed=${initialIndexingStats.confirmedDocumentCount}, skipped=${initialIndexingStats.skippedDocumentCount}, batches=${initialIndexingStats.batchCount}.`;
+                message += `\nInitial indexing mode: ${modeLabel}; manifest=${initialIndexingStats.manifestCompatibility}${initialIndexingStats.manifestIdentifier ? `/${initialIndexingStats.manifestIdentifier}` : ''}, resumeEligible=${initialIndexingStats.resumeEligible}; confirmed=${initialIndexingStats.confirmedDocumentCount}, skipped=${initialIndexingStats.skippedDocumentCount}, remaining=${initialIndexingStats.remainingDocumentCount ?? 0}, unconfirmed=${initialIndexingStats.unconfirmedDocumentCount ?? 0}, failedBatches=${initialIndexingStats.failedBatchCount ?? 0}, batches=${initialIndexingStats.batchCount}.`;
             }
             if (stats.status === 'limit_reached') {
-                message += `\n⚠️  Warning: Indexing stopped because CODE_CHUNK_LIMIT=${stats.codeChunkLimit ?? 'unknown'} was reached after ${stats.totalChunks} chunks and ${stats.indexedFiles} files. The partial index remains searchable, but results may be incomplete. Raise CODE_CHUNK_LIMIT and run force reindex to include chunks skipped by this run.`;
+                message += `\n⚠️  Warning: Indexing stopped because CODE_CHUNK_LIMIT=${stats.codeChunkLimit ?? 'unknown'} was reached after ${stats.totalChunks} chunks and ${stats.indexedFiles} files. The partial index remains searchable, but results may be incomplete. Raise CODE_CHUNK_LIMIT and run index_codebase again to resume missing chunks.`;
             }
 
             console.log(`[BACKGROUND-INDEX] ${message}`);
@@ -1765,7 +1778,7 @@ export class ToolHandlers {
                 getLastInitialIndexingManifest?: () => {
                     selectedMode?: 'initial_full' | 'initial_resume';
                     runState: string;
-                    identity: { codebasePath: string };
+                    identity: Parameters<typeof getInitialIndexingManifestIdentifier>[0];
                     confirmedDocumentIds: string[];
                     batches: Array<{ state: string; documentIds: string[] }>;
                     traversal: {
@@ -1776,7 +1789,7 @@ export class ToolHandlers {
                 getInitialIndexingManifestForCodebase?: (codebasePath: string) => Promise<{
                     selectedMode?: 'initial_full' | 'initial_resume';
                     runState: string;
-                    identity: { codebasePath: string };
+                    identity: Parameters<typeof getInitialIndexingManifestIdentifier>[0];
                     confirmedDocumentIds: string[];
                     batches: Array<{ state: string; documentIds: string[] }>;
                     traversal: {
@@ -1802,6 +1815,7 @@ export class ToolHandlers {
                     mode: initialIndexingManifest.selectedMode || (resumeEligible ? 'initial_resume' : 'initial_full'),
                     runState: initialIndexingManifest.runState,
                     resumeEligible,
+                    manifestIdentifier: getInitialIndexingManifestIdentifier(initialIndexingManifest.identity),
                     manifestCompatibility: 'compatible',
                     plannedDocumentCount: plannedDocumentIds.size,
                     confirmedDocumentCount: confirmedDocumentIds.size,
@@ -1849,7 +1863,7 @@ export class ToolHandlers {
                         }
                         statusMessage += `\n📅 Status: ${info.indexStatus}`;
                         if (info.indexStatus === 'limit_reached') {
-                            statusMessage += `\n⚠️ Results may be incomplete because indexing stopped at the configured chunk limit. Raise CODE_CHUNK_LIMIT and run force reindex to include previously skipped chunks.`;
+                            statusMessage += `\n⚠️ Results may be incomplete because indexing stopped at the configured chunk limit. Raise CODE_CHUNK_LIMIT and run index_codebase again to resume previously skipped chunks.`;
                         }
                         if (persistedSyncConfig?.retrievalMode) {
                             statusMessage += `\n🔎 Retrieval profile: ${persistedSyncConfig.retrievalProfile || 'inferred'}`;
