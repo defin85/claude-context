@@ -27,7 +27,7 @@ export class FileSynchronizer {
         oneCIndexScopeProfile?: OneCIndexScopeProfile,
     ) {
         this.rootDir = rootDir;
-        this.snapshotPath = this.getSnapshotPath(rootDir);
+        this.snapshotPath = FileSynchronizer.getSnapshotPathForCodebase(rootDir);
         this.fileHashes = new Map();
         this.merkleDAG = new MerkleDAG();
         this.ignorePatterns = ignorePatterns;
@@ -60,7 +60,7 @@ export class FileSynchronizer {
         ];
     }
 
-    private getSnapshotPath(codebasePath: string): string {
+    static getSnapshotPathForCodebase(codebasePath: string): string {
         const homeDir = os.homedir();
         const merkleDir = path.join(homeDir, '.context', 'merkle');
 
@@ -180,10 +180,13 @@ export class FileSynchronizer {
         return dag;
     }
 
-    public async initialize(preIndexResult?: PreIndexTraversalResult) {
+    public async initialize(
+        preIndexResult?: PreIndexTraversalResult,
+        options: { persistSnapshot?: boolean } = {},
+    ) {
         console.log(`Initializing file synchronizer for ${this.rootDir}`);
         if (preIndexResult) {
-            await this.initializeFromTraversal(preIndexResult);
+            await this.initializeFromTraversal(preIndexResult, options);
             console.log(`[Synchronizer] File synchronizer initialized. Loaded ${this.fileHashes.size} file hashes.`);
             return;
         }
@@ -192,9 +195,18 @@ export class FileSynchronizer {
         console.log(`[Synchronizer] File synchronizer initialized. Loaded ${this.fileHashes.size} file hashes.`);
     }
 
-    public async initializeFromTraversal(preIndexResult: PreIndexTraversalResult): Promise<void> {
+    public async initializeFromTraversal(
+        preIndexResult: PreIndexTraversalResult,
+        options: { persistSnapshot?: boolean } = {},
+    ): Promise<void> {
         this.fileHashes = this.fileHashesFromTraversal(preIndexResult);
         this.merkleDAG = this.buildMerkleDAG(this.fileHashes);
+        if (options.persistSnapshot !== false) {
+            await this.saveSnapshot();
+        }
+    }
+
+    public async persistSnapshot(): Promise<void> {
         await this.saveSnapshot();
     }
 

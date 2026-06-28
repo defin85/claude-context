@@ -236,7 +236,19 @@ export class ToolHandlers {
     private async tryRecoverIndexStats(
         codebasePath: string,
         indexStatus: 'completed' | 'limit_reached' = 'completed'
-    ): Promise<{ indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached'; codeChunkLimit?: number } | null> {
+    ): Promise<{
+        indexedFiles: number;
+        totalChunks: number;
+        status: 'completed' | 'limit_reached';
+        codeChunkLimit?: number;
+        initialIndexing?: {
+            mode: 'initial_full' | 'initial_resume';
+            manifestRunState: string;
+            confirmedDocumentCount: number;
+            skippedDocumentCount: number;
+            batchCount: number;
+        };
+    } | null> {
         const normalizedPath = normalizeCodebasePath(codebasePath);
         const indexedFiles = this.getIndexedFileCountFromMerkle(normalizedPath);
         const totalChunks = await this.getTotalChunkCountFromCollection(normalizedPath);
@@ -937,10 +949,9 @@ export class ToolHandlers {
 
             await this.runtimeStatusManager?.refresh('index-ownership-acquired');
 
-            // If force reindex and codebase is already indexed, clear cloud state only after ownership is secured.
+            // Force reindex clearing is handled inside Context.indexCodebase after manifest planning.
             if (forceReindex && cloudHasIndex) {
-                console.log(`[FORCE-REINDEX] 🔄 Clearing index for '${absolutePath}'`);
-                await this.context.clearIndex(absolutePath);
+                console.log(`[FORCE-REINDEX] 🔄 Existing index for '${absolutePath}' will be replaced by Context.indexCodebase`);
             }
 
             const configuredSessionConfig = requestedSessionConfig;
@@ -1112,27 +1123,11 @@ export class ToolHandlers {
             await this.context.getLoadedIgnorePatterns(absolutePath);
             throwIfCancelled();
 
-            // Initialize file synchronizer with proper ignore patterns (including project-specific patterns)
-            const { FileSynchronizer } = await import("@zilliz/claude-context-core");
             const ignorePatterns = this.context.getIgnorePatterns(absolutePath) || [];
             const supportedExtensions = this.context.getSupportedExtensions(absolutePath) || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
-            const synchronizer = new FileSynchronizer(
-                absolutePath,
-                ignorePatterns,
-                supportedExtensions,
-                persistedConfig.oneCIndexScopeProfile,
-            );
-            await synchronizer.initialize();
+            console.log(`[BACKGROUND-INDEX] Using supported extensions: ${supportedExtensions.join(', ')}`);
             throwIfCancelled();
-
-            // Store synchronizer in the context (let context manage collection names)
-            await this.context.getPreparedCollection(absolutePath, forceReindex);
-            const collectionName = this.context.getCollectionName(absolutePath);
-            this.context.setSynchronizerForCodebase(absolutePath, synchronizer);
-            if (contextForThisTask !== this.context) {
-                contextForThisTask.setSynchronizer(collectionName, synchronizer);
-            }
 
             console.log(`[BACKGROUND-INDEX] Starting indexing with ${splitterType} splitter for: ${absolutePath}`);
 
@@ -1173,6 +1168,22 @@ export class ToolHandlers {
             await this.runtimeStatusManager?.refresh('index-completed');
 
             let message = `Background indexing completed for '${absolutePath}' using ${splitterType.toUpperCase()} splitter.\nIndexed ${stats.indexedFiles} files, ${stats.totalChunks} chunks.`;
+            const initialIndexingStats = (stats as typeof stats & {
+                initialIndexing?: {
+                    mode: 'initial_full' | 'initial_resume';
+                    resumeEligible: boolean;
+                    manifestCompatibility: 'compatible' | 'missing';
+                    confirmedDocumentCount: number;
+                    skippedDocumentCount: number;
+                    batchCount: number;
+                };
+            }).initialIndexing;
+            if (initialIndexingStats) {
+                const modeLabel = initialIndexingStats.mode === 'initial_resume'
+                    ? 'resume'
+                    : 'full';
+                message += `\nInitial indexing mode: ${modeLabel}; manifest=${initialIndexingStats.manifestCompatibility}, resumeEligible=${initialIndexingStats.resumeEligible}; confirmed=${initialIndexingStats.confirmedDocumentCount}, skipped=${initialIndexingStats.skippedDocumentCount}, batches=${initialIndexingStats.batchCount}.`;
+            }
             if (stats.status === 'limit_reached') {
                 message += `\n⚠️  Warning: Indexing stopped because CODE_CHUNK_LIMIT=${stats.codeChunkLimit ?? 'unknown'} was reached after ${stats.totalChunks} chunks and ${stats.indexedFiles} files. The partial index remains searchable, but results may be incomplete. Raise CODE_CHUNK_LIMIT and run force reindex to include chunks skipped by this run.`;
             }
@@ -1747,6 +1758,41 @@ export class ToolHandlers {
             const accelerator = lastAccelerator?.codebasePath === absolutePath ? lastAccelerator : undefined;
             if (accelerator) {
                 structuredStatus.accelerator = accelerator;
+            }
+            const initialIndexingManifest = (this.context as typeof this.context & {
+                getLastInitialIndexingManifest?: () => {
+                    runState: string;
+                    identity: { codebasePath: string };
+                    confirmedDocumentIds: string[];
+                    batches: Array<{ state: string; documentIds: string[] }>;
+                    traversal: {
+                        selectedFileCount: number;
+                        hashedFileCount: number;
+                    };
+                } | undefined;
+            }).getLastInitialIndexingManifest?.();
+            if (initialIndexingManifest?.identity.codebasePath === absolutePath) {
+                const plannedDocumentIds = new Set(
+                    initialIndexingManifest.batches.flatMap((batch) => batch.documentIds),
+                );
+                const confirmedDocumentIds = new Set(initialIndexingManifest.confirmedDocumentIds);
+                const unconfirmedDocumentCount = [...plannedDocumentIds]
+                    .filter((documentId) => !confirmedDocumentIds.has(documentId))
+                    .length;
+                structuredStatus.initialIndexing = {
+                    runState: initialIndexingManifest.runState,
+                    resumeEligible: ['indexing', 'interrupted', 'failed', 'cancelled', 'limit_reached'].includes(initialIndexingManifest.runState),
+                    manifestCompatibility: 'compatible',
+                    plannedDocumentCount: plannedDocumentIds.size,
+                    confirmedDocumentCount: confirmedDocumentIds.size,
+                    unconfirmedDocumentCount,
+                    remainingDocumentCount: unconfirmedDocumentCount,
+                    batchCount: initialIndexingManifest.batches.length,
+                    insertedBatchCount: initialIndexingManifest.batches.filter((batch) => batch.state === 'inserted').length,
+                    failedBatchCount: initialIndexingManifest.batches.filter((batch) => batch.state === 'failed').length,
+                    selectedFileCount: initialIndexingManifest.traversal.selectedFileCount,
+                    hashedFileCount: initialIndexingManifest.traversal.hashedFileCount,
+                };
             }
             if (persistedSyncConfig?.retrievalMode) {
                 structuredStatus.retrievalProfile = persistedSyncConfig.retrievalProfile;

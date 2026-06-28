@@ -154,11 +154,34 @@ class TestVectorDatabase implements VectorDatabase {
     }
 }
 
+class FailingInsertVectorDatabase extends TestVectorDatabase {
+    async insert(): Promise<void> {
+        throw new Error('simulated insert failure');
+    }
+}
+
+class FailOnNthInsertVectorDatabase extends TestVectorDatabase {
+    insertCalls = 0;
+
+    constructor(public failOnNthInsert: number) {
+        super();
+    }
+
+    async insert(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        this.insertCalls++;
+        if (this.insertCalls === this.failOnNthInsert) {
+            throw new Error(`simulated insert failure ${this.insertCalls}`);
+        }
+        await super.insert(collectionName, documents);
+    }
+}
+
 function createContext(vectorDatabase = new TestVectorDatabase()): Context {
     return new Context({
         embedding: new TestEmbedding(),
         vectorDatabase,
         codeSplitter: new TestSplitter(),
+        initialIndexingManifestRoot: path.join(os.tmpdir(), `claude-context-core-manifests-${process.pid}`),
     });
 }
 
@@ -327,10 +350,14 @@ async function baselineTraverseFiles(
 describe('Context per-codebase options and ignore handling', () => {
     const originalHybridMode = process.env.HYBRID_MODE;
     const originalCodeChunkLimit = process.env.CODE_CHUNK_LIMIT;
+    const originalIndexAcceleratorMode = process.env.INDEX_ACCELERATOR_MODE;
+    const originalIndexEmbeddingBatchSize = process.env.INDEX_EMBEDDING_BATCH_SIZE;
 
     beforeEach(() => {
         process.env.HYBRID_MODE = 'false';
         delete process.env.CODE_CHUNK_LIMIT;
+        process.env.INDEX_ACCELERATOR_MODE = 'off';
+        delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
     });
 
     afterEach(() => {
@@ -344,6 +371,18 @@ describe('Context per-codebase options and ignore handling', () => {
             delete process.env.CODE_CHUNK_LIMIT;
         } else {
             process.env.CODE_CHUNK_LIMIT = originalCodeChunkLimit;
+        }
+
+        if (originalIndexAcceleratorMode === undefined) {
+            delete process.env.INDEX_ACCELERATOR_MODE;
+        } else {
+            process.env.INDEX_ACCELERATOR_MODE = originalIndexAcceleratorMode;
+        }
+
+        if (originalIndexEmbeddingBatchSize === undefined) {
+            delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
+        } else {
+            process.env.INDEX_EMBEDDING_BATCH_SIZE = originalIndexEmbeddingBatchSize;
         }
     });
 
@@ -442,6 +481,60 @@ describe('Context per-codebase options and ignore handling', () => {
         expect(
             vectorDatabase.documents.get(context.getCollectionName(project)) || [],
         ).toHaveLength(2);
+        expect(context.getLastInitialIndexingManifest()).toEqual(expect.objectContaining({
+            runState: 'limit_reached',
+            confirmedDocumentIds: expect.any(Array),
+        }));
+        expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test('initial indexing does not persist synchronizer snapshot before vector inserts are confirmed', async () => {
+        const vectorDatabase = new FailingInsertVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'index.ts'), 'const value = 1;');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated insert failure');
+
+        await expect(fs.access(FileSynchronizer.getSnapshotPathForCodebase(project)))
+            .rejects.toMatchObject({ code: 'ENOENT' });
+        expect(context.getLastInitialIndexingManifest()).toEqual(expect.objectContaining({
+            runState: 'failed',
+            confirmedDocumentIds: [],
+            batches: [
+                expect.objectContaining({
+                    state: 'failed',
+                    documentIds: expect.any(Array),
+                }),
+            ],
+        }));
+    });
+
+    test('resume skips confirmed documents and reprocesses only unconfirmed batches', async () => {
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new FailOnNthInsertVectorDatabase(2);
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated insert failure 2');
+        expect(vectorDatabase.documents.get(context.getCollectionName(project))).toHaveLength(1);
+        expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(1);
+
+        vectorDatabase.failOnNthInsert = Number.POSITIVE_INFINITY;
+        await context.indexCodebase(project);
+
+        expect(vectorDatabase.documents.get(context.getCollectionName(project))).toHaveLength(2);
+        expect(context.getLastInitialIndexingManifest()).toEqual(expect.objectContaining({
+            runState: 'completed',
+            confirmedDocumentIds: expect.any(Array),
+        }));
+        expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
     });
 
     test('CODE_CHUNK_LIMIT parser accepts valid values and falls back for default or invalid values', () => {

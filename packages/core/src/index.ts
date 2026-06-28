@@ -8,6 +8,8 @@ export * from './code-symbol-retrieval';
 export * from './rlm-bsl-enrichment';
 export * from './retrieval-profile';
 export * from './indexing-accelerator';
+export * from './indexing-manifest';
+export * from './indexing-mode-planner';
 export * from './sync/synchronizer';
 export * from './sync/preindex-traversal';
 export * from './sync/one-c-scope';

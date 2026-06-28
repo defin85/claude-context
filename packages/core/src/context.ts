@@ -30,6 +30,7 @@ import {
 } from "./config-defaults";
 import { envManager } from "./utils/env-manager";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import { FileSynchronizer } from "./sync/synchronizer";
@@ -67,6 +68,10 @@ import {
     RlmBslEnrichmentConfig,
     RlmBslCompatibilityProof,
 } from "./rlm-bsl-enrichment";
+import {
+    InitialIndexingManifest,
+    InitialIndexingManifestStore,
+} from "./indexing-manifest";
 
 const DEFAULT_CODE_CHUNK_LIMIT = 450000;
 
@@ -123,6 +128,11 @@ function isFatalEmbeddingBatchError(error: unknown): boolean {
 function isPayloadSizeEmbeddingError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     return /Cannot create a string longer than|payload too large|request entity too large|body too large|content length|413/i.test(message);
+}
+
+function isIndexingBatchStageError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /^Indexing batch \d+ failed during (embedding|insert):/.test(message);
 }
 
 export function parseCodeChunkLimit(rawLimit?: string): number {
@@ -184,6 +194,7 @@ export interface ContextConfig {
     codebaseIndexEnricher?: CodebaseIndexEnricher;
     rlmBslEnrichment?: RlmBslEnrichmentConfig;
     retrievalProfile?: RetrievalProfile;
+    initialIndexingManifestRoot?: string;
 }
 
 export interface CodebaseSessionConfig {
@@ -210,6 +221,17 @@ interface ProcessFileListOptions {
         snapshot: IndexingAcceleratorSnapshot,
         state: { productionComplete: boolean },
     ) => void;
+    manifestRecorder?: InitialIndexingManifestRecorder;
+    skipDocumentIds?: Set<string>;
+    startingBatchSequence?: number;
+}
+
+interface InitialIndexingManifestRecorder {
+    onBatchPlanned(batchId: string, batch: Array<{ chunk: CodeChunk; codebasePath: string }>): Promise<void>;
+    onBatchEmbedding(batchId: string): Promise<void>;
+    onBatchInserting(batchId: string): Promise<void>;
+    onBatchInserted(batchId: string, documentIds: string[]): Promise<void>;
+    onBatchFailed(batchId: string, error: unknown): Promise<void>;
 }
 
 interface CodebaseSessionState {
@@ -280,6 +302,8 @@ export class Context {
     private codeSymbolProviders: CodeSymbolProvider[];
     private explicitCodebaseIndexEnricher?: CodebaseIndexEnricher;
     private rlmBslEnrichmentRuntimeStatus = new Map<string, Record<string, unknown>>();
+    private initialIndexingManifestStore: InitialIndexingManifestStore;
+    private lastInitialIndexingManifest?: InitialIndexingManifest;
 
     constructor(config: ContextConfig = {}) {
         // Initialize services
@@ -331,6 +355,10 @@ export class Context {
         this.defaultIgnorePatterns = [...new Set(allIgnorePatterns)];
         this.collectionNameOverride = config.collectionNameOverride;
         this.defaultRetrievalProfile = config.retrievalProfile;
+        this.initialIndexingManifestStore = new InitialIndexingManifestStore(
+            config.initialIndexingManifestRoot ||
+            path.join(os.homedir(), ".context", "initial-indexing-manifests"),
+        );
         this.acceleratorResourceSnapshotProvider = config.acceleratorResourceSnapshotProvider;
         this.codeSymbolProviders = config.codeSymbolProviders || this.createCodeSymbolProvidersFromEnv();
         this.explicitCodebaseIndexEnricher = config.codebaseIndexEnricher;
@@ -367,6 +395,27 @@ export class Context {
         return snapshot;
     }
 
+    getLastInitialIndexingManifest(): InitialIndexingManifest | undefined {
+        if (!this.lastInitialIndexingManifest) {
+            return undefined;
+        }
+        return {
+            ...this.lastInitialIndexingManifest,
+            identity: {
+                ...this.lastInitialIndexingManifest.identity,
+                supportedExtensions: [...this.lastInitialIndexingManifest.identity.supportedExtensions],
+                ignorePatterns: [...this.lastInitialIndexingManifest.identity.ignorePatterns],
+            },
+            traversal: { ...this.lastInitialIndexingManifest.traversal },
+            batches: this.lastInitialIndexingManifest.batches.map((batch) => ({
+                ...batch,
+                filePaths: [...batch.filePaths],
+                documentIds: [...batch.documentIds],
+            })),
+            confirmedDocumentIds: [...this.lastInitialIndexingManifest.confirmedDocumentIds],
+        };
+    }
+
     private getCurrentAcceleratorWorkerSnapshot(): IndexingAcceleratorWorkerSnapshot[] | undefined {
         const candidate = this.embedding as Embedding & Partial<WorkerSnapshotProvider>;
         if (typeof candidate.getWorkerSnapshot !== "function") {
@@ -374,6 +423,127 @@ export class Context {
         }
 
         return candidate.getWorkerSnapshot();
+    }
+
+    private buildInitialIndexingManifest(
+        codebasePath: string,
+        session: CodebaseSessionState,
+        preIndexTraversal: PreIndexTraversalResult,
+    ): InitialIndexingManifest {
+        const resolvedRetrieval = this.getResolvedRetrievalProfile(codebasePath);
+        const vectorWriteCapabilities = this.vectorDatabase.getWriteCapabilities?.();
+        const identity = {
+            codebasePath,
+            collectionName: this.getCollectionName(codebasePath),
+            vectorBackend: vectorWriteCapabilities?.backend || this.vectorDatabase.constructor.name || "unknown",
+            retrievalMode: resolvedRetrieval.retrievalMode,
+            vectorSchemaFingerprint: `retrieval-schema:${resolvedRetrieval.retrievalSchemaVersion}`,
+            embeddingProfileFingerprint: `${this.embedding.getProvider()}:${resolvedRetrieval.retrievalProfile}:${resolvedRetrieval.retrievalMode}`,
+            splitterFingerprint: this.codeSplitter.constructor.name,
+            fileSelectionFingerprint: this.createPreIndexTraversalFingerprint(preIndexTraversal),
+            supportedExtensions: session.effectiveExtensions,
+            ignorePatterns: session.effectiveIgnorePatterns,
+            ...(session.oneCIndexScopeProfile ? { oneCIndexScopeProfile: session.oneCIndexScopeProfile } : {}),
+        };
+        const manifest = this.initialIndexingManifestStore.create(identity);
+        manifest.runState = "indexing";
+        manifest.traversal = {
+            selectedFileCount: preIndexTraversal.selectedFileCount,
+            hashedFileCount: preIndexTraversal.hashedFileCount,
+            selectedFileFingerprint: identity.fileSelectionFingerprint,
+        };
+        return manifest;
+    }
+
+    private createPreIndexTraversalFingerprint(preIndexTraversal: PreIndexTraversalResult): string {
+        if (preIndexTraversal.diagnostics?.selectedPathHashFingerprint) {
+            return preIndexTraversal.diagnostics.selectedPathHashFingerprint;
+        }
+        const hash = crypto.createHash("sha256");
+        for (const file of preIndexTraversal.files) {
+            hash.update(file.relativePath);
+            hash.update("\0");
+            hash.update(file.hash || "");
+            hash.update("\0");
+        }
+        return hash.digest("hex");
+    }
+
+    private createInitialIndexingManifestRecorder(
+        manifest: InitialIndexingManifest,
+    ): InitialIndexingManifestRecorder {
+        const persist = async () => {
+            await this.initialIndexingManifestStore.write(manifest);
+            this.lastInitialIndexingManifest = manifest;
+        };
+        const findBatch = (batchId: string) => manifest.batches.find((batch) => batch.id === batchId);
+
+        return {
+            onBatchPlanned: async (batchId, batch) => {
+                const documentIds = batch
+                    .map((item) => item.chunk.metadata.documentId)
+                    .filter((documentId): documentId is string => typeof documentId === "string");
+                const filePaths = [
+                    ...new Set(
+                        batch
+                            .map((item) => item.chunk.metadata.filePath)
+                            .filter((filePath): filePath is string => typeof filePath === "string"),
+                    ),
+                ];
+                manifest.batches.push({
+                    id: batchId,
+                    state: "planned",
+                    filePaths,
+                    documentIds,
+                    updatedAt: new Date().toISOString(),
+                });
+                await persist();
+            },
+            onBatchEmbedding: async (batchId) => {
+                const batch = findBatch(batchId);
+                if (!batch) {
+                    return;
+                }
+                batch.state = "embedding";
+                batch.updatedAt = new Date().toISOString();
+                await persist();
+            },
+            onBatchInserting: async (batchId) => {
+                const batch = findBatch(batchId);
+                if (!batch) {
+                    return;
+                }
+                batch.state = "inserting";
+                batch.updatedAt = new Date().toISOString();
+                await persist();
+            },
+            onBatchInserted: async (batchId, documentIds) => {
+                const batch = findBatch(batchId);
+                if (!batch) {
+                    return;
+                }
+                batch.state = "inserted";
+                batch.documentIds = documentIds;
+                batch.updatedAt = new Date().toISOString();
+                const confirmed = new Set(manifest.confirmedDocumentIds);
+                for (const documentId of documentIds) {
+                    confirmed.add(documentId);
+                }
+                manifest.confirmedDocumentIds = [...confirmed].sort();
+                await persist();
+            },
+            onBatchFailed: async (batchId, error) => {
+                const batch = findBatch(batchId);
+                if (!batch) {
+                    return;
+                }
+                batch.state = "failed";
+                batch.error = error instanceof Error ? error.message : String(error);
+                batch.updatedAt = new Date().toISOString();
+                manifest.runState = "failed";
+                await persist();
+            },
+        };
     }
 
     private updateAcceleratorWorkerSnapshot(acceleratorRuntime: IndexingAcceleratorRuntime): void {
@@ -1242,6 +1412,15 @@ export class Context {
         codeChunkLimit: number;
         oneCIndexScopeProfile?: OneCIndexScopeProfile;
         oneCIndexScope?: OneCIndexScopeSummary;
+        initialIndexing?: {
+            mode: "initial_full" | "initial_resume";
+            resumeEligible: boolean;
+            manifestCompatibility: "compatible" | "missing";
+            manifestRunState: InitialIndexingManifest["runState"];
+            confirmedDocumentCount: number;
+            skippedDocumentCount: number;
+            batchCount: number;
+        };
     }> {
         codebasePath = normalizeCodebasePath(codebasePath);
         const session = this.getOrCreateCodebaseSession(codebasePath);
@@ -1258,22 +1437,10 @@ export class Context {
         await this.loadIgnorePatterns(codebasePath);
         throwIfOperationAborted(abortSignal);
 
-        // 2. Check and prepare vector collection
-        progressCallback?.({
-            phase: "Preparing collection...",
-            current: 0,
-            total: 100,
-            percentage: 0,
-        });
-        console.log(
-            `Debug2: Preparing vector collection for codebase${forceReindex ? " (FORCE REINDEX)" : ""}`,
-        );
         const enrichmentSession = await this.getCodebaseIndexEnricherForSession(session).prepare(codebasePath);
         session.enrichmentCompatibility = enrichmentSession.getCompatibilityProof?.();
         session.enrichmentOutcome = enrichmentSession.status;
         session.enrichmentDiagnostics = enrichmentSession.diagnostics;
-        await this.prepareCollection(codebasePath, forceReindex);
-        await this.recordRlmBslEnrichmentRuntimeStatus(codebasePath, session, "full");
         throwIfOperationAborted(abortSignal);
 
         this.resetAcceleratorSnapshotForPreIndexStart(codebasePath, {
@@ -1341,6 +1508,54 @@ export class Context {
             allowAcceleration: true,
             isBackgroundSync: false,
         });
+        let initialIndexingManifest = this.buildInitialIndexingManifest(
+            codebasePath,
+            session,
+            preIndexTraversal,
+        );
+        const previousManifest = await this.initialIndexingManifestStore.read(initialIndexingManifest.identity);
+        const resumableStates: Array<InitialIndexingManifest["runState"]> = [
+            "interrupted",
+            "failed",
+            "cancelled",
+            "indexing",
+            "limit_reached",
+        ];
+        if (!forceReindex && previousManifest && resumableStates.includes(previousManifest.runState)) {
+            initialIndexingManifest = previousManifest;
+            initialIndexingManifest.runState = "indexing";
+            initialIndexingManifest.traversal = {
+                selectedFileCount: preIndexTraversal.selectedFileCount,
+                hashedFileCount: preIndexTraversal.hashedFileCount,
+                selectedFileFingerprint: initialIndexingManifest.identity.fileSelectionFingerprint,
+            };
+        } else if (forceReindex && previousManifest) {
+            previousManifest.runState = "superseded";
+            await this.initialIndexingManifestStore.write(previousManifest);
+        }
+        const skipDocumentIds = new Set(initialIndexingManifest.confirmedDocumentIds);
+        const initialIndexingMode = skipDocumentIds.size > 0 ? "initial_resume" : "initial_full";
+        const manifestCompatibility = previousManifest ? "compatible" : "missing";
+        const startingBatchSequence = initialIndexingManifest.batches.reduce((max, batch) => {
+            const parsed = Number.parseInt(batch.id, 10);
+            return Number.isInteger(parsed) ? Math.max(max, parsed) : max;
+        }, 0);
+        await this.initialIndexingManifestStore.write(initialIndexingManifest);
+        this.lastInitialIndexingManifest = initialIndexingManifest;
+        const manifestRecorder = this.createInitialIndexingManifestRecorder(initialIndexingManifest);
+
+        progressCallback?.({
+            phase: "Preparing collection...",
+            current: 9,
+            total: 100,
+            percentage: 9,
+        });
+        console.log(
+            `Debug2: Preparing vector collection for codebase${forceReindex ? " (FORCE REINDEX)" : ""}`,
+        );
+        await this.prepareCollection(codebasePath, forceReindex);
+        await this.recordRlmBslEnrichmentRuntimeStatus(codebasePath, session, "full");
+        throwIfOperationAborted(abortSignal);
 
         const synchronizer = new FileSynchronizer(
             codebasePath,
@@ -1348,12 +1563,17 @@ export class Context {
             session.effectiveExtensions,
             session.oneCIndexScopeProfile,
         );
-        await synchronizer.initialize(preIndexTraversal);
+        await synchronizer.initialize(preIndexTraversal, { persistSnapshot: false });
         session.synchronizer = synchronizer;
         this.synchronizers.set(this.getCollectionName(codebasePath), synchronizer);
 
         if (codeFiles.length === 0) {
             const codeChunkLimit = getCodeChunkLimit();
+            initialIndexingManifest.runState = "completed";
+            initialIndexingManifest.lastCompletedSynchronizerSnapshot = FileSynchronizer.getSnapshotPathForCodebase(codebasePath);
+            await this.initialIndexingManifestStore.write(initialIndexingManifest);
+            this.lastInitialIndexingManifest = initialIndexingManifest;
+            await synchronizer.persistSnapshot();
             progressCallback?.({
                 phase: "No files to index",
                 current: 100,
@@ -1367,6 +1587,15 @@ export class Context {
                 codeChunkLimit,
                 oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
                 oneCIndexScope: preIndexTraversal.oneCIndexScope,
+                initialIndexing: {
+                    mode: initialIndexingMode,
+                    resumeEligible: initialIndexingMode === "initial_resume",
+                    manifestCompatibility,
+                    manifestRunState: initialIndexingManifest.runState,
+                    confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
+                    skippedDocumentCount: 0,
+                    batchCount: initialIndexingManifest.batches.length,
+                },
             };
         }
 
@@ -1376,60 +1605,80 @@ export class Context {
         const indexingEndPercentage = 90;
         const indexingRange = indexingEndPercentage - indexingStartPercentage;
 
-        const result = await this.processFileList(
-            codeFiles,
-            codebasePath,
-            (filePath, fileIndex, totalFiles) => {
-                // Calculate progress percentage
-                const progressPercentage =
-                    indexingStartPercentage +
-                    (fileIndex / totalFiles) * indexingRange;
+        let result: Awaited<ReturnType<Context["processFileList"]>>;
+        try {
+            result = await this.processFileList(
+                codeFiles,
+                codebasePath,
+                (filePath, fileIndex, totalFiles) => {
+                    // Calculate progress percentage
+                    const progressPercentage =
+                        indexingStartPercentage +
+                        (fileIndex / totalFiles) * indexingRange;
 
-                console.log(
-                    `[Context] 📊 Processed ${fileIndex}/${totalFiles} files`,
-                );
-                progressCallback?.({
-                    phase: `Processing files (${fileIndex}/${totalFiles})...`,
-                    current: fileIndex,
-                    total: totalFiles,
-                    percentage: Math.round(progressPercentage),
-                });
-            },
-            {
-                abortSignal,
-                allowAcceleration: forceReindex || codeFiles.length > 0,
-                isBackgroundSync: false,
-                enrichmentSession,
-                preIndexTraversal,
-                onBatchProgress: (snapshot, state) => {
-                    if (snapshot.submittedBatches <= 0) {
-                        return;
-                    }
-                    if (!state.productionComplete) {
-                        return;
-                    }
-                    const completed = Math.min(snapshot.completedBatches, snapshot.submittedBatches);
-                    const drainPercentage = 90 + Math.floor((completed / snapshot.submittedBatches) * 9);
+                    console.log(
+                        `[Context] 📊 Processed ${fileIndex}/${totalFiles} files`,
+                    );
                     progressCallback?.({
-                        phase:
-                            `Processing embedding batches ` +
-                            `(${completed}/${snapshot.submittedBatches}, ` +
-                            `${snapshot.queuedBatches ?? 0} queued, ` +
-                            `${snapshot.runningEmbeddingBatches ?? snapshot.inFlightEmbeddingBatches} embedding, ` +
-                            `${snapshot.queuedInsertBatches ?? 0} queued insert, ` +
-                            `${snapshot.runningInsertBatches ?? snapshot.inFlightInsertBatches} running insert, ` +
-                            `${snapshot.backpressureWaitMs ?? 0}ms backpressure)...`,
-                        current: completed,
-                        total: snapshot.submittedBatches,
-                        percentage: Math.min(99, drainPercentage),
+                        phase: `Processing files (${fileIndex}/${totalFiles})...`,
+                        current: fileIndex,
+                        total: totalFiles,
+                        percentage: Math.round(progressPercentage),
                     });
                 },
-            },
-        );
+                {
+                    abortSignal,
+                    allowAcceleration: forceReindex || codeFiles.length > 0,
+                    isBackgroundSync: false,
+                    enrichmentSession,
+                    preIndexTraversal,
+                    manifestRecorder,
+                    skipDocumentIds,
+                    startingBatchSequence,
+                    onBatchProgress: (snapshot, state) => {
+                        if (snapshot.submittedBatches <= 0) {
+                            return;
+                        }
+                        if (!state.productionComplete) {
+                            return;
+                        }
+                        const completed = Math.min(snapshot.completedBatches, snapshot.submittedBatches);
+                        const drainPercentage = 90 + Math.floor((completed / snapshot.submittedBatches) * 9);
+                        progressCallback?.({
+                            phase:
+                                `Processing embedding batches ` +
+                                `(${completed}/${snapshot.submittedBatches}, ` +
+                                `${snapshot.queuedBatches ?? 0} queued, ` +
+                                `${snapshot.runningEmbeddingBatches ?? snapshot.inFlightEmbeddingBatches} embedding, ` +
+                                `${snapshot.queuedInsertBatches ?? 0} queued insert, ` +
+                                `${snapshot.runningInsertBatches ?? snapshot.inFlightInsertBatches} running insert, ` +
+                                `${snapshot.backpressureWaitMs ?? 0}ms backpressure)...`,
+                            current: completed,
+                            total: snapshot.submittedBatches,
+                            percentage: Math.min(99, drainPercentage),
+                        });
+                    },
+                },
+            );
+        } catch (error) {
+            initialIndexingManifest.runState = "failed";
+            await this.initialIndexingManifestStore.write(initialIndexingManifest);
+            this.lastInitialIndexingManifest = initialIndexingManifest;
+            throw error;
+        }
 
         console.log(
             `[Context] ✅ Codebase indexing completed! Processed ${result.processedFiles} files in total, generated ${result.totalChunks} code chunks`,
         );
+        if (result.status === "completed") {
+            await synchronizer.persistSnapshot();
+            initialIndexingManifest.runState = "completed";
+            initialIndexingManifest.lastCompletedSynchronizerSnapshot = FileSynchronizer.getSnapshotPathForCodebase(codebasePath);
+        } else {
+            initialIndexingManifest.runState = "limit_reached";
+        }
+        await this.initialIndexingManifestStore.write(initialIndexingManifest);
+        this.lastInitialIndexingManifest = initialIndexingManifest;
 
         progressCallback?.({
             phase: "Indexing complete!",
@@ -1445,6 +1694,15 @@ export class Context {
             codeChunkLimit: result.codeChunkLimit,
             oneCIndexScopeProfile: preIndexTraversal.oneCIndexScope.profile,
             oneCIndexScope: preIndexTraversal.oneCIndexScope,
+            initialIndexing: {
+                mode: initialIndexingMode,
+                resumeEligible: initialIndexingMode === "initial_resume",
+                manifestCompatibility,
+                manifestRunState: initialIndexingManifest.runState,
+                confirmedDocumentCount: initialIndexingManifest.confirmedDocumentIds.length,
+                skippedDocumentCount: result.skippedDocumentCount,
+                batchCount: initialIndexingManifest.batches.length,
+            },
         };
     }
 
@@ -2248,6 +2506,7 @@ export class Context {
         totalChunks: number;
         status: "completed" | "limit_reached";
         codeChunkLimit: number;
+        skippedDocumentCount: number;
     }> {
         const abortSignal = options.abortSignal;
         const enrichmentSession = options.enrichmentSession;
@@ -2326,8 +2585,9 @@ export class Context {
         let chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }> = [];
         let processedFiles = 0;
         let totalChunks = 0;
+        let skippedDocumentCount = 0;
         let limitReached = false;
-        let batchSequence = 0;
+        let batchSequence = options.startingBatchSequence ?? 0;
         let chunkSequence = 0;
         let productionComplete = false;
         let pendingPayloadSplitReason: IndexingBatchMetadata['payloadSplitReason'];
@@ -2407,19 +2667,35 @@ export class Context {
             batchMetadata: IndexingBatchMetadata,
             finalBatch: boolean,
         ): Promise<void> => {
+            const manifestBatchId = String(batchMetadata.id);
+            const plannedDocumentIds = batch
+                .map((item) => item.chunk.metadata.documentId)
+                .filter((documentId): documentId is string => typeof documentId === "string");
+            await options.manifestRecorder?.onBatchPlanned(manifestBatchId, batch);
             if (scheduler) {
                 let handle;
                 try {
                     handle = await scheduler.submit({
                         metadata: batchMetadata,
-                        runEmbedding: () => this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata),
-                        runInsert: (preparedInsert) => this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize),
+                        runEmbedding: async () => {
+                            await options.manifestRecorder?.onBatchEmbedding(manifestBatchId);
+                            return this.prepareChunkBatchInsert(batch, acceleratorRuntime, batchMetadata);
+                        },
+                        runInsert: async (preparedInsert) => {
+                            await options.manifestRecorder?.onBatchInserting(manifestBatchId);
+                            await this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize);
+                            await options.manifestRecorder?.onBatchInserted(
+                                manifestBatchId,
+                                preparedInsert.documents.map((document) => document.id),
+                            );
+                        },
                     });
                 } catch (error) {
+                    await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
                     recordAcceleratedBatchFailure(error);
                     throw error;
                 }
-                const completion = handle.completion.catch((error) => {
+                const completion = handle.completion.catch(async (error) => {
                     const searchType = isHybrid === true ? "hybrid" : "regular";
                     console.error(
                         `[Context] ❌ Failed to process ${finalBatch ? "final " : ""}chunk batch ${batchMetadata.id} for ${searchType}:`,
@@ -2429,6 +2705,7 @@ export class Context {
                         console.error("[Context] Stack trace:", error.stack);
                     }
                     batchErrors.push(error);
+                    await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
                     recordAcceleratedBatchFailure(error);
                 }).finally(() => {
                     publishBatchProgress();
@@ -2438,7 +2715,12 @@ export class Context {
                 return;
             }
 
-            const submittedBatch = this.processChunkBuffer(batch, acceleratorRuntime, batchMetadata, insertBatchSize).catch((error) => {
+            const submittedBatch = (async () => {
+                await options.manifestRecorder?.onBatchEmbedding(manifestBatchId);
+                await options.manifestRecorder?.onBatchInserting(manifestBatchId);
+                await this.processChunkBuffer(batch, acceleratorRuntime, batchMetadata, insertBatchSize);
+                await options.manifestRecorder?.onBatchInserted(manifestBatchId, plannedDocumentIds);
+            })().catch(async (error) => {
                 const searchType = isHybrid === true ? "hybrid" : "regular";
                 console.error(
                     `[Context] ❌ Failed to process ${finalBatch ? "final " : ""}chunk batch ${batchMetadata.id} for ${searchType}:`,
@@ -2447,6 +2729,7 @@ export class Context {
                 if (error instanceof Error) {
                     console.error("[Context] Stack trace:", error.stack);
                 }
+                await options.manifestRecorder?.onBatchFailed(manifestBatchId, error);
                 throw error;
             }).finally(() => {
                 publishBatchProgress();
@@ -2562,6 +2845,13 @@ export class Context {
                             documentIdOccurrences,
                         );
                         const enrichedChunk = this.applyCodebaseEnrichment(indexedChunk, codebasePath, enrichmentSession);
+                        const documentId = enrichedChunk.metadata.documentId;
+                        if (typeof documentId === "string" && options.skipDocumentIds?.has(documentId)) {
+                            chunkSequence++;
+                            totalChunks++;
+                            skippedDocumentCount++;
+                            continue;
+                        }
                         const payloadExceedReason = getPayloadLimitExceedReason(chunkBuffer, enrichedChunk);
                         if (chunkBuffer.length > 0 && payloadExceedReason) {
                             throwIfOperationAborted(abortSignal);
@@ -2609,6 +2899,9 @@ export class Context {
                         throw error;
                     }
                     if (isFatalEmbeddingBatchError(error)) {
+                        throw error;
+                    }
+                    if (isIndexingBatchStageError(error)) {
                         throw error;
                     }
                     if (acceleratedBatchFailure !== undefined) {
@@ -2668,6 +2961,7 @@ export class Context {
             totalChunks,
             status: limitReached ? "limit_reached" : "completed",
             codeChunkLimit: CODE_CHUNK_LIMIT,
+            skippedDocumentCount,
         };
     }
 
