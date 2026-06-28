@@ -19,7 +19,6 @@ import {
 import { SemanticSearchResult } from "./types";
 import {
     CodeSymbolProvider,
-    RlmToolsBslSubprocessProvider,
     collectCodeSymbolCandidates,
     fuseCodeSearchResults,
     RankingProfile,
@@ -460,7 +459,7 @@ export class Context {
             vectorBackend: vectorWriteCapabilities?.backend || this.vectorDatabase.constructor.name || "unknown",
             retrievalMode: resolvedRetrieval.retrievalMode,
             vectorSchemaFingerprint: `retrieval-schema:${resolvedRetrieval.retrievalSchemaVersion}`,
-            embeddingProfileFingerprint: `${this.embedding.getProvider()}:${resolvedRetrieval.retrievalProfile}:${resolvedRetrieval.retrievalMode}`,
+            embeddingProfileFingerprint: this.getEmbeddingProfileFingerprint(resolvedRetrieval),
             splitterFingerprint: this.codeSplitter.constructor.name,
             fileSelectionFingerprint: this.createPreIndexTraversalFingerprint(preIndexTraversal),
             supportedExtensions: session.effectiveExtensions,
@@ -484,6 +483,29 @@ export class Context {
         } catch {
             return false;
         }
+    }
+
+    private getEmbeddingProfileFingerprint(resolvedRetrieval: ResolvedRetrievalProfile): string {
+        const embedding = this.embedding as Embedding & {
+            config?: { model?: string };
+            model?: string;
+            getModel?: () => string;
+            getMode?: () => string;
+        };
+        const model = embedding.getModel?.() || embedding.config?.model || embedding.model || "unknown";
+        const mode = embedding.getMode?.();
+        return [
+            this.embedding.getProvider(),
+            model,
+            mode,
+            resolvedRetrieval.retrievalProfile,
+            resolvedRetrieval.retrievalMode,
+        ].filter((part): part is string => typeof part === "string" && part.length > 0).join(":");
+    }
+
+    private async getCollectionRowCount(collectionName: string): Promise<number | undefined> {
+        const rowCount = await this.vectorDatabase.getCollectionRowCount?.(collectionName);
+        return typeof rowCount === "number" && rowCount >= 0 ? rowCount : undefined;
     }
 
     private getInitialIndexingWriteSafety(collectionName: string): {
@@ -1577,18 +1599,32 @@ export class Context {
             collectionName,
         );
         const collectionExists = !forceReindex && await this.vectorDatabase.hasCollection(collectionName);
+        const hasSynchronizerSnapshot = collectionExists
+            ? await this.hasSynchronizerSnapshot(codebasePath)
+            : false;
+        const legacyCollectionRowCount = collectionExists && !collectionManifest
+            ? await this.getCollectionRowCount(collectionName)
+            : undefined;
+        const legacyPartialWithoutManifest = collectionExists &&
+            !collectionManifest &&
+            hasSynchronizerSnapshot &&
+            legacyCollectionRowCount !== undefined &&
+            legacyCollectionRowCount < preIndexTraversal.selectedFileCount;
         const collectionManifestIncompatibility = collectionManifest
             ? getInitialIndexingIdentityIncompatibility(initialIndexingManifest.identity, collectionManifest.identity)
             : undefined;
         const completedIndex = collectionExists && (
+            legacyPartialWithoutManifest ||
             collectionManifestIncompatibility ||
             (!previousManifest && collectionManifest && collectionManifest.runState !== "completed") ||
             (!previousManifest || previousManifest.runState === "completed")
         )
             ? {
-                compatible: !collectionManifestIncompatibility && (!collectionManifest || collectionManifest.runState === "completed"),
-                hasSynchronizerSnapshot: await this.hasSynchronizerSnapshot(codebasePath),
-                reason: collectionManifestIncompatibility
+                compatible: !legacyPartialWithoutManifest && !collectionManifestIncompatibility && (!collectionManifest || collectionManifest.runState === "completed"),
+                hasSynchronizerSnapshot,
+                reason: legacyPartialWithoutManifest
+                    ? `legacy partial index has ${legacyCollectionRowCount} vector rows for ${preIndexTraversal.selectedFileCount} selected files and no initial-indexing manifest`
+                    : collectionManifestIncompatibility
                     || (collectionManifest && collectionManifest.runState !== "completed"
                         ? `initial-indexing manifest state '${collectionManifest.runState}' is not completed`
                         : "completed index is missing synchronizer snapshot"),
@@ -2700,6 +2736,7 @@ export class Context {
         let totalChunks = 0;
         let skippedDocumentCount = 0;
         let limitReached = false;
+        let limitReachedBeforeTraversalComplete = false;
         let batchSequence = options.startingBatchSequence ?? 0;
         let chunkSequence = 0;
         let productionComplete = false;
@@ -2963,7 +3000,7 @@ export class Context {
                     }
 
                     // Add chunks to buffer
-                    for (const chunk of chunks) {
+                    for (const [chunkOffset, chunk] of chunks.entries()) {
                         const indexedChunk = this.prepareChunkForIndex(
                             chunk,
                             filePath,
@@ -3011,6 +3048,7 @@ export class Context {
                                 `[Context] ⚠️  CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT} reached after ${totalChunks} chunks and ${processedFiles + 1} processed files. Stopping indexing with a partial searchable index.`,
                             );
                             limitReached = true;
+                            limitReachedBeforeTraversalComplete = i < filePaths.length - 1 || chunkOffset < chunks.length - 1;
                             break; // Exit the inner loop (over chunks)
                         }
                     }
@@ -3070,14 +3108,14 @@ export class Context {
         if (batchErrors.length > 0) {
             throw batchErrors[0];
         }
-        if (limitReached) {
+        if (limitReachedBeforeTraversalComplete) {
             acceleratorRuntime.recordLimitReached({ totalChunks, processedFiles });
         }
         publishBatchProgress();
         console.log(
             `[Context] ⚡ Accelerator stats: submitted=${this.lastAcceleratorSnapshot.submittedBatches}, completed=${this.lastAcceleratorSnapshot.completedBatches}, failed=${this.lastAcceleratorSnapshot.failedBatches}, preIndexMs=${this.lastAcceleratorSnapshot.preIndexTotalMs}, preIndexScanMs=${this.lastAcceleratorSnapshot.preIndexScanMs}, preIndexHashMs=${this.lastAcceleratorSnapshot.preIndexHashMs}, preIndexFileListMs=${this.lastAcceleratorSnapshot.preIndexFileListMs}, preIndexSelectedFiles=${this.lastAcceleratorSnapshot.preIndexSelectedFileCount}, preIndexHashedFiles=${this.lastAcceleratorSnapshot.preIndexHashedFileCount}, scanMs=${this.lastAcceleratorSnapshot.scanningMs}, splitMs=${this.lastAcceleratorSnapshot.splittingMs}, embeddingMs=${this.lastAcceleratorSnapshot.embeddingMs}, insertMs=${this.lastAcceleratorSnapshot.insertMs}`,
         );
-        if (limitReached) {
+        if (limitReachedBeforeTraversalComplete) {
             console.warn(
                 `[Context] ⚠️  Indexing completed with status=limit_reached. Indexed ${processedFiles} files and ${totalChunks} chunks before CODE_CHUNK_LIMIT=${CODE_CHUNK_LIMIT}; search remains available but results may be incomplete. Raise CODE_CHUNK_LIMIT and run a force reindex to include chunks skipped by this run.`,
             );
@@ -3086,7 +3124,7 @@ export class Context {
         return {
             processedFiles,
             totalChunks,
-            status: limitReached ? "limit_reached" : "completed",
+            status: limitReachedBeforeTraversalComplete ? "limit_reached" : "completed",
             codeChunkLimit: CODE_CHUNK_LIMIT,
             skippedDocumentCount,
         };

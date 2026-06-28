@@ -26,6 +26,10 @@ import {
 class TestEmbedding extends Embedding {
     protected maxTokens = 8192;
 
+    constructor(private readonly modelName = 'model-a') {
+        super();
+    }
+
     async detectDimension(): Promise<number> {
         return 3;
     }
@@ -44,6 +48,10 @@ class TestEmbedding extends Embedding {
 
     getProvider(): string {
         return 'test';
+    }
+
+    getModel(): string {
+        return this.modelName;
     }
 }
 
@@ -684,6 +692,80 @@ describe('Context per-codebase options and ignore handling', () => {
             confirmedDocumentIds: expect.any(Array),
         }));
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test('resume completes after CODE_CHUNK_LIMIT once every selected chunk is confirmed', async () => {
+        process.env.CODE_CHUNK_LIMIT = '2';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await fs.writeFile(path.join(project, 'third.ts'), 'third');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        const firstRun = await context.indexCodebase(project, undefined, true);
+        const resumeRun = await context.indexCodebase(project);
+
+        expect(firstRun.status).toBe('limit_reached');
+        expect(resumeRun.status).toBe('completed');
+        expect(resumeRun.initialIndexing).toEqual(expect.objectContaining({
+            mode: 'initial_resume',
+            confirmedDocumentCount: 3,
+            skippedDocumentCount: 2,
+        }));
+        expect(context.getLastInitialIndexingManifest()?.runState).toBe('completed');
+        await expect(fs.access(FileSynchronizer.getSnapshotPathForCodebase(project))).resolves.toBeUndefined();
+    });
+
+    test('legacy partial index without manifest requires force reindex instead of incremental sync', async () => {
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+        await vectorDatabase.createCollection(context.getCollectionName(project));
+        await vectorDatabase.insert(context.getCollectionName(project), [{
+            id: 'legacy-doc',
+            vector: [1, 0, 0],
+            content: 'first',
+            relativePath: 'first.ts',
+            startLine: 1,
+            endLine: 1,
+            fileExtension: '.ts',
+            metadata: {},
+        }]);
+        const traversal = await traversePreIndex(project, {
+            supportedExtensions: ['.ts'],
+            includeHashes: true,
+        });
+        const synchronizer = new FileSynchronizer(project, [], ['.ts']);
+        await synchronizer.initialize(traversal);
+
+        await expect(context.indexCodebase(project))
+            .rejects.toThrow(/legacy partial index|force=true/);
+    });
+
+    test('resume rejects changed embedding model within the same provider', async () => {
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const manifestRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'initial-manifest-model-'));
+        const vectorDatabase = new FailOnNthInsertVectorDatabase(2);
+        const context = createContext(vectorDatabase, new TestEmbedding('model-a'), manifestRoot);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        await FileSynchronizer.deleteSnapshot(project);
+
+        await expect(context.indexCodebase(project, undefined, true))
+            .rejects.toThrow('simulated insert failure 2');
+
+        vectorDatabase.failOnNthInsert = Number.POSITIVE_INFINITY;
+        const changedEmbeddingContext = createContext(vectorDatabase, new TestEmbedding('model-b'), manifestRoot);
+
+        await expect(changedEmbeddingContext.indexCodebase(project))
+            .rejects.toThrow(/embeddingProfileFingerprint changed/);
     });
 
     test('force reindex supersedes previous manifest for same codebase collection even after scope change', async () => {
