@@ -870,7 +870,17 @@ export class ToolHandlers {
                 };
             }
 
-            if (!forceReindex && cloudHasIndex && !hasPersistedSyncConfig) {
+            const resumableInitialManifest = !forceReindex && cloudHasIndex && !hasPersistedSyncConfig
+                ? await (this.context as typeof this.context & {
+                    getInitialIndexingManifestForCodebase?: (codebasePath: string) => Promise<{
+                        runState: string;
+                        identity: Parameters<typeof getInitialIndexingManifestIdentifier>[0];
+                    } | undefined>;
+                }).getInitialIndexingManifestForCodebase?.(absolutePath)
+                : undefined;
+            const canResumeInitialIndexing = resumableInitialManifest?.identity.codebasePath === absolutePath &&
+                ['indexing', 'interrupted', 'failed', 'cancelled', 'limit_reached'].includes(resumableInitialManifest.runState);
+            if (!forceReindex && cloudHasIndex && !hasPersistedSyncConfig && !canResumeInitialIndexing) {
                 return {
                     content: [{
                         type: "text",

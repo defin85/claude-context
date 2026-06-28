@@ -494,6 +494,67 @@ test('index_codebase lets existing compatible indexes reach core mode planner', 
     assert.equal(indexCalled, true);
 });
 
+test('index_codebase resumes partial initial index without sync config when manifest is resumable', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-resume-no-sync-config-'));
+    const rawCodebasePath = path.join(workspacePath, 'cf');
+    await fs.mkdir(rawCodebasePath, { recursive: true });
+    const codebasePath = await fs.realpath(rawCodebasePath);
+    const snapshotManager = new SnapshotManager({
+        workspacePath,
+        saveDebounceMs: 10,
+    });
+    const codebaseConfigManager = new CodebaseConfigManager({ workspacePath });
+    let indexCalled = false;
+    const context = {
+        ...createFakeContext(true, undefined, async () => {
+            indexCalled = true;
+            return {
+                indexedFiles: 1,
+                totalChunks: 1,
+                status: 'completed',
+                codeChunkLimit: 900000,
+                initialIndexing: {
+                    mode: 'initial_resume',
+                    resumeEligible: true,
+                    manifestCompatibility: 'compatible',
+                    confirmedDocumentCount: 1,
+                    skippedDocumentCount: 1,
+                    remainingDocumentCount: 0,
+                    unconfirmedDocumentCount: 0,
+                    failedBatchCount: 0,
+                    batchCount: 1,
+                },
+            };
+        }),
+        getInitialIndexingManifestForCodebase: async () => ({
+            selectedMode: 'initial_full',
+            runState: 'failed',
+            identity: createManifestIdentity(codebasePath),
+            confirmedDocumentIds: ['doc-1'],
+            batches: [
+                { id: '1', state: 'inserted', filePaths: ['first.ts'], documentIds: ['doc-1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+            ],
+            traversal: {
+                selectedFileCount: 1,
+                hashedFileCount: 1,
+                selectedFileFingerprint: 'files-v1',
+            },
+            manifestVersion: 1,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        } satisfies InitialIndexingManifest),
+    } as unknown as Context;
+    const handlers = new ToolHandlers(context, snapshotManager, codebaseConfigManager);
+
+    const result = await handlers.handleIndexCodebase({ path: codebasePath });
+
+    assert.equal(result.isError, undefined);
+    for (let attempt = 0; attempt < 20 && !indexCalled; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(indexCalled, true);
+});
+
 test('get_indexing_status omits accelerator snapshot from a different codebase', async () => {
     const otherPath = path.join(os.tmpdir(), 'other-codebase');
     const context = createFakeContext(true, undefined, undefined, {

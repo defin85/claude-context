@@ -81,7 +81,9 @@ interface VramCalibrationCache {
 
 interface ManagedBgeM3WorkerManagerDeps {
     isSystemdUserAvailable?: () => Promise<boolean>;
+    isSystemdUnitActive?: (unitName: string) => Promise<boolean>;
     isPortAvailable?: (port: number) => Promise<boolean>;
+    isEndpointHealthy?: (endpoint: string) => Promise<boolean>;
     readVram?: () => Promise<VramSnapshot | undefined>;
     startWorker?: (config: ContextMcpConfig, port: number) => Promise<ManagedBgeM3Worker | undefined>;
     stopWorker?: (worker: ManagedBgeM3Worker) => Promise<void>;
@@ -306,6 +308,11 @@ async function stopSystemdUnit(unitName: string): Promise<void> {
     await runCommand('systemctl', ['--user', 'stop', unitName], 30000);
 }
 
+async function isSystemdUnitActive(unitName: string): Promise<boolean> {
+    const result = await runCommand('systemctl', ['--user', 'is-active', '--quiet', unitName], 10000);
+    return result.exitCode === 0;
+}
+
 async function startSystemdWorker(config: ContextMcpConfig, port: number): Promise<ManagedBgeM3Worker | undefined> {
     const unitName = `claude-context-bge-m3-worker-${port}.service`;
     const result = await runCommand('systemd-run', buildSystemdRunArgs(config, port, unitName), 30000);
@@ -385,7 +392,9 @@ export async function createManagedBgeM3WorkerManager(
 
     const readVramSnapshot = deps.readVram || readVram;
     const checkSystemdUserAvailable = deps.isSystemdUserAvailable || isSystemdUserAvailable;
+    const checkSystemdUnitActive = deps.isSystemdUnitActive || isSystemdUnitActive;
     const checkPortAvailable = deps.isPortAvailable || isPortAvailable;
+    const checkEndpointHealthy = deps.isEndpointHealthy || ((endpoint: string) => waitForHealth(endpoint, 1000));
     const stopManagedWorker = deps.stopWorker || stopWorker;
     const calibrationPath = deps.calibrationPath || CALIBRATION_CACHE_PATH;
     const startManagedWorker = deps.startWorker || (async (workerConfig, port) => workerConfig.acceleratorManagedWorkerLifecycle === 'systemd'
@@ -400,6 +409,33 @@ export async function createManagedBgeM3WorkerManager(
         if (idleFallbackTimer) {
             clearTimeout(idleFallbackTimer);
             idleFallbackTimer = undefined;
+        }
+    };
+
+    const recoverRunningSystemdWorkers = async (): Promise<void> => {
+        if (!config.acceleratorManagedBgeM3Workers || config.acceleratorManagedWorkerLifecycle !== 'systemd') {
+            return;
+        }
+        const managedWorkerLimit = Math.max(
+            0,
+            config.acceleratorMaxBgeM3Workers - 1 - config.bgeM3WorkerEndpoints.length,
+        );
+        for (let index = 0; index < managedWorkerLimit; index++) {
+            const port = config.acceleratorManagedWorkerStartPort + index;
+            const unitName = `claude-context-bge-m3-worker-${port}.service`;
+            const endpoint = `http://127.0.0.1:${port}`;
+            if (workers.some((worker) => worker.port === port)) {
+                continue;
+            }
+            if (
+                !await checkPortAvailable(port) &&
+                await checkSystemdUnitActive(unitName) &&
+                await checkEndpointHealthy(endpoint)
+            ) {
+                workers.push({ endpoint, port, unitName });
+                plannedEndpoints.push(endpoint);
+                console.log(`[MCP] Recovered running managed BGE-M3 worker at ${endpoint} (${unitName}).`);
+            }
         }
     };
 
@@ -668,6 +704,8 @@ export async function createManagedBgeM3WorkerManager(
         fallbackReason = SYSTEMD_USER_UNAVAILABLE_REASON;
         return manager;
     }
+
+    await recoverRunningSystemdWorkers();
 
     return manager;
 }

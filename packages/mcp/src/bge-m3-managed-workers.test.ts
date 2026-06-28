@@ -147,6 +147,43 @@ test('managed worker manager plans endpoints at request time without starting wo
     assert.equal(manager.workers.length, 0);
 });
 
+test('managed worker manager recovers running systemd workers after daemon restart', async () => {
+    let started = 0;
+    const activeUnits = new Set([
+        'claude-context-bge-m3-worker-8001.service',
+        'claude-context-bge-m3-worker-8002.service',
+    ]);
+    const manager = await createManagedBgeM3WorkerManager(createConfig({
+        acceleratorMaxBgeM3Workers: 3,
+    }), {
+        isSystemdUserAvailable: async () => true,
+        isSystemdUnitActive: async (unitName) => activeUnits.has(unitName),
+        isEndpointHealthy: async (endpoint) => endpoint.endsWith(':8001') || endpoint.endsWith(':8002'),
+        isPortAvailable: async () => false,
+        readVram: async () => ({ usedMiB: 9000, totalMiB: 10000, percentUsed: 90 }),
+        startWorker: async (_config, port) => {
+            started++;
+            return { endpoint: `http://127.0.0.1:${port}`, port };
+        },
+        calibrationPath: await createTempCalibrationPath(),
+    });
+
+    assert.equal(started, 0);
+    assert.deepEqual(manager.endpoints, [
+        'http://127.0.0.1:8001',
+        'http://127.0.0.1:8002',
+    ]);
+    assert.deepEqual(manager.getSnapshot().runningWorkers.map((worker) => worker.unitName), [
+        'claude-context-bge-m3-worker-8001.service',
+        'claude-context-bge-m3-worker-8002.service',
+    ]);
+    assert.deepEqual(manager.getSnapshot().totalPoolEndpoints, [
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:8001',
+        'http://127.0.0.1:8002',
+    ]);
+});
+
 test('managed worker manager rechecks systemd before starting workers', async () => {
     let started = 0;
     let systemdAvailable = false;
