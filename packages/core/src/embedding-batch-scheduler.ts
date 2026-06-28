@@ -37,6 +37,7 @@ export interface EmbeddingBatchSchedulerSubmitOptions<T> {
     metadata: IndexingBatchMetadata;
     runEmbedding: () => Promise<T>;
     runInsert: (embeddingResult: T) => Promise<void>;
+    onInsertComplete?: (embeddingResult: T) => Promise<void>;
 }
 
 export interface EmbeddingBatchSchedulerSubmitHandle {
@@ -51,6 +52,7 @@ interface QueuedBatch<T> extends EmbeddingBatchSchedulerSubmitOptions<T> {
 interface QueuedInsert<T> {
     items: Array<QueuedBatch<T>>;
     embeddingResult: T;
+    itemEmbeddingResults?: T[];
     documentCount: number;
     flushReason?: CoalescingFlushReason;
 }
@@ -367,6 +369,7 @@ export class EmbeddingBatchScheduler {
         this.insertQueue.push({
             items: buffered.flatMap((queuedInsert) => queuedInsert.items),
             embeddingResult: this.mergeCoalescedEmbeddingResults(buffered.map((queuedInsert) => queuedInsert.embeddingResult)),
+            itemEmbeddingResults: buffered.map((queuedInsert) => queuedInsert.embeddingResult),
             documentCount,
             flushReason: reason,
         });
@@ -405,7 +408,8 @@ export class EmbeddingBatchScheduler {
                     flushReason: queuedInsert.flushReason,
                 });
             }
-            for (const item of items) {
+            for (const [index, item] of items.entries()) {
+                await item.onInsertComplete?.(queuedInsert.itemEmbeddingResults?.[index] ?? embeddingResult);
                 this.options.runtime.recordBatchCompleted(item.metadata.id);
                 item.resolve();
             }

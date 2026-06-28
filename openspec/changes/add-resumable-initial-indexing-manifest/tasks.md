@@ -27,10 +27,10 @@
 ## 4. Resume Execution
 
 - [x] 4.1 Re-run traversal and chunk planning for resume with the effective configuration.
-- [ ] 4.2 Verify stable document identifiers across dense, hybrid, BGE-M3 full, accelerated, and non-accelerated paths.
+- [x] 4.2 Verify stable document identifiers across dense, hybrid, BGE-M3 full, accelerated, and non-accelerated paths.
 - [x] 4.3 Skip only chunks confirmed inserted in the compatible manifest.
 - [x] 4.4 Reprocess planned, embedding, inserting, failed, cancelled, and missing chunks.
-- [ ] 4.5 Ensure coalesced writes retain per-document or per-batch confirmation data.
+- [x] 4.5 Ensure coalesced writes retain per-document or per-batch confirmation data.
 - [x] 4.6 Treat `CODE_CHUNK_LIMIT` as `limit_reached`, not completed, and keep incremental sync ineligible until every selected chunk is confirmed.
 
 ## 5. Backend Safety
@@ -53,9 +53,9 @@
 - [x] 7.2 Add manifest persistence tests for atomic writes, state transitions, and corruption handling.
 - [x] 7.3 Add resume tests proving confirmed chunks are skipped and unconfirmed chunks are reprocessed.
 - [x] 7.4 Add retry-safety tests for ambiguous insert outcomes and idempotent backend paths.
-- [ ] 7.5 Add matrix tests for dense, hybrid, BGE-M3 full, accelerated and non-accelerated execution.
-- [ ] 7.6 Add 1C scope profile tests for `full`, `developer`, `minimal`, and `v8unpack`.
-- [ ] 7.7 Add status tests proving mode and resume counters are reported without cross-codebase leakage.
+- [x] 7.5 Add matrix tests for dense, hybrid, BGE-M3 full, accelerated and non-accelerated execution.
+- [x] 7.6 Add 1C scope profile tests for `full`, `developer`, `minimal`, and `v8unpack`.
+- [x] 7.7 Add status tests proving mode and resume counters are reported without cross-codebase leakage.
 
 ## 8. Documentation and Validation
 

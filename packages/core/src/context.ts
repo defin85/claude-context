@@ -2741,6 +2741,8 @@ export class Context {
                         runInsert: async (preparedInsert) => {
                             await options.manifestRecorder?.onBatchInserting(manifestBatchId);
                             await this.insertPreparedChunkBatch(preparedInsert, acceleratorRuntime, batchMetadata.id, insertBatchSize);
+                        },
+                        onInsertComplete: async (preparedInsert) => {
                             await options.manifestRecorder?.onBatchInserted(
                                 manifestBatchId,
                                 preparedInsert.documents.map((document) => document.id),

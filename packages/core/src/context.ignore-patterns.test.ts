@@ -6,6 +6,7 @@ import {
     Context,
     Embedding,
     EmbeddingVector,
+    MultiVectorEmbedding,
     FileSynchronizer,
     traversePreIndex,
     Splitter,
@@ -45,6 +46,28 @@ class TestEmbedding extends Embedding {
     }
 }
 
+class BgeM3TestEmbedding extends TestEmbedding {
+    getProvider(): string {
+        return 'BGE_M3';
+    }
+
+    async embedMulti(): Promise<MultiVectorEmbedding> {
+        return (await this.embedMultiBatch(['one']))[0];
+    }
+
+    async embedMultiBatch(texts: string[]): Promise<MultiVectorEmbedding[]> {
+        return texts.map(() => ({
+            dense: { vector: [1, 0, 0], dimension: 3 },
+            sparse: { indices: [1], values: [0.5] },
+            colbert: {
+                vectors: [[0.1, 0.2]],
+                dimension: 2,
+                tokenCount: 1,
+            },
+        }));
+    }
+}
+
 class TestSplitter implements Splitter {
     async split(code: string, language: string, filePath?: string): Promise<CodeChunk[]> {
         return [
@@ -68,6 +91,17 @@ class TestVectorDatabase implements VectorDatabase {
     collections = new Set<string>();
     documents = new Map<string, VectorDocument[]>();
     searchResults: VectorSearchResult[] = [];
+    insertRecords: Array<{ mode: string; ids: string[] }> = [];
+    writeCapabilities: VectorWriteCapabilities = {
+        backend: 'test',
+        parallelWritesToSameCollection: true,
+        idempotentUpsert: true,
+        recommendedInsertConcurrency: 1,
+        targetCoalescedDocumentCount: 100,
+        maxCoalescedDocumentCount: 100,
+        writeCoalescingRecommended: false,
+        ambiguousWriteFailureMode: 'retry_safe',
+    };
 
     async createCollection(collectionName: string): Promise<void> {
         this.collections.add(collectionName);
@@ -95,36 +129,32 @@ class TestVectorDatabase implements VectorDatabase {
         return [...this.collections];
     }
 
-    async insert(collectionName: string, documents: VectorDocument[]): Promise<void> {
+    private async write(collectionName: string, documents: VectorDocument[], mode: string): Promise<void> {
+        this.insertRecords.push({ mode, ids: documents.map((document) => document.id) });
         this.documents.set(collectionName, [
             ...(this.documents.get(collectionName) || []),
             ...documents,
         ]);
     }
 
+    async insert(collectionName: string, documents: VectorDocument[]): Promise<void> {
+        await this.write(collectionName, documents, 'regular');
+    }
+
     async insertHybrid(collectionName: string, documents: VectorDocument[]): Promise<void> {
-        await this.insert(collectionName, documents);
+        await this.write(collectionName, documents, 'hybrid');
     }
 
     async insertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
-        await this.insert(collectionName, documents);
+        await this.write(collectionName, documents, 'bge_m3');
     }
 
     async upsertBgeM3(collectionName: string, documents: VectorDocument[]): Promise<void> {
-        await this.insert(collectionName, documents);
+        await this.write(collectionName, documents, 'bge_m3_upsert');
     }
 
     getWriteCapabilities(): VectorWriteCapabilities {
-        return {
-            backend: 'test',
-            parallelWritesToSameCollection: true,
-            idempotentUpsert: true,
-            recommendedInsertConcurrency: 1,
-            targetCoalescedDocumentCount: 100,
-            maxCoalescedDocumentCount: 100,
-            writeCoalescingRecommended: false,
-            ambiguousWriteFailureMode: 'retry_safe',
-        };
+        return this.writeCapabilities;
     }
 
     async search(): Promise<VectorSearchResult[]> {
@@ -194,9 +224,9 @@ class FailOnNthInsertVectorDatabase extends TestVectorDatabase {
     }
 }
 
-function createContext(vectorDatabase = new TestVectorDatabase()): Context {
+function createContext(vectorDatabase = new TestVectorDatabase(), embedding: Embedding = new TestEmbedding()): Context {
     return new Context({
-        embedding: new TestEmbedding(),
+        embedding,
         vectorDatabase,
         codeSplitter: new TestSplitter(),
         initialIndexingManifestRoot: path.join(os.tmpdir(), `claude-context-core-manifests-${process.pid}`),
@@ -370,12 +400,24 @@ describe('Context per-codebase options and ignore handling', () => {
     const originalCodeChunkLimit = process.env.CODE_CHUNK_LIMIT;
     const originalIndexAcceleratorMode = process.env.INDEX_ACCELERATOR_MODE;
     const originalIndexEmbeddingBatchSize = process.env.INDEX_EMBEDDING_BATCH_SIZE;
+    const originalIndexInsertBatchSize = process.env.INDEX_INSERT_BATCH_SIZE;
+    const originalIndexEmbeddingConcurrency = process.env.INDEX_EMBEDDING_CONCURRENCY;
+    const originalIndexInsertConcurrency = process.env.INDEX_INSERT_CONCURRENCY;
+    const originalIndexWriteCoalescing = process.env.INDEX_WRITE_COALESCING;
+    const originalIndexWriteCoalescingTargetDocuments = process.env.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS;
+    const originalIndexWriteCoalescingMaxDocuments = process.env.INDEX_WRITE_COALESCING_MAX_DOCUMENTS;
 
     beforeEach(() => {
         process.env.HYBRID_MODE = 'false';
         delete process.env.CODE_CHUNK_LIMIT;
         process.env.INDEX_ACCELERATOR_MODE = 'off';
         delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
+        delete process.env.INDEX_INSERT_BATCH_SIZE;
+        delete process.env.INDEX_EMBEDDING_CONCURRENCY;
+        delete process.env.INDEX_INSERT_CONCURRENCY;
+        delete process.env.INDEX_WRITE_COALESCING;
+        delete process.env.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS;
+        delete process.env.INDEX_WRITE_COALESCING_MAX_DOCUMENTS;
     });
 
     afterEach(() => {
@@ -401,6 +443,42 @@ describe('Context per-codebase options and ignore handling', () => {
             delete process.env.INDEX_EMBEDDING_BATCH_SIZE;
         } else {
             process.env.INDEX_EMBEDDING_BATCH_SIZE = originalIndexEmbeddingBatchSize;
+        }
+
+        if (originalIndexInsertBatchSize === undefined) {
+            delete process.env.INDEX_INSERT_BATCH_SIZE;
+        } else {
+            process.env.INDEX_INSERT_BATCH_SIZE = originalIndexInsertBatchSize;
+        }
+
+        if (originalIndexEmbeddingConcurrency === undefined) {
+            delete process.env.INDEX_EMBEDDING_CONCURRENCY;
+        } else {
+            process.env.INDEX_EMBEDDING_CONCURRENCY = originalIndexEmbeddingConcurrency;
+        }
+
+        if (originalIndexInsertConcurrency === undefined) {
+            delete process.env.INDEX_INSERT_CONCURRENCY;
+        } else {
+            process.env.INDEX_INSERT_CONCURRENCY = originalIndexInsertConcurrency;
+        }
+
+        if (originalIndexWriteCoalescing === undefined) {
+            delete process.env.INDEX_WRITE_COALESCING;
+        } else {
+            process.env.INDEX_WRITE_COALESCING = originalIndexWriteCoalescing;
+        }
+
+        if (originalIndexWriteCoalescingTargetDocuments === undefined) {
+            delete process.env.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS;
+        } else {
+            process.env.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS = originalIndexWriteCoalescingTargetDocuments;
+        }
+
+        if (originalIndexWriteCoalescingMaxDocuments === undefined) {
+            delete process.env.INDEX_WRITE_COALESCING_MAX_DOCUMENTS;
+        } else {
+            process.env.INDEX_WRITE_COALESCING_MAX_DOCUMENTS = originalIndexWriteCoalescingMaxDocuments;
         }
     });
 
@@ -545,14 +623,124 @@ describe('Context per-codebase options and ignore handling', () => {
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(1);
 
         vectorDatabase.failOnNthInsert = Number.POSITIVE_INFINITY;
-        await context.indexCodebase(project);
+        const resumeStats = await context.indexCodebase(project);
 
+        expect(resumeStats.initialIndexing).toEqual(expect.objectContaining({
+            mode: 'initial_resume',
+            resumeEligible: true,
+            confirmedDocumentCount: 2,
+            skippedDocumentCount: 1,
+        }));
+        expect(resumeStats.initialIndexing?.batchCount).toBeGreaterThanOrEqual(2);
         expect(vectorDatabase.documents.get(context.getCollectionName(project))).toHaveLength(2);
         expect(context.getLastInitialIndexingManifest()).toEqual(expect.objectContaining({
             runState: 'completed',
             confirmedDocumentIds: expect.any(Array),
         }));
         expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds).toHaveLength(2);
+    });
+
+    test.each([
+        ['dense regular', new TestEmbedding(), undefined, 'off'],
+        ['dense accelerated', new TestEmbedding(), undefined, 'auto'],
+        ['hybrid regular', new TestEmbedding(), 'balanced' as const, 'off'],
+        ['hybrid accelerated', new TestEmbedding(), 'balanced' as const, 'auto'],
+        ['BGE-M3 full regular', new BgeM3TestEmbedding(), 'quality' as const, 'off'],
+        ['BGE-M3 full accelerated', new BgeM3TestEmbedding(), 'quality' as const, 'auto'],
+    ])('keeps stable document IDs for %s indexing', async (_label, embedding, retrievalProfile, acceleratorMode) => {
+        process.env.INDEX_ACCELERATOR_MODE = acceleratorMode;
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        const vectorDatabase = new TestVectorDatabase();
+        const context = createContext(vectorDatabase, embedding);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+        if (retrievalProfile) {
+            context.configureCodebaseSession(project, { retrievalProfile });
+        }
+
+        await context.indexCodebase(project, undefined, true);
+        const firstIds = (vectorDatabase.documents.get(context.getCollectionName(project)) || [])
+            .map((document) => document.id)
+            .sort();
+        await context.indexCodebase(project, undefined, true);
+        const secondIds = (vectorDatabase.documents.get(context.getCollectionName(project)) || [])
+            .map((document) => document.id)
+            .sort();
+
+        expect(secondIds).toEqual(firstIds);
+        expect(context.getLastInitialIndexingManifest()?.confirmedDocumentIds.sort()).toEqual(firstIds);
+    });
+
+    test('coalesced accelerated writes keep per-batch manifest confirmation', async () => {
+        process.env.INDEX_ACCELERATOR_MODE = 'auto';
+        process.env.INDEX_EMBEDDING_CONCURRENCY = '2';
+        process.env.INDEX_EMBEDDING_BATCH_SIZE = '1';
+        process.env.INDEX_INSERT_BATCH_SIZE = '2';
+        process.env.INDEX_WRITE_COALESCING = 'true';
+        process.env.INDEX_WRITE_COALESCING_TARGET_DOCUMENTS = '2';
+        process.env.INDEX_WRITE_COALESCING_MAX_DOCUMENTS = '2';
+        const vectorDatabase = new TestVectorDatabase();
+        vectorDatabase.writeCapabilities = {
+            ...vectorDatabase.writeCapabilities,
+            targetCoalescedDocumentCount: 2,
+            maxCoalescedDocumentCount: 2,
+            writeCoalescingRecommended: true,
+        };
+        const context = createContext(vectorDatabase);
+        const project = await makeTempDir();
+        await fs.writeFile(path.join(project, 'first.ts'), 'first');
+        await fs.writeFile(path.join(project, 'second.ts'), 'second');
+
+        await context.indexCodebase(project, undefined, true);
+
+        const manifest = context.getLastInitialIndexingManifest();
+        expect(vectorDatabase.insertRecords.map((call) => call.ids.length)).toContain(2);
+        expect(manifest?.batches).toHaveLength(2);
+        expect(manifest?.batches.every((batch) => batch.state === 'inserted')).toBe(true);
+        expect(manifest?.batches.every((batch) => batch.documentIds.length === 1)).toBe(true);
+        expect(new Set(manifest?.confirmedDocumentIds).size).toBe(2);
+    });
+
+    test.each(['full', 'developer', 'minimal', 'v8unpack'] as const)(
+        'records 1C scope profile %s in resume identity',
+        async (oneCIndexScopeProfile) => {
+            const context = createContext();
+            const project = await makeTempDir();
+            await writeFixtureFile(project, 'Configuration.xml', '<MetaDataObject />');
+            await writeFixtureFile(project, 'CommonModules/Exchange/Ext/Module.bsl', 'Procedure Run()\nEndProcedure');
+            await writeFixtureFile(project, 'Catalogs/Products/Ext/Help/en.html', '<p>generated help</p>');
+            await writeFixtureFile(project, 'Configuration.json', '{}');
+            await writeFixtureFile(project, 'CommonModule/Exchange/CommonModule.obj.bsl', 'Procedure Run()\nEndProcedure');
+            await writeFixtureFile(project, 'Catalog/Product/Product.json', '{}');
+
+            context.configureCodebaseSession(project, {
+                customExtensions: ['.xml', '.html', '.json'],
+                oneCIndexScopeProfile,
+            });
+            const stats = await context.indexCodebase(project, undefined, true);
+
+            expect(stats.oneCIndexScopeProfile).toBe(oneCIndexScopeProfile);
+            expect(context.getLastInitialIndexingManifest()?.identity.oneCIndexScopeProfile).toBe(oneCIndexScopeProfile);
+        },
+    );
+
+    test('last manifest stays scoped to the indexed codebase for status consumers', async () => {
+        const context = createContext();
+        const projectA = await makeTempDir();
+        const projectB = await makeTempDir();
+        await fs.writeFile(path.join(projectA, 'index.ts'), 'a');
+        await fs.writeFile(path.join(projectB, 'index.ts'), 'b');
+
+        await context.indexCodebase(projectA, undefined, true);
+        const manifestA = context.getLastInitialIndexingManifest();
+        await context.indexCodebase(projectB, undefined, true);
+        const manifestB = context.getLastInitialIndexingManifest();
+
+        expect(manifestA?.identity.codebasePath).toBe(projectA);
+        expect(manifestB?.identity.codebasePath).toBe(projectB);
+        expect(manifestB?.identity.codebasePath).not.toBe(projectA);
     });
 
     test('CODE_CHUNK_LIMIT parser accepts valid values and falls back for default or invalid values', () => {

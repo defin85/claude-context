@@ -64,6 +64,9 @@ export interface InitialIndexingManifest {
 }
 
 export class InitialIndexingManifestStore {
+    // ponytail: global write queue; use per-manifest queues if manifest write throughput matters.
+    private writeQueue = Promise.resolve();
+
     constructor(private readonly rootDir: string) {}
 
     create(identity: InitialIndexingIdentity): InitialIndexingManifest {
@@ -107,9 +110,15 @@ export class InitialIndexingManifestStore {
     }
 
     async write(manifest: InitialIndexingManifest): Promise<void> {
+        const nextWrite = this.writeQueue.then(() => this.writeNow(manifest));
+        this.writeQueue = nextWrite.catch(() => undefined);
+        await nextWrite;
+    }
+
+    private async writeNow(manifest: InitialIndexingManifest): Promise<void> {
         await fs.mkdir(this.rootDir, { recursive: true });
         const targetPath = this.getManifestPath(manifest.identity);
-        const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+        const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`;
         const nextManifest: InitialIndexingManifest = {
             ...manifest,
             identity: this.normalizeIdentity(manifest.identity),
