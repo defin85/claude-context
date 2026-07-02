@@ -815,11 +815,12 @@ Index a codebase directory for hybrid search (BM25 + dense vector).
 **Parameters:**
 
 - `path` (required): Canonical absolute path to the codebase directory to index; prefer POSIX form such as `/home/egor/code/repo`
-- `force` (optional): Force re-indexing even if already indexed (default: false)
+- `force` (optional): Force re-indexing even if already indexed (default: false). Do not use `force` to continue an interrupted initial indexing run; call `index_codebase` again with the same path and Claude Context resumes compatible incomplete manifests automatically.
 - `splitter` (optional): Code splitter to use - 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting (default: "ast")
 - `customExtensions` (optional): Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added (default: [])
 - `ignorePatterns` (optional): Additional ignore patterns to exclude specific files/directories beyond defaults (e.g., ['static/**', '*.tmp', 'private/**']) (default: [])
 - `oneCIndexScopeProfile` (optional): 1C exported-configuration scope profile: `full`, `developer`, `minimal`, or `v8unpack`. For non-1C repositories, omit this parameter or use the default `full`. For ordinary Designer/EDT 1C exports, prefer `developer`. Use `v8unpack` for ordinary-form `v8unpack` exports, `minimal` for BSL-module-only coverage, and `full` when unsure or full coverage is required.
+- `retrievalProfile` (optional): Retrieval performance profile: `fast`, `balanced`, or `quality`. `fast` minimizes indexing/storage cost with dense-only retrieval. `balanced` keeps the balanced shape: dense-only for BGE-M3 in this version, hybrid BM25 for non-BGE providers. `quality` enables the highest-quality available retrieval, including full BGE-M3 dense+sparse+ColBERT when using BGE-M3. Changing incompatible profiles requires `force=true`.
 
 ### 2. `search_code`
 

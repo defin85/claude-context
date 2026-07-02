@@ -314,6 +314,7 @@ Index a codebase directory to enable semantic search using a configurable code s
 
 ✨ **Usage Guidance**:
 - This tool is typically used when search fails due to an unindexed codebase.
+- If a previous initial indexing run was interrupted, call index_codebase again with the same path and without force; Claude Context will resume compatible incomplete manifests automatically and skip already confirmed documents.
 - If indexing is attempted on an already indexed path, and a conflict is detected, you MUST prompt the user to confirm whether to proceed with a force index (i.e., re-indexing and overwriting the previous index).
 `;
 
@@ -364,7 +365,7 @@ Index a codebase directory to enable semantic search using a configurable code s
                             },
                             retrievalProfile: {
                                 type: 'string',
-                                description: "Optional retrieval performance profile. 'fast' minimizes indexing/storage cost, 'balanced' uses the balanced retrieval shape, and 'quality' enables the highest-quality available retrieval. Changing incompatible profiles requires force=true.",
+                                description: "Optional retrieval performance profile. 'fast' minimizes indexing/storage cost with dense-only retrieval, 'balanced' keeps the balanced shape (dense-only for BGE-M3 in this version, hybrid BM25 for non-BGE providers), and 'quality' enables the highest-quality available retrieval (full BGE-M3 dense+sparse+ColBERT when using BGE-M3). Changing incompatible profiles requires force=true.",
                                 enum: ['fast', 'balanced', 'quality']
                             }
                         },
