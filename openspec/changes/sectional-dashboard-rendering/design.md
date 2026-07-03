@@ -39,6 +39,8 @@ Create a static application shell once, with named section containers for:
 
 Each section gets a small render function that returns its HTML and a fingerprint derived only from the data it uses. A section updates its `innerHTML` only when its fingerprint changes.
 
+Selectable text must not share a replace boundary with controls whose markup changes only because of `busy`, disabled state, or polling metadata. In practice, keep path text, result snippets, diagnostics, and the log list in their own stable containers, separate from action buttons such as index, cancel, clear, copy diagnostics, and search.
+
 Alternative considered: keep one full `root.innerHTML` and skip auto-render while any text is selected. That is a useful emergency guard, but it lets the displayed status go stale during selection and still leaves full DOM replacement as the normal path.
 
 ### Decision: keep lightweight section templates
@@ -52,6 +54,8 @@ Alternative considered: migrate to React or Svelte. That would solve reconciliat
 Search results, operator log, diagnostics, and static path text are treated as selectable sections. If their fingerprint is unchanged, their DOM nodes must not be replaced by polling renders. Frequently changing indexing metrics and progress panels can update independently.
 
 Alternative considered: capture and restore global text selection. Restoring arbitrary `Selection` ranges across replaced nodes is brittle and unnecessary if unchanged selectable nodes are kept alive.
+
+If a parent section needs to update controls, but the selected text container is unchanged, update the control subsection separately instead of replacing the parent.
 
 ### Decision: keep storage and latency behavior unchanged
 

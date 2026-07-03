@@ -21,6 +21,7 @@ import {
     ManagedBgeM3Workers,
     WorkerEndpointHealth,
 } from './workerTelemetry';
+import { createSectionRenderer } from './sectionRenderer';
 
 type ApiSuccess<T> = { ok: true; data: T };
 type ApiFailure = { ok: false; error: string; data?: unknown };
@@ -143,7 +144,6 @@ const state = {
     refreshInFlight: false,
     selectedPathRevision: 0,
 };
-let lastRefreshFingerprint = '';
 const actionRecorder = createActionRecorder({ entries: state.actionLog, maxEntries: maxActionLogEntries });
 
 const apiBase = `${window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '')}/api`;
@@ -153,6 +153,9 @@ if (!app) {
     throw new Error('App root not found.');
 }
 const root = app;
+const sectionRenderer = createSectionRenderer((id) => document.getElementById(id));
+let shellRendered = false;
+let eventsBound = false;
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(`${apiBase}${path}`, {
@@ -220,40 +223,23 @@ async function refreshInternal(options: { showBusy?: boolean; showMessage?: bool
         const selectedPath = state.selectedPath || codebases[0]?.path || '';
         const selectedStatus = selectedPath ? await loadSelectedStatus(selectedPath) : undefined;
         if (state.selectedPathRevision !== requestSelectedPathRevision) {
-            const nextFingerprint = JSON.stringify({
-                status,
-                codebases,
-                selectedPath: state.selectedPath,
-                selectedStatus: state.selectedStatus,
-            });
-            const shouldRender = options.forceRender || nextFingerprint !== lastRefreshFingerprint;
-
             state.status = status;
             state.codebases = codebases;
-            lastRefreshFingerprint = nextFingerprint;
             if (options.showMessage) {
                 state.message = `Обновлено: ${new Date().toLocaleTimeString()}`;
             }
-            if (shouldRender || options.showMessage) {
-                render();
-            }
+            render();
             return;
         }
-
-        const nextFingerprint = JSON.stringify({ status, codebases, selectedPath, selectedStatus });
-        const shouldRender = options.forceRender || nextFingerprint !== lastRefreshFingerprint;
 
         state.status = status;
         state.codebases = codebases;
         state.selectedPath = selectedPath;
         state.selectedStatus = selectedStatus;
-        lastRefreshFingerprint = nextFingerprint;
         if (options.showMessage) {
             state.message = `Обновлено: ${new Date().toLocaleTimeString()}`;
         }
-        if (shouldRender || options.showMessage) {
-            render();
-        }
+        render();
     } catch (error) {
         state.error = sanitizeError(error);
         if (!rethrowErrors) {
@@ -424,6 +410,8 @@ async function copySearchText(value: string, successMessage: string): Promise<vo
 
 function render(): void {
     const focusSnapshot = captureFocus();
+    ensureShell();
+
     const runtimes = state.status?.runtimes || [];
     const primaryRuntime = runtimes[0];
     const activeIndexingJobs = collectIndexingJobs(runtimes, 'activeJobs');
@@ -431,6 +419,74 @@ function render(): void {
     const indexingCount = activeIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.activeCount || 0), 0);
     const queueCount = queuedIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.queuedCount || 0), 0);
     const retrievalLabel = formatRetrieval(state.status?.retrievalConfiguration);
+
+    renderDashboardSection('dashboard-auth', `
+        <form id="auth-form" class="auth-form">
+            <label class="field">
+                <span>Токен вручную</span>
+                <input id="token" type="password" autocomplete="off" placeholder="Не нужен при открытии через daemon" value="${escapeHtml(state.token)}" />
+            </label>
+            <button id="refresh" class="primary" ${state.busy ? 'disabled' : ''}>Обновить</button>
+        </form>
+    `);
+    renderDashboardSection('dashboard-codebases', `
+        <div class="codebase-list">
+            ${state.codebases.map((codebase) => `
+                <button class="codebase ${codebase.path === state.selectedPath ? 'active' : ''}" data-path="${escapeHtml(codebase.path)}">
+                    <span>${escapeHtml(shortPath(codebase.path))}</span>
+                    <small>${escapeHtml(codebase.status)}</small>
+                </button>
+            `).join('')}
+        </div>
+    `);
+    renderDashboardSection('dashboard-metrics', `
+        ${metric('Runtimes', String(runtimes.length), primaryRuntime?.healthy === false ? 'attention' : '')}
+        ${metric('Indexing', String(indexingCount), indexingCount > 0 ? 'working' : '')}
+        ${metric('Queued', String(queueCount), queueCount > 0 ? 'attention' : '')}
+        ${metric('Pressure', formatOptionalNumber(state.status?.accelerator?.adaptivePressureScore), '')}
+    `);
+    renderDashboardSection('dashboard-toolbar-path', `
+        <div>
+            <h1>${escapeHtml(shortPath(state.selectedPath || 'Кодовая база не выбрана'))}</h1>
+            <p>${escapeHtml(state.selectedPath || 'Выберите путь слева или обновите список.')}</p>
+        </div>
+    `);
+    renderDashboardSection('dashboard-toolbar-meta', `
+        <div>
+            <p>${escapeHtml(retrievalLabel)}</p>
+        </div>
+    `);
+    renderDashboardSection('dashboard-toolbar-actions', `
+        <div class="actions">
+            <button id="index" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Индексировать</button>
+            <button id="cancel" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Отменить</button>
+            <button id="clear" class="danger" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Очистить</button>
+        </div>
+    `);
+    renderDashboardSection('dashboard-operations-heading', operationsHeadingSection(activeIndexingJobs, queuedIndexingJobs));
+    renderDashboardSection('dashboard-active-jobs', jobPanel('Активные', activeIndexingJobs, 'active'));
+    renderDashboardSection('dashboard-queued-jobs', jobPanel('В очереди', queuedIndexingJobs, 'queued'));
+    renderDashboardSection('dashboard-selected-progress', progressPanel(state.selectedStatus));
+    renderDashboardSection('dashboard-accelerator', acceleratorPanel(state.status?.accelerator));
+    renderDashboardSection('dashboard-worker-telemetry', workerTelemetrySection(state.status));
+    renderDashboardSection('dashboard-notices', `
+        ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
+        ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
+    `);
+    const visibleLogEntries = state.actionLog.slice().reverse();
+    renderDashboardSection('dashboard-log-actions', operatorLogActionsSection());
+    renderDashboardSection('dashboard-log-list', operatorLogListSection(visibleLogEntries));
+    renderDashboardSection('dashboard-profile-state', profileStateSection());
+    renderDashboardSection('dashboard-search-controls', searchSection());
+    renderDashboardSection('dashboard-search-results', resultsSection());
+
+    restoreFocus(focusSnapshot);
+}
+
+function ensureShell(): void {
+    if (shellRendered) {
+        return;
+    }
 
     root.innerHTML = `
         <div class="shell">
@@ -442,72 +498,69 @@ function render(): void {
                         <span>Local dashboard</span>
                     </div>
                 </div>
-                <form id="auth-form" class="auth-form">
-                    <label class="field">
-                        <span>Токен вручную</span>
-                        <input id="token" type="password" autocomplete="off" placeholder="Не нужен при открытии через daemon" value="${escapeHtml(state.token)}" />
-                    </label>
-                    <button id="refresh" class="primary" ${state.busy ? 'disabled' : ''}>Обновить</button>
-                </form>
-                <div class="codebase-list">
-                    ${state.codebases.map((codebase) => `
-                        <button class="codebase ${codebase.path === state.selectedPath ? 'active' : ''}" data-path="${escapeHtml(codebase.path)}">
-                            <span>${escapeHtml(shortPath(codebase.path))}</span>
-                            <small>${escapeHtml(codebase.status)}</small>
-                        </button>
-                    `).join('')}
-                </div>
+                <div id="dashboard-auth"></div>
+                <div id="dashboard-codebases"></div>
             </aside>
             <main class="main">
-                <section class="status-grid">
-                    ${metric('Runtimes', String(runtimes.length), primaryRuntime?.healthy === false ? 'attention' : '')}
-                    ${metric('Indexing', String(indexingCount), indexingCount > 0 ? 'working' : '')}
-                    ${metric('Queued', String(queueCount), queueCount > 0 ? 'attention' : '')}
-                    ${metric('Pressure', formatOptionalNumber(state.status?.accelerator?.adaptivePressureScore), '')}
-                </section>
+                <section id="dashboard-metrics" class="status-grid"></section>
                 <section class="toolbar">
                     <div>
-                        <h1>${escapeHtml(shortPath(state.selectedPath || 'Кодовая база не выбрана'))}</h1>
-                        <p>${escapeHtml(state.selectedPath || 'Выберите путь слева или обновите список.')}</p>
-                        <p>${escapeHtml(retrievalLabel)}</p>
+                        <div id="dashboard-toolbar-path"></div>
+                        <div id="dashboard-toolbar-meta"></div>
                     </div>
-                    <div class="actions">
-                        <button id="index" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Индексировать</button>
-                        <button id="cancel" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Отменить</button>
-                        <button id="clear" class="danger" ${state.busy || !state.selectedPath ? 'disabled' : ''}>Очистить</button>
+                    <div id="dashboard-toolbar-actions"></div>
+                </section>
+                <section class="operations" aria-label="Операции индексации">
+                    <div id="dashboard-operations-heading"></div>
+                    <div class="operations-grid">
+                        <div id="dashboard-active-jobs"></div>
+                        <div id="dashboard-queued-jobs"></div>
+                    </div>
+                    <div class="operations-grid">
+                        <div id="dashboard-selected-progress"></div>
+                        <div id="dashboard-accelerator"></div>
                     </div>
                 </section>
-                ${operationsSection(activeIndexingJobs, queuedIndexingJobs, state.selectedStatus, state.status?.accelerator)}
-                ${workerTelemetrySection(state.status)}
-                ${state.error ? `<div class="notice error">${escapeHtml(state.error)}</div>` : ''}
-                ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ''}
-                ${operatorLogSection(state.actionLog)}
-                ${profileStateSection()}
-                ${searchSection()}
-                <section class="results">
-                    ${state.searchResults.length === 0 ? '<p class="empty">Результатов пока нет.</p>' : state.searchResults.map((result, index) => `
-                        <article class="result">
-                            <header>
-                                <div>
-                                    <strong>${escapeHtml(result.relativePath)}</strong>
-                                    <span>${escapeHtml(result.language || 'unknown')} · ${result.startLine}-${result.endLine} · ${result.score.toFixed(3)}</span>
-                                </div>
-                                <div class="result-actions">
-                                    <button class="copy-location" data-result-index="${index}">Копировать путь</button>
-                                    <button class="copy-snippet" data-result-index="${index}">Копировать фрагмент</button>
-                                </div>
-                            </header>
-                            <pre>${escapeHtml(result.content)}</pre>
-                            ${resultDetails(result)}
-                        </article>
-                    `).join('')}
+                <div id="dashboard-worker-telemetry"></div>
+                <div id="dashboard-notices"></div>
+                <section class="operator-log" aria-label="Журнал действий">
+                    <div id="dashboard-log-actions"></div>
+                    <div id="dashboard-log-list"></div>
                 </section>
+                <div id="dashboard-profile-state"></div>
+                <div id="dashboard-search-controls"></div>
+                <section id="dashboard-search-results" class="results"></section>
             </main>
         </div>
     `;
 
+    shellRendered = true;
     bind();
-    restoreFocus(focusSnapshot);
+}
+
+function renderDashboardSection(id: string, html: string): boolean {
+    return sectionRenderer.renderSection(id, html, html);
+}
+
+function resultsSection(): string {
+    return state.searchResults.length === 0
+        ? '<p class="empty">Результатов пока нет.</p>'
+        : state.searchResults.map((result, index) => `
+            <article class="result">
+                <header>
+                    <div>
+                        <strong>${escapeHtml(result.relativePath)}</strong>
+                        <span>${escapeHtml(result.language || 'unknown')} · ${result.startLine}-${result.endLine} · ${result.score.toFixed(3)}</span>
+                    </div>
+                    <div class="result-actions">
+                        <button class="copy-location" data-result-index="${index}">Копировать путь</button>
+                        <button class="copy-snippet" data-result-index="${index}">Копировать фрагмент</button>
+                    </div>
+                </header>
+                <pre>${escapeHtml(result.content)}</pre>
+                ${resultDetails(result)}
+            </article>
+        `).join('');
 }
 
 function searchSection(): string {
@@ -547,48 +600,70 @@ function searchSection(): string {
 }
 
 function bind(): void {
-    document.querySelector<HTMLInputElement>('#token')?.addEventListener('input', (event) => {
-        setToken((event.target as HTMLInputElement).value);
+    if (eventsBound) {
+        return;
+    }
+    eventsBound = true;
+
+    root.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) {
+            return;
+        }
+        if (target.id === 'token') {
+            setToken(target.value);
+        } else if (target.id === 'query') {
+            state.searchQuery = target.value;
+        } else if (target.id === 'extension-filter') {
+            state.extensionFilterText = target.value;
+        }
     });
-    document.querySelector('#auth-form')?.addEventListener('submit', (event) => {
+    root.addEventListener('change', (event) => {
+        const target = event.target;
+        if (target instanceof HTMLSelectElement && target.id === 'ranking-profile') {
+            state.rankingProfile = target.value as RankingProfile;
+        }
+    });
+    root.addEventListener('submit', (event) => {
+        if (!(event.target instanceof HTMLFormElement) || event.target.id !== 'auth-form') {
+            return;
+        }
         event.preventDefault();
         void refresh({ showBusy: true, showMessage: true, forceRender: true });
     });
-    document.querySelector('#index')?.addEventListener('click', () => void runAction('index'));
-    document.querySelector('#clear')?.addEventListener('click', () => void runAction('clear'));
-    document.querySelector('#cancel')?.addEventListener('click', () => void runAction('cancel'));
-    document.querySelectorAll<HTMLButtonElement>('.cancel-job').forEach((button) => {
-        button.addEventListener('click', () => {
+
+    root.addEventListener('click', (event) => {
+        const button = event.target instanceof Element
+            ? event.target.closest('button')
+            : null;
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        if (button.id === 'index') {
+            void runAction('index');
+        } else if (button.id === 'clear') {
+            void runAction('clear');
+        } else if (button.id === 'cancel') {
+            void runAction('cancel');
+        } else if (button.id === 'search') {
+            void search();
+        } else if (button.id === 'copy-diagnostics') {
+            void copyDiagnostics();
+        } else if (button.classList.contains('cancel-job')) {
+            if (state.busy) {
+                return;
+            }
             void runAction('cancel', button.dataset.path || '', button.dataset.kind || 'выбранную');
-        });
-    });
-    document.querySelector<HTMLInputElement>('#query')?.addEventListener('input', (event) => {
-        state.searchQuery = (event.target as HTMLInputElement).value;
-    });
-    document.querySelector<HTMLInputElement>('#extension-filter')?.addEventListener('input', (event) => {
-        state.extensionFilterText = (event.target as HTMLInputElement).value;
-    });
-    document.querySelector<HTMLSelectElement>('#ranking-profile')?.addEventListener('change', (event) => {
-        state.rankingProfile = (event.target as HTMLSelectElement).value as RankingProfile;
-    });
-    document.querySelector('#search')?.addEventListener('click', () => void search());
-    document.querySelector('#copy-diagnostics')?.addEventListener('click', () => void copyDiagnostics());
-    document.querySelectorAll<HTMLButtonElement>('.copy-location').forEach((button) => {
-        button.addEventListener('click', () => {
+        } else if (button.classList.contains('copy-location')) {
             const result = state.searchResults[Number(button.dataset.resultIndex)];
             void copySearchText(result ? resultLocation(result) : '', 'Путь скопирован.');
-        });
-    });
-    document.querySelectorAll<HTMLButtonElement>('.copy-snippet').forEach((button) => {
-        button.addEventListener('click', () => {
+        } else if (button.classList.contains('copy-snippet')) {
             const result = state.searchResults[Number(button.dataset.resultIndex)];
             void copySearchText(result?.content || '', 'Фрагмент скопирован.');
-        });
-    });
-    document.querySelectorAll<HTMLButtonElement>('.codebase').forEach((button) => {
-        button.addEventListener('click', () => {
+        } else if (button.classList.contains('codebase')) {
             void selectCodebase(button.dataset.path || '');
-        });
+        }
     });
 }
 
@@ -667,33 +742,33 @@ function resultLocation(result: SearchResult): string {
     return `${result.relativePath}:${result.startLine}`;
 }
 
-function operatorLogSection(entries: ActionLogEntry[]): string {
-    const visibleEntries = entries.slice().reverse();
+function operatorLogActionsSection(): string {
     return `
-        <section class="operator-log" aria-label="Журнал действий">
-            <div class="section-heading">
-                <div>
-                    <h2>Журнал действий</h2>
-                    <p>Последние операции панели в текущей вкладке.</p>
-                </div>
-                <button id="copy-diagnostics" ${state.busy ? 'disabled' : ''}>Копировать диагностику</button>
+        <div class="section-heading">
+            <div>
+                <h2>Журнал действий</h2>
+                <p>Последние операции панели в текущей вкладке.</p>
             </div>
-            ${visibleEntries.length === 0 ? '<p class="empty small">Действий пока нет.</p>' : `
-                <div class="log-list">
-                    ${visibleEntries.map((entry) => `
-                        <article class="log-entry ${entry.status}">
-                            <div class="log-main">
-                                <span class="status-label ${entry.status}">${escapeHtml(actionStatusLabel(entry.status))}</span>
-                                <strong>${escapeHtml(actionLabel(entry.action))}</strong>
-                                <small>${escapeHtml(formatActionTimestamp(entry.timestamp))}${entry.durationMs !== undefined ? ` · ${escapeHtml(formatDuration(entry.durationMs))}` : ''}</small>
-                                ${entry.targetPath ? `<span title="${escapeHtml(entry.targetPath)}">${escapeHtml(entry.targetPath)}</span>` : ''}
-                                ${entry.error ? `<p>${escapeHtml(entry.error)}</p>` : ''}
-                            </div>
-                        </article>
-                    `).join('')}
-                </div>
-            `}
-        </section>
+            <button id="copy-diagnostics" ${state.busy ? 'disabled' : ''}>Копировать диагностику</button>
+        </div>
+    `;
+}
+
+function operatorLogListSection(visibleEntries: ActionLogEntry[]): string {
+    return visibleEntries.length === 0 ? '<p class="empty small">Действий пока нет.</p>' : `
+        <div class="log-list">
+            ${visibleEntries.map((entry) => `
+                <article class="log-entry ${entry.status}">
+                    <div class="log-main">
+                        <span class="status-label ${entry.status}">${escapeHtml(actionStatusLabel(entry.status))}</span>
+                        <strong>${escapeHtml(actionLabel(entry.action))}</strong>
+                        <small>${escapeHtml(formatActionTimestamp(entry.timestamp))}${entry.durationMs !== undefined ? ` · ${escapeHtml(formatDuration(entry.durationMs))}` : ''}</small>
+                        ${entry.targetPath ? `<span title="${escapeHtml(entry.targetPath)}">${escapeHtml(entry.targetPath)}</span>` : ''}
+                        ${entry.error ? `<p>${escapeHtml(entry.error)}</p>` : ''}
+                    </div>
+                </article>
+            `).join('')}
+        </div>
     `;
 }
 
@@ -801,30 +876,15 @@ function collectIndexingJobs(
         .flatMap((runtime) => runtime.workload?.indexing?.[field] || []);
 }
 
-function operationsSection(
-    activeJobs: WorkloadJob[],
-    queuedJobs: WorkloadJob[],
-    selectedStatus: CodebaseStatus | undefined,
-    accelerator: DaemonStatus['accelerator'],
-): string {
+function operationsHeadingSection(activeJobs: WorkloadJob[], queuedJobs: WorkloadJob[]): string {
     return `
-        <section class="operations" aria-label="Операции индексации">
-            <div class="section-heading">
-                <div>
-                    <h2>Операции индексации</h2>
-                    <p>Активные задания, очередь и прогресс выбранной кодовой базы.</p>
-                </div>
-                <span class="pill">${escapeHtml(String(activeJobs.length))} активно · ${escapeHtml(String(queuedJobs.length))} в очереди</span>
+        <div class="section-heading">
+            <div>
+                <h2>Операции индексации</h2>
+                <p>Активные задания, очередь и прогресс выбранной кодовой базы.</p>
             </div>
-            <div class="operations-grid">
-                ${jobPanel('Активные', activeJobs, 'active')}
-                ${jobPanel('В очереди', queuedJobs, 'queued')}
-            </div>
-            <div class="operations-grid">
-                ${progressPanel(selectedStatus)}
-                ${acceleratorPanel(accelerator)}
-            </div>
-        </section>
+            <span class="pill">${escapeHtml(String(activeJobs.length))} активно · ${escapeHtml(String(queuedJobs.length))} в очереди</span>
+        </div>
     `;
 }
 
@@ -919,7 +979,7 @@ function jobPanel(title: string, jobs: WorkloadJob[], kind: 'active' | 'queued')
                                 <span>${escapeHtml(job.codebasePath)}</span>
                                 <small>${escapeHtml(jobMeta(job, kind))}</small>
                             </div>
-                            <button class="danger cancel-job" data-path="${escapeHtml(job.codebasePath)}" data-kind="${escapeHtml(kindLabel)}" ${state.busy ? 'disabled' : ''}>Отменить</button>
+                            <button class="danger cancel-job" data-path="${escapeHtml(job.codebasePath)}" data-kind="${escapeHtml(kindLabel)}">Отменить</button>
                         </div>
                     `).join('')}
                 </div>
