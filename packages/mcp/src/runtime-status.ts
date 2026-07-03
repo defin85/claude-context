@@ -9,6 +9,14 @@ import { WorkloadSnapshot } from './workload-manager.js';
 
 type RuntimeSyncOutcome = 'idle' | 'running' | 'skipped' | 'completed' | 'failed';
 
+export interface RuntimeStartupResumeResult {
+    path: string;
+    outcome: 'queued' | 'skipped' | 'failed';
+    reason?: string;
+    queuePosition?: number;
+    startedImmediately?: boolean;
+}
+
 export interface RuntimeSyncCodebaseResult {
     path: string;
     outcome: 'synced' | 'unchanged' | 'skipped' | 'failed';
@@ -57,6 +65,14 @@ interface RuntimeStatusFile {
         path: string;
         info: CodebaseInfo;
     }>;
+    startupResume?: {
+        lastCheckedAt: string;
+        candidates: number;
+        queued: number;
+        skipped: number;
+        failed: number;
+        results: RuntimeStartupResumeResult[];
+    };
     sync: RuntimeSyncState;
 }
 
@@ -90,6 +106,7 @@ export class RuntimeStatusManager {
     };
     private syncState: RuntimeSyncState = { outcome: 'idle' };
     private workloadState?: WorkloadSnapshot;
+    private startupResumeState?: RuntimeStatusFile['startupResume'];
 
     constructor(options: RuntimeStatusManagerOptions) {
         this.runtimeId = options.runtimeId;
@@ -164,6 +181,18 @@ export class RuntimeStatusManager {
         await this.writeStatus(reason);
     }
 
+    public async markStartupResumeChecked(candidates: number, results: RuntimeStartupResumeResult[]): Promise<void> {
+        this.startupResumeState = {
+            lastCheckedAt: new Date().toISOString(),
+            candidates,
+            queued: results.filter((result) => result.outcome === 'queued').length,
+            skipped: results.filter((result) => result.outcome === 'skipped').length,
+            failed: results.filter((result) => result.outcome === 'failed').length,
+            results
+        };
+        await this.writeStatus('daemon-startup-resume-checked');
+    }
+
     private buildStatus(reason: string): RuntimeStatusFile {
         const allCodebaseInfo = this.snapshotManager.getAllCodebaseInfo();
         const knownCodebases = Object.entries(allCodebaseInfo)
@@ -196,6 +225,7 @@ export class RuntimeStatusManager {
             } : {}),
             ...(this.workloadState ? { workload: this.workloadState } : {}),
             knownCodebases,
+            ...(this.startupResumeState ? { startupResume: this.startupResumeState } : {}),
             sync: this.syncState
         };
     }

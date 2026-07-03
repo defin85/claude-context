@@ -1769,6 +1769,12 @@ export class SnapshotManager {
             .map(([path, _]) => path);
     }
 
+    public getFailedCodebaseInfo(): Array<{ path: string; info: CodebaseInfoIndexFailed }> {
+        return Array.from(this.codebaseInfoMap.entries())
+            .filter((entry): entry is [string, CodebaseInfoIndexFailed] => entry[1].status === 'indexfailed')
+            .map(([path, info]) => ({ path, info }));
+    }
+
     /**
      * Completely remove a codebase from all tracking (for clear_index operation)
      */

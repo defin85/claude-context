@@ -8,12 +8,43 @@ export interface RuntimeAllowRootsResult {
     error?: string;
 }
 
+export interface AddRuntimeAllowRootInput {
+    filePath: string;
+    auditPath?: string;
+    path: string;
+    actor?: string;
+    reason?: string;
+    timestamp?: string;
+}
+
+export interface AddRuntimeAllowRootResult {
+    path: string;
+    added: boolean;
+    roots: string[];
+    filePath: string;
+    auditPath: string;
+}
+
 export function getDefaultRuntimeAllowRootsPath(): string {
     return path.join(os.homedir(), '.context', 'mcp', 'daemon', 'allow-roots.json');
 }
 
 function isAcceptedAbsolutePath(value: string): boolean {
     return path.isAbsolute(value) || /^\\\\wsl(?:\.localhost)?\\/i.test(value);
+}
+
+function assertLocalAbsolutePosixPath(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        throw new Error('Allowed root path is required.');
+    }
+    if (/^\\\\wsl(?:\.localhost)?\\/i.test(trimmed)) {
+        throw new Error(`Allowed root '${value}' must be a local POSIX path.`);
+    }
+    if (!path.isAbsolute(trimmed)) {
+        throw new Error(`Allowed root '${value}' must be absolute.`);
+    }
+    return normalizeCodebasePath(trimmed);
 }
 
 export async function readRuntimeAllowRoots(filePath: string): Promise<RuntimeAllowRootsResult> {
@@ -53,4 +84,41 @@ export async function readRuntimeAllowRoots(filePath: string): Promise<RuntimeAl
     } catch (error) {
         return { roots: [], error: getErrorMessage(error) };
     }
+}
+
+export async function addRuntimeAllowRoot(input: AddRuntimeAllowRootInput): Promise<AddRuntimeAllowRootResult> {
+    const normalizedPath = assertLocalAbsolutePosixPath(input.path);
+    const filePath = path.resolve(input.filePath);
+    const auditPath = path.resolve(input.auditPath || `${filePath}.audit.jsonl`);
+
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.mkdir(path.dirname(auditPath), { recursive: true });
+
+    const current = await readRuntimeAllowRoots(filePath);
+    if (current.error) {
+        throw new Error(`Cannot read runtime allow roots from '${filePath}': ${current.error}`);
+    }
+
+    const roots = current.roots.includes(normalizedPath)
+        ? current.roots
+        : [...current.roots, normalizedPath];
+    const added = roots.length !== current.roots.length;
+
+    await fs.promises.writeFile(filePath, `${JSON.stringify({ allowedRoots: roots }, null, 2)}\n`);
+    await fs.promises.appendFile(auditPath, `${JSON.stringify({
+        timestamp: input.timestamp || new Date().toISOString(),
+        action: 'add_allowed_root',
+        actor: input.actor || 'mcp:add_allowed_root',
+        path: normalizedPath,
+        added,
+        reason: input.reason || '',
+    })}\n`);
+
+    return {
+        path: normalizedPath,
+        added,
+        roots,
+        filePath,
+        auditPath,
+    };
 }

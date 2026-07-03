@@ -291,6 +291,7 @@ test('worker planning policy exposes recommended agent flow', () => {
     const policy = createWorkerPlanningPolicy();
 
     assert.ok(policy.recommendedAgentFlow.includes('call get_daemon_status before indexing'));
+    assert.ok(policy.recommendedAgentFlow.includes('if a local repo path is outside the daemon allowlist, call add_allowed_root instead of restarting the daemon'));
     assert.ok(policy.recommendedAgentFlow.includes('call index_codebase for allowed repo paths'));
     assert.ok(policy.recommendedAgentFlow.includes('poll get_indexing_status or get_daemon_status'));
     assert.ok(policy.recommendedAgentFlow.includes('do not start sidecars, child processes, or systemd worker units directly'));

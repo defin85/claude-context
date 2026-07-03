@@ -148,6 +148,11 @@ export class WorkloadManager {
         };
     }
 
+    public hasIndexingWork(codebasePath: string): boolean {
+        return this.indexingQueue.some((job) => job.codebasePath === codebasePath)
+            || Array.from(this.activeIndexingJobs.values()).some((job) => job.codebasePath === codebasePath);
+    }
+
     public enqueueInteractiveIndexing<T>(codebasePath: string, run: (signal: AbortSignal) => Promise<T>): EnqueuedIndexingTask<T> {
         if (this.mode === 'daemon') {
             this.recordInteractiveActivity(codebasePath);

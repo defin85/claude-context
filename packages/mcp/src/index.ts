@@ -55,7 +55,7 @@ import { migrateWorkspaceStateToDaemon } from './daemon-state-migration.js';
 import { createEmbeddingInstance, logEmbeddingProviderInfo } from './embedding.js';
 import { ToolHandlers } from './handlers.js';
 import { RuntimeStatusManager } from './runtime-status.js';
-import { readRuntimeAllowRoots } from './runtime-allow-roots.js';
+import { addRuntimeAllowRoot, readRuntimeAllowRoots } from './runtime-allow-roots.js';
 import { SEARCH_CODE_TOOL_DESCRIPTION } from './search-code-guidance.js';
 import { SnapshotManager } from './snapshot.js';
 import { SyncManager } from './sync.js';
@@ -470,6 +470,28 @@ Index a codebase directory to enable semantic search using a configurable code s
                         }
                     },
                     {
+                        name: 'add_allowed_root',
+                        description: 'Add a local absolute POSIX path to the daemon runtime allowlist without restarting the daemon. Writes an audit log entry.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                path: {
+                                    type: 'string',
+                                    description: 'Local absolute POSIX path to allow for daemon codebase operations. UNC/WSL paths and relative paths are rejected.'
+                                },
+                                reason: {
+                                    type: 'string',
+                                    description: 'Optional operator-visible reason written to the allowlist audit log.'
+                                },
+                                actor: {
+                                    type: 'string',
+                                    description: 'Optional operator or agent name written to the allowlist audit log.'
+                                }
+                            },
+                            required: ['path']
+                        }
+                    },
+                    {
                         name: 'shutdown_daemon',
                         description: 'Gracefully stop the local daemon after this response has been sent.',
                         inputSchema: {
@@ -505,6 +527,8 @@ Index a codebase directory to enable semantic search using a configurable code s
                     return await this.handleGetDaemonStatusTool();
                 case 'cancel_codebase_workload':
                     return await this.handleCancelCodebaseWorkloadTool(toolArgs);
+                case 'add_allowed_root':
+                    return await this.handleAddAllowedRootTool(toolArgs);
                 case 'shutdown_daemon':
                     return await this.handleShutdownDaemonTool(toolArgs);
                 default:
@@ -524,15 +548,22 @@ Index a codebase directory to enable semantic search using a configurable code s
             this.accessPolicy
         );
 
-        if (migration.importedCodebases.length === 0 && migration.importedConfigs.length === 0) {
-            return;
+        if (migration.importedCodebases.length > 0 || migration.importedConfigs.length > 0) {
+            console.log(
+                `[DAEMON-MIGRATION] Imported ${migration.importedCodebases.length} codebase(s) and ` +
+                `${migration.importedConfigs.length} config(s) into daemon state.`
+            );
+            await this.runtimeStatusManager.refresh('daemon-workspace-migration');
         }
 
-        console.log(
-            `[DAEMON-MIGRATION] Imported ${migration.importedCodebases.length} codebase(s) and ` +
-            `${migration.importedConfigs.length} config(s) into daemon state.`
-        );
-        await this.runtimeStatusManager.refresh('daemon-workspace-migration');
+        const startupResumeResults = await this.toolHandlers.resumeInterruptedIndexingOnStartup();
+        const queued = startupResumeResults.filter((result) => result.outcome === 'queued').length;
+        if (startupResumeResults.length > 0) {
+            console.log(
+                `[DAEMON-STARTUP-RESUME] Checked ${startupResumeResults.length} candidate(s); ` +
+                `queued ${queued}.`
+            );
+        }
     }
 
     private async handleGetDaemonStatusTool() {
@@ -640,6 +671,61 @@ Index a codebase directory to enable semantic search using a configurable code s
                 ...(idleAfterCancel !== undefined ? { idleAfterCancel } : {})
             }
         };
+    }
+
+    private async handleAddAllowedRootTool(args: ToolArgs) {
+        if (this.runtimeConfig.mode !== 'daemon' || !this.runtimeAllowRootsPath) {
+            return {
+                content: [{
+                    type: 'text',
+                    text: 'Error: add_allowed_root is only available in daemon mode with a runtime allow-roots file.'
+                }],
+                isError: true
+            };
+        }
+
+        const inputPath = typeof args?.path === 'string' ? args.path : '';
+        const reason = typeof args?.reason === 'string' ? args.reason.trim() : '';
+        const actor = typeof args?.actor === 'string' && args.actor.trim().length > 0
+            ? args.actor.trim()
+            : 'mcp:add_allowed_root';
+
+        try {
+            const result = await addRuntimeAllowRoot({
+                filePath: this.runtimeAllowRootsPath,
+                path: inputPath,
+                actor,
+                reason,
+            });
+            await this.reloadRuntimeAllowRoots('add-allowed-root');
+
+            const text = result.added
+                ? `Allowed root added: ${result.path}. Runtime allowlist reloaded without daemon restart.`
+                : `Allowed root already present: ${result.path}. Runtime allowlist checked without daemon restart.`;
+
+            return {
+                content: [{
+                    type: 'text',
+                    text
+                }],
+                structuredContent: {
+                    path: result.path,
+                    added: result.added,
+                    allowedRoots: result.roots,
+                    runtimeAllowRootsPath: result.filePath,
+                    auditPath: result.auditPath,
+                    restartRequired: false,
+                }
+            };
+        } catch (error) {
+            return {
+                content: [{
+                    type: 'text',
+                    text: `Error: ${getErrorMessage(error)}`
+                }],
+                isError: true
+            };
+        }
     }
 
     private async handleShutdownDaemonTool(args: ToolArgs) {

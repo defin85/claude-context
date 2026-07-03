@@ -16,7 +16,7 @@ import {
 import type { OneCIndexScopeProfile, OneCIndexScopeSummary, RankingProfile, RetrievalMode, RetrievalProfile } from "@zilliz/claude-context-core";
 import { CodebaseConfigManager } from "./codebase-config.js";
 import { SnapshotManager } from "./snapshot.js";
-import { RuntimeStatusManager } from "./runtime-status.js";
+import { RuntimeStartupResumeResult, RuntimeStatusManager } from "./runtime-status.js";
 import {
     getErrorCode,
     getErrorMessage,
@@ -56,6 +56,21 @@ type DaemonRetrievalConfiguration = {
     usesBgeM3Sparse?: boolean;
     usesColbert?: boolean;
 };
+
+type ContextWithInitialManifestLookup = Context & {
+    getInitialIndexingManifestForCodebase?: (codebasePath: string) => Promise<{
+        runState: string;
+        identity: Parameters<typeof getInitialIndexingManifestIdentifier>[0];
+    } | undefined>;
+};
+
+const DAEMON_SHUTDOWN_INTERRUPTED_INDEXING_MESSAGE = 'MCP runtime shutdown interrupted indexing before completion.';
+const STALE_OWNER_INTERRUPTED_PREFIX = 'Indexing was interrupted or abandoned';
+
+export function isDaemonInterruptedIndexingFailure(errorMessage: string): boolean {
+    return errorMessage === DAEMON_SHUTDOWN_INTERRUPTED_INDEXING_MESSAGE
+        || errorMessage.startsWith(STALE_OWNER_INTERRUPTED_PREFIX);
+}
 
 export class ToolHandlers {
     private context: Context;
@@ -695,6 +710,7 @@ export class ToolHandlers {
     public async handleIndexCodebase(args: ToolArgs) {
         const codebasePath = typeof args.path === 'string' ? args.path : '';
         const forceReindex = args.force === true;
+        const usePersistedConfigForStartupResume = args.resumeInterruptedOnStartup === true;
         const splitterType = typeof args.splitter === 'string' ? args.splitter : 'ast'; // Default to AST
         let retrievalProfile: RetrievalProfile | undefined;
         try {
@@ -706,7 +722,7 @@ export class ToolHandlers {
                 isError: true
             };
         }
-        const oneCIndexScopeProfile = this.normalizeOneCIndexScopeProfile(args.oneCIndexScopeProfile ?? args['1cIndexScopeProfile']);
+        let oneCIndexScopeProfile = this.normalizeOneCIndexScopeProfile(args.oneCIndexScopeProfile ?? args['1cIndexScopeProfile']);
         const customFileExtensions = Array.isArray(args.customExtensions)
             ? args.customExtensions.filter((extension): extension is string => typeof extension === 'string')
             : [];
@@ -777,7 +793,13 @@ export class ToolHandlers {
             const existingSessionConfig = hasPersistedSyncConfig
                 ? await this.codebaseConfigManager.getConfig(absolutePath)
                 : null;
-            const requestedSessionConfig = this.context.configureCodebaseSession(absolutePath, persistedSessionConfig);
+            const sessionConfigForRequest = usePersistedConfigForStartupResume && existingSessionConfig
+                ? existingSessionConfig
+                : persistedSessionConfig;
+            if (usePersistedConfigForStartupResume && existingSessionConfig?.oneCIndexScopeProfile) {
+                oneCIndexScopeProfile = existingSessionConfig.oneCIndexScopeProfile;
+            }
+            const requestedSessionConfig = this.context.configureCodebaseSession(absolutePath, sessionConfigForRequest);
 
             // Reconcile local snapshot with cloud truth for this specific codebase
             if (snapshotHasIndex !== cloudHasIndex) {
@@ -871,12 +893,7 @@ export class ToolHandlers {
             }
 
             const resumableInitialManifest = !forceReindex && cloudHasIndex && !hasPersistedSyncConfig
-                ? await (this.context as typeof this.context & {
-                    getInitialIndexingManifestForCodebase?: (codebasePath: string) => Promise<{
-                        runState: string;
-                        identity: Parameters<typeof getInitialIndexingManifestIdentifier>[0];
-                    } | undefined>;
-                }).getInitialIndexingManifestForCodebase?.(absolutePath)
+                ? await (this.context as ContextWithInitialManifestLookup).getInitialIndexingManifestForCodebase?.(absolutePath)
                 : undefined;
             const canResumeInitialIndexing = resumableInitialManifest?.identity.codebasePath === absolutePath &&
                 ['indexing', 'interrupted', 'failed', 'cancelled', 'limit_reached'].includes(resumableInitialManifest.runState);
@@ -960,6 +977,8 @@ export class ToolHandlers {
             }
 
             const configuredSessionConfig = requestedSessionConfig;
+            await this.codebaseConfigManager.saveConfig(absolutePath, configuredSessionConfig);
+            await this.runtimeStatusManager?.refresh('codebase-sync-config-saved-before-indexing');
 
             // Check current status and log if retrying after failure
             if (ownershipClaim.previousInfo?.status === 'indexfailed') {
@@ -1071,6 +1090,94 @@ export class ToolHandlers {
                 }],
                 isError: true
             };
+        }
+    }
+
+    public async resumeInterruptedIndexingOnStartup(): Promise<RuntimeStartupResumeResult[]> {
+        const candidates = this.snapshotManager.getFailedCodebaseInfo()
+            .filter(({ info }) => isDaemonInterruptedIndexingFailure(info.errorMessage));
+        const results: RuntimeStartupResumeResult[] = [];
+
+        console.log(`[DAEMON-STARTUP-RESUME] Found ${candidates.length} interrupted indexing candidate(s).`);
+
+        for (const { path: codebasePath, info } of candidates) {
+            const result = await this.resumeInterruptedCodebaseOnStartup(codebasePath, info.errorMessage);
+            results.push(result);
+        }
+
+        await this.runtimeStatusManager?.markStartupResumeChecked(candidates.length, results);
+        return results;
+    }
+
+    private async resumeInterruptedCodebaseOnStartup(
+        codebasePath: string,
+        previousError: string
+    ): Promise<RuntimeStartupResumeResult> {
+        const skip = (reason: string): RuntimeStartupResumeResult => {
+            console.log(`[DAEMON-STARTUP-RESUME] Skipping '${codebasePath}': ${reason}`);
+            return { path: codebasePath, outcome: 'skipped', reason };
+        };
+
+        try {
+            const accessDecision = this.accessPolicy.evaluateCodebasePath(codebasePath);
+            if (!accessDecision.allowed) {
+                return skip('outside daemon allowlist');
+            }
+
+            const absolutePath = accessDecision.absolutePath;
+            if (!fs.existsSync(absolutePath)) {
+                return skip('path no longer exists');
+            }
+            if (!fs.statSync(absolutePath).isDirectory()) {
+                return skip('path is not a directory');
+            }
+            if (this.workloadManager?.hasIndexingWork(absolutePath)) {
+                return skip('indexing work is already active or queued');
+            }
+
+            const persistedConfig = await this.codebaseConfigManager.getConfig(absolutePath);
+            if (!persistedConfig) {
+                return skip('missing persisted per-codebase configuration; manual reindexing is required');
+            }
+
+            const response = await this.handleIndexCodebase({
+                path: absolutePath,
+                force: false,
+                splitter: 'ast',
+                customExtensions: persistedConfig.customExtensions || [],
+                ignorePatterns: persistedConfig.customIgnorePatterns || [],
+                ...(persistedConfig.retrievalProfile ? { retrievalProfile: persistedConfig.retrievalProfile } : {}),
+                ...(persistedConfig.oneCIndexScopeProfile ? { oneCIndexScopeProfile: persistedConfig.oneCIndexScopeProfile } : {}),
+                resumeInterruptedOnStartup: true
+            });
+
+            if (response.isError) {
+                const reason = response.content?.[0]?.type === 'text'
+                    ? response.content[0].text
+                    : 'startup resume request was rejected';
+                console.warn(
+                    `[DAEMON-STARTUP-RESUME] Failed to queue '${absolutePath}': ${reason}. Previous error: ${previousError}`
+                );
+                return { path: absolutePath, outcome: 'failed', reason };
+            }
+
+            const structured = 'structuredContent' in response
+                ? response.structuredContent as {
+                    startedImmediately?: boolean;
+                    queuePosition?: number;
+                }
+                : undefined;
+            console.log(`[DAEMON-STARTUP-RESUME] Queued resume for '${absolutePath}'.`);
+            return {
+                path: absolutePath,
+                outcome: 'queued',
+                startedImmediately: structured?.startedImmediately,
+                queuePosition: structured?.queuePosition
+            };
+        } catch (error) {
+            const reason = getErrorMessage(error);
+            console.warn(`[DAEMON-STARTUP-RESUME] Failed while checking '${codebasePath}': ${reason}`);
+            return { path: codebasePath, outcome: 'failed', reason };
         }
     }
 

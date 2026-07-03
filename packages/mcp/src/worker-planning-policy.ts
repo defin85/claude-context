@@ -64,6 +64,7 @@ export interface WorkerPlanningPolicySnapshot {
     };
     recommendedAgentFlow: [
         'call get_daemon_status before indexing',
+        'if a local repo path is outside the daemon allowlist, call add_allowed_root instead of restarting the daemon',
         'call index_codebase for allowed repo paths',
         'poll get_indexing_status or get_daemon_status',
         'if queued, wait or report queue state',
@@ -141,6 +142,7 @@ export function createWorkerPlanningPolicy(): WorkerPlanningPolicySnapshot {
         },
         recommendedAgentFlow: [
             'call get_daemon_status before indexing',
+            'if a local repo path is outside the daemon allowlist, call add_allowed_root instead of restarting the daemon',
             'call index_codebase for allowed repo paths',
             'poll get_indexing_status or get_daemon_status',
             'if queued, wait or report queue state',

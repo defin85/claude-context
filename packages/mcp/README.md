@@ -394,6 +394,8 @@ npx @zilliz/claude-context-mcp@latest
 
 One Codex CLI session can then serve all allowlisted repositories by passing different canonical absolute `path` values to `index_codebase`, `search_code`, and `get_indexing_status`. Prefer POSIX paths such as `/home/egor/code/repo`; WSL UNC paths are normalized automatically, but POSIX form is recommended.
 
+If a local repository path is outside the daemon allowlist, call the daemon-side `add_allowed_root` tool with the absolute POSIX path instead of restarting `claude-context-mcp.service`. The tool writes the runtime allow-roots file, appends an audit log entry, and reloads the daemon allowlist without restarting active services.
+
 If a repository was only recovered from cloud state and reports missing persisted sync config, run one daemon-side `index_codebase` with `force=true` for that repository to restore restart-safe sync semantics.
 
 4. Save the file and restart Codex CLI to apply the changes.
@@ -853,6 +855,16 @@ Get the current indexing status of a codebase. Shows progress percentage for act
 **Parameters:**
 
 - `path` (required): Canonical absolute path to the codebase directory to check status for; prefer POSIX form such as `/home/egor/code/repo`
+
+### 5. `add_allowed_root`
+
+Add a local absolute POSIX path to the daemon runtime allowlist without restarting the daemon. Relative paths and UNC/WSL paths are rejected. The tool writes an audit entry and returns `restartRequired: false`.
+
+**Parameters:**
+
+- `path` (required): Local absolute POSIX path to allow for daemon codebase operations.
+- `reason` (optional): Operator-visible reason written to the audit log.
+- `actor` (optional): Operator or agent name written to the audit log.
 
 ## Contributing
 
