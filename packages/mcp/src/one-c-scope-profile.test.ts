@@ -751,6 +751,30 @@ test('search_code accepts ranking profile and reports resolved profile', async (
     assert.equal((structuredContent.results as Array<Record<string, unknown>>)[0].relativePath, 'src/Documents/Foo.ts');
 });
 
+test('search_code does not scan every cloud collection before searching', async () => {
+    let listCollectionsCalls = 0;
+    const baseContext = createFakeContext(true);
+    const vectorDatabase = baseContext.getVectorDatabase();
+    const context = {
+        ...baseContext,
+        getVectorDatabase: () => ({
+            ...vectorDatabase,
+            listCollections: async () => {
+                listCollectionsCalls++;
+                return [];
+            },
+        }),
+    } as unknown as Context;
+    const { codebasePath, handlers } = await createIndexedCodebase(undefined, context);
+
+    await handlers.handleSearchCode({
+        path: codebasePath,
+        query: 'foo',
+    });
+
+    assert.equal(listCollectionsCalls, 0);
+});
+
 test('search_code applies persisted retrieval profile before searching', async () => {
     let configuredRetrievalProfile: RetrievalProfile | undefined;
     const context = createFakeContext(true, (args) => [{

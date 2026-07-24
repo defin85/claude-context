@@ -413,11 +413,11 @@ function render(): void {
     ensureShell();
 
     const runtimes = state.status?.runtimes || [];
-    const primaryRuntime = runtimes[0];
-    const activeIndexingJobs = collectIndexingJobs(runtimes, 'activeJobs');
-    const queuedIndexingJobs = collectIndexingJobs(runtimes, 'queuedJobs');
-    const indexingCount = activeIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.activeCount || 0), 0);
-    const queueCount = queuedIndexingJobs.length || runtimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.queuedCount || 0), 0);
+    const healthyRuntimes = runtimes.filter((runtime) => runtime.healthy);
+    const activeIndexingJobs = collectIndexingJobs(healthyRuntimes, 'activeJobs');
+    const queuedIndexingJobs = collectIndexingJobs(healthyRuntimes, 'queuedJobs');
+    const indexingCount = activeIndexingJobs.length || healthyRuntimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.activeCount || 0), 0);
+    const queueCount = queuedIndexingJobs.length || healthyRuntimes.reduce((sum, runtime) => sum + (runtime.workload?.indexing?.queuedCount || 0), 0);
     const retrievalLabel = formatRetrieval(state.status?.retrievalConfiguration);
 
     renderDashboardSection('dashboard-auth', `
@@ -440,7 +440,7 @@ function render(): void {
         </div>
     `);
     renderDashboardSection('dashboard-metrics', `
-        ${metric('Runtimes', String(runtimes.length), primaryRuntime?.healthy === false ? 'attention' : '')}
+        ${metric('Runtimes', String(healthyRuntimes.length), healthyRuntimes.length === 0 ? 'attention' : '')}
         ${metric('Indexing', String(indexingCount), indexingCount > 0 ? 'working' : '')}
         ${metric('Queued', String(queueCount), queueCount > 0 ? 'attention' : '')}
         ${metric('Pressure', formatOptionalNumber(state.status?.accelerator?.adaptivePressureScore), '')}

@@ -994,7 +994,14 @@ export class ToolHandlers {
                 try {
                     const managedEndpoints = await this.managedBgeM3WorkerManager?.ensureStarted(`interactive indexing for ${absolutePath}`) || [];
                     this.registerManagedBgeM3WorkerEndpoints(managedEndpoints);
-                    await this.startBackgroundIndexing(absolutePath, forceReindex, splitterType, configuredSessionConfig, signal);
+                    await this.startBackgroundIndexing(
+                        absolutePath,
+                        forceReindex,
+                        splitterType,
+                        configuredSessionConfig,
+                        signal,
+                        existingSessionConfig,
+                    );
                 } finally {
                     ownershipHeartbeat.stop();
                     this.scheduleManagedWorkerStopWhenIdle(`indexing workload idle after ${absolutePath}`);
@@ -1186,7 +1193,8 @@ export class ToolHandlers {
         forceReindex: boolean,
         splitterType: string,
         sessionConfig: CodebaseSessionConfig | undefined,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        rollbackConfig?: CodebaseSessionConfig | null,
     ) {
         const absolutePath = codebasePath;
         let lastPersistedProgress = -1;
@@ -1311,6 +1319,15 @@ export class ToolHandlers {
         } catch (error) {
             console.error(`[BACKGROUND-INDEX] Error during indexing for ${absolutePath}:`, error);
 
+            if (rollbackConfig) {
+                try {
+                    await this.codebaseConfigManager.saveConfig(absolutePath, rollbackConfig);
+                    this.context.configureCodebaseSession(absolutePath, rollbackConfig);
+                } catch (rollbackError) {
+                    console.error(`[BACKGROUND-INDEX] Failed to restore previous config for ${absolutePath}:`, rollbackError);
+                }
+            }
+
             // Get the last attempted progress
             const lastProgress = this.snapshotManager.getIndexingProgress(absolutePath);
 
@@ -1345,9 +1362,6 @@ export class ToolHandlers {
         }
         const executeSearch = async () => {
             try {
-                // Sync indexed codebases from cloud first
-                await this.syncIndexedCodebasesFromCloud();
-
                 // Force absolute path resolution - warn if relative path provided
                 const accessDecision = this.enforceAccessPolicy(codebasePath);
                 if (accessDecision.response) {

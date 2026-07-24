@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sanitizeDaemonWorkloadSnapshot } from './daemon-discovery.js';
+import { isDaemonRegistryHealthy, sanitizeDaemonWorkloadSnapshot } from './daemon-discovery.js';
 import { WorkloadSnapshot } from './workload-manager.js';
+
+test('daemon registry health rejects a reused pid with a stale heartbeat', () => {
+    const now = Date.now();
+
+    assert.equal(isDaemonRegistryHealthy(process.pid, new Date(now - 30_000).toISOString(), now), true);
+    assert.equal(isDaemonRegistryHealthy(process.pid, new Date(now - 91_000).toISOString(), now), false);
+});
 
 test('daemon workload sanitization preserves active and queued job details', () => {
     const workload: WorkloadSnapshot = {

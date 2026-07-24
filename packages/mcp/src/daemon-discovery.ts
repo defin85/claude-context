@@ -109,6 +109,11 @@ function isPidAlive(pid: number): boolean {
     }
 }
 
+export function isDaemonRegistryHealthy(pid: number, lastUpdated: string, now: number = Date.now()): boolean {
+    const heartbeatAgeMs = now - Date.parse(lastUpdated);
+    return isPidAlive(pid) && Number.isFinite(heartbeatAgeMs) && heartbeatAgeMs >= 0 && heartbeatAgeMs <= 90_000;
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T> {
     const raw = await fs.promises.readFile(filePath, 'utf8');
     return JSON.parse(raw) as T;
@@ -350,7 +355,7 @@ export async function readDaemonOperatorStatus(): Promise<DaemonOperatorStatus> 
         const registryPath = path.join(registryDir, entry);
         try {
             const registry = await readJsonFile<DaemonRegistryFile>(registryPath);
-            const healthy = isPidAlive(registry.pid);
+            const healthy = isDaemonRegistryHealthy(registry.pid, registry.lastUpdated);
             let statusReason: string | undefined;
             let knownCodebases: Array<{ path: string; status: string }> | undefined;
             let workload: DaemonRegistryRuntimeSummary['workload'];
